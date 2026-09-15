@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "Rapid Money",
+    "slug": "rapidmoney-internal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/rapid-money-app-logo.png",
+    "scheme": "rapid-money",
+    "userInterfaceStyle": "light",
+    "androidStatusBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#00000000",
+      "translucent": true
+    },
+    "androidNavigationBar": {
+      "backgroundColor": "#ffffff"
+    },
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/images/rapid-money-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rapidmoney.internal",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera access is required for liveness verification."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/rapid-money-app-logo.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.rapidmoney.internal"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/rapid-money-logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/rapid-money-logo.png",
+          "imageWidth": 120,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Camera access is required for liveness verification."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
