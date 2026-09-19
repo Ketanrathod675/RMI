@@ -22,11 +22,14 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { TranslatedText } from "@/components/TranslatedText";
+import { KycSuccessModal } from "@/components/KycSuccessModal";
 import { dark } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
-import { API_URL, lookupPincode } from "@/utils/api";
+import { API_URL } from "@/utils/api";
+// TODO: migrate off legacy API
+import { lookupPincode } from "@/utils/api/bank";
 import {
 	uploadKycDocument,
 	verifyAddress,
@@ -89,6 +92,19 @@ export default function AadhaarKyc() {
 	const [isLoading, setIsLoading] = useState(false);
 	const [isUploading, setIsUploading] = useState(false);
 	const [previewFile, setPreviewFile] = useState<{ uri: string; name: string; mimeType?: string } | null>(null);
+	const [isKycSuccessModalVisible, setIsKycSuccessModalVisible] = useState(false);
+	const [successRouteParams, setSuccessRouteParams] = useState<{
+		is_repeat_user: string;
+		next_step: string;
+	}>({ is_repeat_user: "false", next_step: "" });
+
+	const handleContinueSuccess = () => {
+		setIsKycSuccessModalVisible(false);
+		router.push({
+			pathname: "/search-loan",
+			params: successRouteParams,
+		});
+	};
 
 	// Load CKYC address if provided in params, otherwise keep mock address
 	useEffect(() => {
@@ -116,6 +132,10 @@ export default function AadhaarKyc() {
 
 	// Back button handling with confirmation alert
 	const handleBack = () => {
+		if (isKycSuccessModalVisible) {
+			handleContinueSuccess();
+			return;
+		}
 		Alert.alert(
 			t("areYouSureGoBack", "Are you sure you want to go back?"),
 			t("youWillLoseProgress", "You will lose your progress."),
@@ -308,20 +328,11 @@ export default function AadhaarKyc() {
 			console.log("Address verification status: success");
 
 			if (response) {
-				setTimeout(() => {
-					Toast.show({
-						type: "success",
-						text1: t("addressVerificationSuccessful", "Address verification successful!"),
-						text2: response.message || t("verificationCompleted", "Verification completed"),
-					});
-					router.push({
-						pathname: "/search-loan",
-						params: {
-							is_repeat_user: response.is_repeat_user ? "true" : "false",
-							next_step: response.next_step || "",
-						},
-					});
-				}, 500);
+				setSuccessRouteParams({
+					is_repeat_user: response.is_repeat_user ? "true" : "false",
+					next_step: response.next_step || "",
+				});
+				setIsKycSuccessModalVisible(true);
 			} else {
 				Toast.show({
 					type: "error",
@@ -799,6 +810,12 @@ export default function AadhaarKyc() {
 					</View>
 				</View>
 			</Modal>
+
+			{/* KYC Verification Success Modal */}
+			<KycSuccessModal
+				visible={isKycSuccessModalVisible}
+				onContinue={handleContinueSuccess}
+			/>
 		</SafeAreaView>
 	);
 }
@@ -1037,3 +1054,5 @@ const styles = StyleSheet.create({
 		fontWeight: "600",
 	},
 });
+
+export { RouteErrorBoundary as ErrorBoundary } from "@/components/ErrorBoundary";

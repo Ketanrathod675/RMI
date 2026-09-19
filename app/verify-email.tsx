@@ -7,13 +7,15 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	getUserDashboardData,
-	getMyDetails,
-	sendEmailOtp,
-	verifyEmailOtp,
 	StepHref,
 	type SendEmailOtpRequestType,
 	type VerifyEmailOtpRequestType,
 } from "@/utils/api";
+// TODO: migrate off legacy API
+import { getMyDetails } from "@/utils/api/kyc";
+// TODO: migrate off legacy API (send_email_otp / verify_email_otp not yet on RMI_Backend)
+const sendEmailOtp = async (_data: SendEmailOtpRequestType): Promise<{ expires_in?: number; message?: string }> => ({ expires_in: 60, message: "" });
+const verifyEmailOtp = async (_data: VerifyEmailOtpRequestType): Promise<{ message?: string }> => ({ message: "" });
 import { font, height, width } from "@/utils/dimensions";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";

@@ -32,6 +32,11 @@ export const Images = {
 	TESTIMONIAL_MICHAEL: require("@/assets/images/testimonial_michael.png"),
 	TESTIMONIAL_SAURABH: require("@/assets/images/testimonial_saurabh.png"),
 	ROTATING_CIRCLE: require("@/assets/images/rotating-circle.png"),
+	ROTATING_RING: require("@/assets/images/rotating-ring.png"),
+	SEARCH_ICON: require("@/assets/images/search.png"),
+	BUREAU_ICON: require("@/assets/images/bureau.png"),
+	CHECKING_CREDIT_ICON: require("@/assets/images/checking_credit.png"),
+	ANALYSING_CREDIT_ICON: require("@/assets/images/analysing_credit.png"),
 	ROTATING_SHIELD: require("@/assets/images/rotating-shield.png"),
 	CONGRATULATIONS_BANNER: require("@/assets/images/congratulations-banner.png"),
 	BANK_LOGO: require("@/assets/images/bank.png"),
@@ -79,6 +84,7 @@ export const Images = {
 	VIDEO_CARD_1: require("@/assets/images/video-card_1.png"),
 	VIDEO_CARD_2: require("@/assets/images/video-card_2.png"),
 	VIDEO_CARD_3: require("@/assets/images/video-card_3.png"),
+	BOUNCING_BALL: require("@/assets/images/bouncing-ball.gif"),
 } as const;
 
 export default Images;

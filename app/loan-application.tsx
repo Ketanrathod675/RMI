@@ -9,17 +9,8 @@ import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	errorHandler,
-	getPersonalDetailsHbPartner,
-	initialApproval,
-	sendEmailOtp,
-	submitPersonalDetails,
-	verifyEmail,
-	verifyEmailOtp,
-	verifyPan,
-	type PersonalDetailsRequestType,
-	type SendEmailOtpRequestType,
-	type VerifyEmailOtpRequestType,
-	type VerifyPanRequestType,
+	updateBasicDetails,
+	type BasicDetailsPayload,
 } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -112,7 +103,9 @@ export default function LoanApplication() {
 	const navigation = useNavigation();
 	const { userId, logout, applicantFrom } = useAuth();
 
-	// HB Partner API pre-fill query
+	// LEGACY — old backend, disabled during in-house rebuild
+	// HB Partner pre-fill query disabled as endpoint does not exist on RMI_Backend
+	/*
 	const {
 		data: hbPartnerData,
 		error: hbDataError,
@@ -128,10 +121,6 @@ export default function LoanApplication() {
 
 	useEffect(() => {
 		if (hbPartnerData) {
-			if (__DEV__) {
-				console.log("📥 [HB Partner] Details received successfully");
-			}
-
 			setFormData((prev) => ({
 				...prev,
 				fullName: hbPartnerData.full_name || "",
@@ -145,23 +134,7 @@ export default function LoanApplication() {
 			}));
 		}
 	}, [hbPartnerData]);
-
-	useEffect(() => {
-		if (hbDataError) {
-			const status = (hbDataError as any)?.response?.status;
-			const message = (hbDataError as any)?.response?.data?.message || t("failedToFetchDetails" as any, "Failed to fetch details");
-
-			if (status === 404) {
-				Toast.show({
-					type: "error",
-					text1: t("detailsNotFound" as any, "Details not found"),
-					text2: message,
-				});
-			} else if (__DEV__) {
-				console.log("❌ [HB Partner] Error loading prefill data");
-			}
-		}
-	}, [hbDataError, t]);
+	*/
 
 	useFocusEffect(
 		useCallback(() => {
@@ -236,127 +209,19 @@ export default function LoanApplication() {
 		};
 	}, [resendTimer]);
 
-	// Send Email OTP Mutation
-	const { mutate: sendEmailOtpMutation, isPending: isSendingOtp } = useNetworkAwareMutation({
-		mutationFn: sendEmailOtp,
-		onSuccess: () => {
-			if (__DEV__) {
-				console.log("✅ [Email OTP] Code sent successfully");
-			}
-			setResendTimer(60);
-
-			Toast.show({
-				type: "success",
-				text1: t("otpSent", "OTP Sent"),
-				text2: `${t("verificationCodeSentTo", "Verification code sent to")} ${formData.email}`,
-				visibilityTime: 1500,
-			});
-
-			setTimeout(() => {
-				setShowOtpModal(true);
-				Animated.spring(modalAnimValue, {
-					toValue: 1,
-					useNativeDriver: true,
-				}).start();
-			}, 1500);
-		},
-		onError: (err, variables, ctx) => {
-			const { error } = errorHandler(err, variables, ctx);
-			Toast.show({
-				type: "error",
-				text1: t("failedToSendOTP", "Failed to send OTP"),
-				text2: error?.message ?? t("pleaseRetryPayment", "Please try again"),
-			});
-		},
-	});
-
-	// Verify Email OTP Mutation
-	const { mutate: verifyEmailOtpMutation, isPending: isVerifyingOtp } = useNetworkAwareMutation({
-		mutationFn: verifyEmailOtp,
-		onSuccess: () => {
-			if (__DEV__) {
-				console.log("✅ [Email OTP] Verified successfully");
-			}
-
-			setIsEmailVerified(true);
-			Toast.show({
-				type: "success",
-				text1: t("emailVerified", "Email Verified"),
-				text2: t("yourEmailHasBeenVerified", "Your email has been verified"),
-			});
-
-			// Close modal with animation
-			Animated.timing(modalAnimValue, {
-				toValue: 0,
-				duration: 300,
-				useNativeDriver: true,
-			}).start(() => {
-				setShowOtpModal(false);
-				setOtp(["", "", "", ""]);
-				proceedWithSubmission();
-			});
-		},
-		onError: (err, variables, ctx) => {
-			const { error } = errorHandler(err, variables, ctx);
-			Toast.show({
-				type: "error",
-				text1: t("otpVerificationFailed", "OTP Verification Failed"),
-				text2: error?.message ?? t("pleaseRetryPayment", "Please try again"),
-			});
-		},
-	});
-
-	const { mutate: verifyPanMutation, isPending: isPanVerifying } = useNetworkAwareMutation({
-		mutationFn: verifyPan,
-		onSuccess: (data) => {
-			if (data?.verified) {
-				const nameSimilarityPercentage = data?.pan_details?.name_similarity_percentage;
-
-				if (nameSimilarityPercentage !== undefined && nameSimilarityPercentage < 70) {
-					setIsPanVerified(false);
-					Toast.show({
-						type: "error",
-						text1: t("nameSimilarityTooLow", "Name Similarity Too Low"),
-						text2: t("nameSimilarityBelowThreshold", "Name similarity is below required threshold"),
-						visibilityTime: 4000,
-					});
-					return;
-				}
-
-				setIsPanVerified(true);
-				Toast.show({
-					type: "success",
-					text1: t("panVerifiedSuccessfully", "PAN Verified Successfully"),
-					text2: data?.message || t("yourPANDetailsVerified", "Your PAN details are verified"),
-				});
-			} else {
-				setIsPanVerified(false);
-				Toast.show({
-					type: "error",
-					text1: t("panVerificationFailed", "PAN Verification Failed"),
-					text2: data?.message || t("checkPANDetailsAndTryAgain", "Please check your PAN details and try again"),
-				});
-			}
-		},
-		onError: (err, variables, ctx) => {
-			const { error } = errorHandler(err, variables, ctx);
-
-			setIsPanVerified(false);
-			Toast.show({
-				type: "error",
-				text1: t("panVerificationFailed", "PAN Verification Failed"),
-				text2: error?.message ?? t("pleaseRetryPayment", "Please try again"),
-			});
-		},
-	});
+	// LEGACY — old backend, disabled during in-house rebuild
+	// Send Email OTP, Verify Email OTP, and Verify PAN mutations are disabled until in-house backend builds them
+	const isSendingOtp = false;
+	const isVerifyingOtp = false;
+	const isPanVerifying = false;
 
 	const queryClient = useQueryClient();
 
 	const { mutate: submitPersonalDetailsMutation, isPending } = useNetworkAwareMutation({
-		mutationFn: submitPersonalDetails,
-		onSuccess: async (data) => {
+		mutationFn: updateBasicDetails,
+		onSuccess: async (_data) => {
 			if (__DEV__) {
-				console.log("✅ [Personal Details] Submitted successfully");
+				console.log("✅ [Basic Details] Submitted successfully to FastAPI backend");
 			}
 
 			Toast.show({
@@ -369,65 +234,34 @@ export default function LoanApplication() {
 				queryKey: ["user", "dashboard"],
 			});
 
-			// If applicant is from HB, process initial approval follow-up
-			if (applicantFrom === "HB") {
-				try {
-					const verifyRes = await verifyEmail(formData.email.trim());
-
-					if (verifyRes.result === "deliverable") {
-						if (isPanVerified) {
-							const approvalRes = await initialApproval({
-								email: formData.email.trim(),
-								is_deliverable: true,
-								is_pan_verified: true,
-								is_pan_valid: true,
-								pan_number: formData.panNumber.toUpperCase().trim(),
-								name: formData.fullName.trim(),
-							});
-
-							if (approvalRes.status === "approved") {
-								router.replace("/(tabs)");
-								return;
-							} else if (approvalRes.status === "reject") {
-								Alert.alert(t("applicationRejected", "Application Rejected"), approvalRes.msg || "Application Rejected");
-								return;
-							}
-						}
-					}
-				} catch (hbErr) {
-					if (__DEV__) {
-						console.error("❌ [HB Flow] Error during follow-up validation");
-					}
-				}
-			}
-
-			// Extract processing fee data
-			const processingFee = data?.processing_fee;
-			const amount = processingFee?.amount || 0;
-			const currency = processingFee?.currency || "INR";
-			const description = processingFee?.description || "Processing fee for loan application";
-			const preQualifiedAmount = data?.pre_qualified_amount || 25000;
-
-			// Navigate to assessment fee page with processing fee data
+			// TODO: replace once backend exposes an assessment-fee endpoint
+			// For now, pass safe placeholder params without reading them off the response
 			router.replace({
 				pathname: "/new-assessment-fee",
 				params: {
-					amount: amount.toString(),
-					currency: currency,
-					description: description,
-					kyc_id: data?.kyc_id || "",
-					next_step: data?.next_step || "",
-					status: data?.status || "",
-					pre_qualified_amount: preQualifiedAmount.toString(),
+					amount: "0",
+					currency: "INR",
+					description: "Processing fee for loan application",
+					kyc_id: "",
+					next_step: "",
+					status: "",
+					pre_qualified_amount: "25000",
 				},
 			});
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
+			// Surface backend 400 validation / duplicate conflicts (e.g. duplicate PAN or email)
+			const backendErrorDetail =
+				(err as any)?.response?.data?.detail ||
+				(err as any)?.response?.data?.message ||
+				error?.message ||
+				t("pleaseRetryPayment", "Please try again");
+
 			Toast.show({
 				type: "error",
 				text1: t("errorSubmittingPersonalDetails", "Submission Error"),
-				text2: error?.message ?? t("pleaseRetryPayment", "Please try again"),
+				text2: typeof backendErrorDetail === "string" ? backendErrorDetail : JSON.stringify(backendErrorDetail),
 			});
 		},
 	});
@@ -482,12 +316,14 @@ export default function LoanApplication() {
 			return;
 		}
 
-		const verifyPanData: VerifyPanRequestType = {
-			pan_number: panNumber.toUpperCase().trim(),
-			name: fullName.trim(),
-		};
-
-		verifyPanMutation(verifyPanData);
+		// LEGACY — old backend, disabled during in-house rebuild
+		// PAN verification will be validated server-side upon basic-details submission
+		setIsPanVerified(true);
+		Toast.show({
+			type: "success",
+			text1: t("panValid" as any, "Valid PAN Format"),
+			text2: t("panFormatValid" as any, "PAN format verified"),
+		});
 	};
 
 	const handleInputChange = (field: keyof typeof formData, value: string) => {
@@ -665,24 +501,27 @@ export default function LoanApplication() {
 		const year = date.getFullYear();
 		const month = String(date.getMonth() + 1).padStart(2, "0");
 		const day = String(date.getDate()).padStart(2, "0");
-		return `${year}-${month}-${day}`;
+		return `${day}-${month}-${year}`;
 	};
 
 	const proceedWithSubmission = () => {
-		const apiData: PersonalDetailsRequestType = {
+		const apiData: BasicDetailsPayload = {
 			full_name: formData.fullName.trim(),
-			father_name: formData.fatherName.trim(),
-			pan_number: formData.panNumber.toUpperCase().trim(),
+			fathers_name: formData.fatherName.trim(),
+			pan_card: formData.panNumber.toUpperCase().trim(),
 			date_of_birth: formatDateForAPI(formData.dateOfBirth!),
-			gender: formData.gender.toLowerCase(),
-			pin_code: formData.pincode.trim(),
-			is_pan_verified: isPanVerified || true,
+			gender: formData.gender
+				? formData.gender.charAt(0).toUpperCase() + formData.gender.slice(1).toLowerCase()
+				: undefined,
+			pincode: formData.pincode.trim(),
 			email: formData.email.trim(),
-			is_pan_valid: isPanVerified,
+			preferred_language: formData.preferredLanguage
+				? formData.preferredLanguage.charAt(0).toUpperCase() + formData.preferredLanguage.slice(1).toLowerCase()
+				: undefined,
 		};
 
 		if (__DEV__) {
-			console.log("🚀 [Personal Details] Initiating submission...");
+			console.log("🚀 [Basic Details] Initiating submission to FastAPI backend...", apiData);
 		}
 
 		submitPersonalDetailsMutation(apiData);
@@ -740,54 +579,14 @@ export default function LoanApplication() {
 	};
 
 	const handleVerifyOtp = () => {
-		if (!userId) {
-			Toast.show({
-				type: "error",
-				text1: t("authenticationRequired", "Authentication Required"),
-				text2: t("pleaseLoginToContinue", "Please login to continue"),
-			});
-			router.replace("/login");
-			return;
-		}
-
-		const otpString = otp.join("");
-		if (otpString.length !== 4) {
-			Toast.show({
-				type: "error",
-				text1: t("invalidOTP", "Invalid OTP"),
-				text2: t("pleaseEnter4DigitOTP", "Please enter 4-digit OTP"),
-			});
-			return;
-		}
-
-		const verifyData: VerifyEmailOtpRequestType = {
-			user_id: userId,
-			email: formData.email.trim(),
-			otp: otpString,
-		};
-
-		verifyEmailOtpMutation(verifyData);
+		// LEGACY — old backend, disabled during in-house rebuild
+		// Email OTP verification is disabled until in-house backend implements email verification
+		closeOtpModal();
+		proceedWithSubmission();
 	};
 
 	const handleResendOtp = () => {
-		if (resendTimer > 0) return;
-
-		if (!userId) {
-			Toast.show({
-				type: "error",
-				text1: t("authenticationRequired", "Authentication Required"),
-				text2: t("pleaseLoginToContinue", "Please login to continue"),
-			});
-			router.replace("/login");
-			return;
-		}
-
-		const emailOtpData: SendEmailOtpRequestType = {
-			user_id: userId,
-			email: formData.email.trim(),
-		};
-
-		sendEmailOtpMutation(emailOtpData);
+		// LEGACY — old backend, disabled during in-house rebuild
 	};
 
 	const closeOtpModal = () => {

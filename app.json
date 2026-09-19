@@ -12,9 +12,6 @@
       "backgroundColor": "#00000000",
       "translucent": true
     },
-    "androidNavigationBar": {
-      "backgroundColor": "#ffffff"
-    },
     "newArchEnabled": false,
     "splash": {
       "image": "./assets/images/rapid-money-logo.png",
@@ -56,6 +53,14 @@
         "react-native-vision-camera",
         {
           "cameraPermissionText": "Camera access is required for liveness verification."
+        }
+      ],
+      "expo-navigation-bar",
+      "expo-video",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
         }
       ]
     ],

@@ -510,15 +510,15 @@ export default function HelpAndSupport() {
 										<Text
 											style={[
 												styles.faqQuestionText,
-												isActive && styles.faqQuestionTextActive,
+												isAnswerOpen && styles.faqQuestionTextActive,
 											]}>
 											{item.question}
 										</Text>
 
 										<MaterialIcons
-											name={isActive && isAnswerOpen ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+											name={isAnswerOpen ? "keyboard-arrow-up" : "keyboard-arrow-down"}
 											size={26}
-											color={isActive && isAnswerOpen ? "#4CAE38" : "#2E3A59"}
+											color={isAnswerOpen ? "#4CAE38" : "#2E3A59"}
 										/>
 									</TouchableOpacity>
 

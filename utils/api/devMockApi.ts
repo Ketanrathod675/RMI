@@ -1,5 +1,6 @@
 import { getStorageItem, setStorageItem } from "@/utils/storage";
 import type { AxiosResponse, InternalAxiosRequestConfig } from "axios";
+import type { UserProfileResponseType } from "./user";
 
 // Dev-only storage key for mock API preference
 const DEV_MOCK_API_KEY = "@dev-use-mock-api" as any;
@@ -22,6 +23,7 @@ export interface DevMockOptions {
 	ckycSendOtpSuccess?: boolean;
 	faceMatchSuccess?: boolean;
 	ckycResendOtpSuccess?: boolean;
+	mandateMockOutcome?: "success" | "failure";
 }
 
 let _mockOptions: DevMockOptions = {
@@ -37,6 +39,7 @@ let _mockOptions: DevMockOptions = {
 	ckycSendOtpSuccess: true,
 	faceMatchSuccess: true,
 	ckycResendOtpSuccess: true,
+	mandateMockOutcome: "success",
 };
 
 let _easebuzzPollCount = 0;
@@ -199,8 +202,8 @@ export async function handleDevMockRequest(
 	const url = config.url ?? "";
 	const method = (config.method ?? "get").toLowerCase();
 
-	// ─── 1. Endpoint: auth/login ──────────────────────────────────────────────
-	if (url.includes("auth/login") && method === "post") {
+	// ─── 1. Endpoint: auth/login & auth/request-otp ──────────────────────────
+	if ((url.includes("auth/login") || url.includes("auth/request-otp")) && method === "post") {
 		await delay(450); // Simulate network latency
 
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
@@ -558,17 +561,37 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	// ─── 11. Endpoint: kyc/personal-details ───────────────────────────────────
-	if (url.includes("kyc/personal-details") && method === "post") {
+	// ─── 11. Endpoint: kyc/personal-details & users/basic-details ────────────
+	if (
+		((url.includes("kyc/personal-details") || url.includes("users/basic-details")) && method === "post") ||
+		(url.includes("users/basic-details") && method === "patch")
+	) {
 		await delay(700);
 
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST kyc/personal-details");
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST/PATCH personal-details / basic-details");
 		updateDevMockOptions({ currentStep: "assessment_fee_payment" });
+
+		const mockUserData = {
+			uuid: "mock_user_id_12345",
+			phone_number: "9876543210",
+			full_name: "Mock User",
+			pan_card: "ABCDE1234F",
+			fathers_name: "Mock Father",
+			email: "dev.user@rapidmoney.in",
+			phone_verified: true,
+			email_verified: true,
+			pan_verified: true,
+			role: "borrower",
+			is_active: true,
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+		};
 
 		return {
 			data: {
 				message: "Personal details submitted successfully [MOCK MODE]",
 				success: true,
+				data: mockUserData,
 				kyc_id: "mock_kyc_id_778899",
 				credit_check: {
 					status: "approved",
@@ -1274,7 +1297,407 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	// Real network call for unhandled endpoints
-	return null;
+	// ─── 31. Endpoint: users/me (getUserProfile) ─────────────────────────────
+	if (url.includes("users/me") && method === "get") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET users/me");
+
+		const mockUserProfile: UserProfileResponseType = {
+			id: "mock_user_id_12345",
+			user_id: "mock_user_id_12345",
+			customer_id: "mock_cust_98765",
+			phone_number: "+919876543210",
+			email: "dev.user@rapidmoney.in",
+			role: "customer",
+			status: "active",
+			is_phone_verified: true,
+			is_email_verified: true,
+			personal_details: {
+				full_name: "Dev User",
+				father_name: "Mock Father",
+				pan_number: "ABCDE1234F",
+				date_of_birth: "1995-01-01",
+				gender: "male",
+				pin_code: "400001",
+				is_pan_verified: true,
+				preferred_language: "English",
+				aadhaar_number: "XXXXXXXX1234",
+			},
+			employment_details: {
+				employment_type: "Salaried",
+				verification_type: "online",
+				company_type: "Private Limited",
+				company_name: "Tech Solutions Pvt Ltd",
+				designation: "Software Engineer",
+				nature_of_business: "Information Technology",
+				industry_type: "IT / Computers",
+				income_range: "50000-75000",
+				residence_status: "Rented",
+			},
+			preferred_language: "English",
+			notification_preferences: {
+				email: true,
+				sms: true,
+				push: true,
+			},
+			address: {
+				address_line1: "123 Mock Street",
+				address_line2: "Near Tech Park",
+				city: "Mumbai",
+				state: "Maharashtra",
+				pincode: "400001",
+				country: "India",
+				verified: true,
+				latitude: 19.076,
+				longitude: 72.8777,
+				kyc_address_shown: {
+					address: "123 Mock Street, Near Tech Park",
+					city: "Mumbai",
+					state: "Maharashtra",
+					pin_code: "400001",
+				},
+			},
+			kyc_address: {
+				address_line1: "123 Mock Street",
+				address_line2: "Near Tech Park",
+				city: "Mumbai",
+				state: "Maharashtra",
+				pincode: "400001",
+				country: "India",
+				verified: true,
+				latitude: 19.076,
+				longitude: 72.8777,
+			},
+			created_at: new Date().toISOString(),
+			last_login: new Date().toISOString(),
+		};
+
+		return {
+			data: mockUserProfile,
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 32. Endpoint: kyc/fetch-selfie (fetchSelfie) ─────────────────────────
+	if (url.includes("kyc/fetch-selfie") && method === "get") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/fetch-selfie");
+
+		return {
+			data: {
+				selfie_url: null,
+				message: "No selfie found [MOCK MODE]",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 33. Endpoint: loans (getLoanHistory / loan-history) ──────────────────
+	if ((url.includes("loans?") || url.endsWith("/loans") || url === "loans") && method === "get") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loans");
+
+		return {
+			data: {
+				loans: [
+					{
+						loan_id: "1",
+						loan_number: "RM-2025-00001",
+						application_id: "APP001",
+						amount: 37000,
+						due_date: "2025-01-22T09:41:00Z",
+						status: "Paid Off",
+					},
+					{
+						loan_id: "2",
+						loan_number: "RM-2025-00002",
+						application_id: "APP002",
+						amount: 45000,
+						due_date: "2025-02-15T15:22:00Z",
+						status: "Pending",
+					},
+					{
+						loan_id: "3",
+						loan_number: "RM-2025-00003",
+						application_id: "APP003",
+						amount: 32000,
+						due_date: "2025-03-10T11:15:00Z",
+						status: "Due Soon",
+					},
+					{
+						loan_id: "4",
+						loan_number: "RM-2025-00004",
+						application_id: "APP004",
+						amount: 28000,
+						due_date: "2025-04-05T13:30:00Z",
+						status: "Overdue",
+					},
+					{
+						loan_id: "5",
+						loan_number: "RM-2025-00005",
+						application_id: "APP005",
+						amount: 50000,
+						due_date: "2025-05-20T17:45:00Z",
+						status: "Paid Off",
+					},
+					{
+						loan_id: "6",
+						loan_number: "RM-2025-00006",
+						application_id: "APP006",
+						amount: 50000,
+						due_date: "2025-05-20T17:45:00Z",
+						status: "Paid Off",
+					},
+				],
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 34. Endpoint: loans/:loanNumber/loan-book (getLoanBook) ─────────────
+	if (url.includes("/loan-book") && method === "get") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loans/:loanNumber/loan-book");
+
+		return {
+			data: {
+				success: true,
+				loan_info: {
+					lender_loan_account_number: "LAI1010050593",
+					loan_id: "LAI1010050593",
+					loan_type: "Cash Loan",
+					status: "Closed",
+					customer_id: "mock_cust_98765",
+				},
+				loan_book: [
+					{
+						date: "04/05/2025",
+						particulars: "Cash loan amount",
+						amount: 22000,
+						type: "credit",
+						category: "cash_loan",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "GST on Processing fees",
+						amount: 1440,
+						type: "debit",
+						category: "processing_fees",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "Fibe Ensured Premium",
+						amount: 1440,
+						type: "debit",
+						category: "insurance",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "Cash loan amount",
+						amount: 45000,
+						type: "credit",
+						category: "cash_loan",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "Cash loan amount",
+						amount: 45000,
+						type: "credit",
+						category: "cash_loan",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "EMI 1 due",
+						amount: 1440,
+						type: "debit",
+						category: "emi",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "Cash loan amount",
+						amount: 1440,
+						type: "debit",
+						category: "cash_loan",
+					},
+					{
+						date: "04/05/2025",
+						particulars: "Cash loan amount",
+						amount: 1440,
+						type: "debit",
+						category: "cash_loan",
+					},
+				],
+				summary: {
+					principal_outstanding: 0,
+					interest_outstanding: 0,
+					charges_outstanding: 0,
+					total_outstanding: 0,
+					total_repaid: 22000,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 35. Endpoint: loans/:loanNumber (getLoanDetails) ─────────────────────
+	if (
+		url.startsWith("loans/") &&
+		!url.includes("/loan-book") &&
+		!url.includes("loans/admin") &&
+		!url.includes("loans/loan-terms") &&
+		!url.includes("loans/submit-loan-application") &&
+		method === "get"
+	) {
+		await delay(300);
+
+		const loanNumber = url.split("/")[1] || "LAI1009172865";
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loans/:loanNumber:", loanNumber);
+
+		return {
+			data: {
+				success: true,
+				loan_details: {
+					lender_loan_account_number: "LAI1009172865",
+					loan_id: "LAI1009172865",
+					lender_name: "ESPL (20%) & Kisetsu Saison Finance ( india ) Private Limited (80%)",
+					loan_type: "Cash loan",
+					loan_sub_type: "Cash loan",
+					amount_financed: 22000,
+					interest_rate: "27.0% p.a",
+					disbursement_date: "15/12/2024",
+					emi_start_date: "02/01/2025",
+					emi_end_date: "02/12/2025",
+					principal_outstanding: 0,
+					overdue_amount: 0,
+					loan_status: "Closed",
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 36. Endpoint: loan-agreement download ────────────────────────────────
+	if (url.includes("loan-agreement") && url.includes("download") && method === "get") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for loan agreement download");
+
+		return {
+			data: {
+				success: true,
+				download_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+				message: "Loan agreement ready for download [MOCK MODE]",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 37. Endpoint: insurance/download-my-policy ───────────────────────────
+	if (url.includes("insurance/download-my-policy") && method === "post") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for insurance download");
+
+		return {
+			data: {
+				status: "success",
+				symbo_message: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+				message: "Insurance policy ready for download [MOCK MODE]",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 38. Endpoint: loans/admin/noc/:loanId ────────────────────────────────
+	if (url.includes("loans/admin/noc") && method === "get") {
+		await delay(300);
+
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for NOC download");
+
+		return {
+			data: {
+				success: true,
+				download_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+				message: "NOC ready for download [MOCK MODE]",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 39. Endpoint: autocollect/mandate/check/:txnId (check_mandate) ──────
+	if (url.includes("autocollect/mandate/check") && method === "get") {
+		await delay(400);
+
+		const outcome = _mockOptions.mandateMockOutcome || "success";
+		console.log(`🛠️ [DEV MOCK API] ⚡ Mocking response for GET autocollect/mandate/check (outcome: ${outcome})`);
+
+		if (outcome === "failure") {
+			return {
+				data: {
+					status: "failure",
+					message: "Mandate setup failed. Please try again.",
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		return {
+			data: {
+				status: "success",
+				message: "Auto-debit setup successful! Your mandate is now active.",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── Catch-All Fallback for Unhandled Endpoints in Mock Mode ─────────────
+	console.warn(
+		"🛠️ [DEV MOCK API] ⚠️ NO MOCK HANDLER for:",
+		method.toUpperCase(),
+		url,
+		"— add one to devMockApi.ts"
+	);
+
+	return {
+		data: {},
+		status: 200,
+		statusText: "OK",
+		headers: {},
+		config,
+	};
 }
 

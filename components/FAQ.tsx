@@ -20,15 +20,10 @@ interface FAQProps {
 }
 
 const FAQ: React.FC<FAQProps> = ({ data }) => {
-	// First item active by default with green chevron-up to match reference design
-	const [activeId, setActiveId] = useState<string | number | null>(
-		data && data.length > 0 ? data[0].id : null
-	);
-	const [expandedAnswerId, setExpandedAnswerId] = useState<string | number | null>(null);
+	const [expandedId, setExpandedId] = useState<string | number | null>(null);
 
 	const toggleItem = (id: string | number) => {
-		setActiveId(id);
-		setExpandedAnswerId((prev) => (prev === id ? null : id));
+		setExpandedId((prev) => (prev === id ? null : id));
 	};
 
 	if (!data || data.length === 0) {
@@ -38,8 +33,7 @@ const FAQ: React.FC<FAQProps> = ({ data }) => {
 	return (
 		<View style={styles.container}>
 			{data.map((item, index) => {
-				const isActive = activeId === item.id;
-				const isAnswerExpanded = expandedAnswerId === item.id;
+				const isExpanded = expandedId === item.id;
 				const isLast = index === data.length - 1;
 
 				return (
@@ -56,19 +50,19 @@ const FAQ: React.FC<FAQProps> = ({ data }) => {
 							<Text
 								style={[
 									styles.question,
-									isActive && styles.questionActive,
+									isExpanded && styles.questionActive,
 								]}>
 								{item.question}
 							</Text>
 
 							<MaterialIcons
-								name={isActive ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+								name={isExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"}
 								size={26}
-								color={isActive ? "#4CAE38" : "#2E3A59"}
+								color={isExpanded ? "#4CAE38" : "#2E3A59"}
 							/>
 						</TouchableOpacity>
 
-						{isAnswerExpanded && item.answer ? (
+						{isExpanded && item.answer ? (
 							<View style={styles.answerContainer}>
 								<Text style={styles.answer}>{item.answer}</Text>
 							</View>

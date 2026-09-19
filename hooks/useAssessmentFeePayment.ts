@@ -2,8 +2,11 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { clearTransactionId, setTransactionId, useDispatch } from "@/store";
 import { trackAssessmentFeePaid } from "@/utils/analytics";
-import { checkEasebuzzPaymentStatus, errorHandler, URLS } from "@/utils/api";
+import { errorHandler, URLS } from "@/utils/api";
+// TODO: migrate off legacy API
+import { checkEasebuzzPaymentStatus } from "@/utils/api/kyc";
 import { axios } from "@/utils/api";
+import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
@@ -173,7 +176,7 @@ export const useAssessmentFeePayment = ({
 		const checkStatus = async (): Promise<boolean> => {
 			try {
 				const res = await checkEasebuzzPaymentStatus(txnId);
-				console.log("📥 [Payment] Easebuzz polling response:", res);
+				Logger.debug("Payment status polling response", res);
 
 				if (res.status === "success") {
 					if (paymentPollIntervalRef.current) {
@@ -229,7 +232,7 @@ export const useAssessmentFeePayment = ({
 					return true;
 				}
 			} catch (err) {
-				console.error("❌ [Payment] Error checking Easebuzz status:", err);
+				Logger.error("Payment status polling failed", err);
 			}
 			return false;
 		};
@@ -314,7 +317,7 @@ export const useAssessmentFeePayment = ({
 				version: Constants.expoConfig?.version,
 			};
 
-			console.log("💳 [Payment] Initiating checkout payload:", payload);
+			Logger.debug("Initiating payment checkout", payload);
 			const response = await axios.post<Partial<InitiatePaymentResponse>>(
 				URLS.payments.initiate_payment,
 				payload,
@@ -322,7 +325,7 @@ export const useAssessmentFeePayment = ({
 			return response.data;
 		},
 		onSuccess: async (data) => {
-			console.log("✅ [Payment] Initiate response received:", data?.payment_data?.order_id);
+			Logger.debug("Payment checkout initiated", data);
 
 			if (!data?.payment_data?.payment_link) {
 				Toast.show({
@@ -366,7 +369,7 @@ export const useAssessmentFeePayment = ({
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-			console.error("❌ [Payment] Initiate error:", error);
+			Logger.error("Payment initiation failed", error);
 
 			Toast.show({
 				type: "error",

@@ -3,10 +3,11 @@ import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
+import Logger from "@/utils/logger";
 import { axios, getUserDashboardData, URLS } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useRef, useState } from "react";
 import {
@@ -14,9 +15,11 @@ import {
 	Animated,
 	Linking,
 	Modal,
+	Platform,
 	Pressable,
 	SafeAreaView,
 	ScrollView,
+	StatusBar as RNStatusBar,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
@@ -53,8 +56,7 @@ const getLoanDetails = async (loanNumber: string) => {
 	console.log("API Endpoint:", `loans/${loanNumber}`);
 	console.log("Loan Number:", loanNumber);
 	console.log("Status:", response.status);
-	console.log("Full Response:", JSON.stringify(response.data, null, 2));
-	console.log("Loan Details:", response.data?.loan_details);
+	Logger.debug("My loan response", response.data);
 	console.log("============================");
 	return response.data;
 };
@@ -64,7 +66,7 @@ const downloadLoanAgreement = async (loanId: string) => {
 	try {
 		console.log("📄 Calling loan agreement download API for:", loanId);
 		const response = await axios.get(URLS.loan_agreement.download(loanId));
-		console.log("📄 Loan Agreement API Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Loan agreement response", response.data);
 		return response.data;
 	} catch (error) {
 		console.error("❌ Loan Agreement Download Error:", error);
@@ -77,7 +79,7 @@ const downloadInsurancePolicy = async () => {
 	try {
 		console.log("📄 Calling insurance policy download API");
 		const response = await axios.post("insurance/download-my-policy", {});
-		console.log("📄 Insurance Policy API Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Insurance policy response", response.data);
 		return response.data;
 	} catch (error) {
 		console.error("❌ Insurance Policy Download Error:", error);
@@ -90,7 +92,7 @@ const downloadNOC = async (loanId: string) => {
 	try {
 		console.log("📄 Calling NOC download API for loanId:", loanId);
 		const response = await axios.get(URLS.loans.noc(loanId));
-		console.log("📄 NOC API Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("NOC response", response.data);
 		return response.data;
 	} catch (error) {
 		console.error("❌ NOC Download Error:", error);
@@ -335,6 +337,16 @@ export default function MyLoan() {
 	const { t, currentLanguage, isHindi } = useTranslation();
 	const [showDownloadModal, setShowDownloadModal] = useState(false);
 	const slideAnim = useRef(new Animated.Value(height(100))).current;
+
+	useFocusEffect(
+		React.useCallback(() => {
+			RNStatusBar.setBarStyle("light-content");
+			if (Platform.OS === "android") {
+				RNStatusBar.setBackgroundColor("transparent");
+				RNStatusBar.setTranslucent(true);
+			}
+		}, [])
+	);
 
 	// Fetch dashboard data to get loan number and progress
 	const { data: dashboardData } = useNetworkAwareQuery({

@@ -1,14 +1,25 @@
 import { TranslatedText } from "@/components/TranslatedText";
-import { dark, white } from "@/constants/Colors";
+import { dark } from "@/constants/Colors";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import { axios, getUserDashboardData } from "@/utils/api";
-import { font, height, width } from "@/utils/dimensions";
+import { Images } from "@/constants/images";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { Image } from "expo-image";
+import { useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React from "react";
-import { ActivityIndicator, FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+	ActivityIndicator,
+	FlatList,
+	Platform,
+	StatusBar as RNStatusBar,
+	StyleSheet,
+	Text,
+	TouchableOpacity,
+	View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface LoanHistoryItem {
 	loan_id: string;
@@ -22,96 +33,104 @@ interface LoanHistoryItem {
 // API function to get loan history
 const getLoanHistory = async () => {
 	const apiUrl = "loans?skip=0&limit=50&loan_status=active";
-	console.log("📞 HISTORY TAB: Calling GET /v1/loans API with query params...");
-	console.log("📞 HISTORY TAB: API URL:", apiUrl);
-	console.log("📞 HISTORY TAB: Query Params: skip=0, limit=50, loan_status=active");
 	try {
 		const response = await axios.get(apiUrl);
-		console.log("✅ HISTORY TAB: API Success Response");
-		console.log("📊 HISTORY TAB: Status:", response.status);
-		console.log("📊 HISTORY TAB: Full Response:", JSON.stringify(response.data, null, 2));
-		console.log("📊 HISTORY TAB: Loans Array:", response.data?.loans);
-		console.log("📊 HISTORY TAB: Loans Count:", response.data?.loans?.length || 0);
-		if (response.data?.loans && Array.isArray(response.data.loans)) {
-			response.data.loans.forEach((loan: any, index: number) => {
-				console.log(`📋 HISTORY TAB: Loan ${index + 1}:`, {
-					loan_id: loan.loan_id,
-					loan_number: loan.loan_number,
-					status: loan.status,
-					loan_status: loan.loan_status,
-					amount: loan.amount,
-				});
-			});
-		}
-		console.log("=================================");
 		return response.data;
 	} catch (error: any) {
-		console.error("❌ HISTORY TAB: API Error:", error);
-		console.error("❌ HISTORY TAB: Error Response:", error?.response?.data);
-		console.error("❌ HISTORY TAB: Error URL:", error?.config?.url);
+		console.error("❌ Failed to fetch loan history:", error?.message || error);
 		throw error;
 	}
 };
 
-const formatIndianCurrency = (amount: number): string => {
-	return `₹${amount.toLocaleString("en-IN")}`;
+const formatLoanAmount = (amount?: number): string => {
+	if (typeof amount !== "number" || isNaN(amount)) return "₹0.00";
+	return `₹${amount.toFixed(2)}`;
 };
 
-const formatDate = (dateString: string): string => {
+const formatDateTime = (dateString?: string): string => {
+	if (!dateString) return "Jan 22, 2025 • 09:41 AM";
 	try {
 		const date = new Date(dateString);
-		return date.toLocaleDateString("en-IN", {
-			year: "numeric",
-			month: "short",
-			day: "numeric",
-		});
+		if (isNaN(date.getTime())) return dateString;
+
+		const months = [
+			"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+			"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+		];
+		const month = months[date.getMonth()];
+		const day = String(date.getDate()).padStart(2, "0");
+		const year = date.getFullYear();
+
+		let hours = date.getHours();
+		const minutes = String(date.getMinutes()).padStart(2, "0");
+		const ampm = hours >= 12 ? "PM" : "AM";
+		hours = hours % 12;
+		hours = hours ? hours : 12;
+		const formattedHours = String(hours).padStart(2, "0");
+
+		return `${month} ${day}, ${year} • ${formattedHours}:${minutes} ${ampm}`;
 	} catch {
 		return dateString;
 	}
 };
 
-const LoanHistoryItemComponent = ({ item, t }: { item: LoanHistoryItem; t: any }) => {
+const getStatusColor = (status: string): string => {
+	const normalized = (status || "").toLowerCase().trim();
+	if (normalized === "paid off" || normalized === "paid" || normalized === "closed") {
+		return "#16A34A"; // Green
+	}
+	if (normalized === "pending") {
+		return "#334155"; // Slate Dark Grey
+	}
+	if (normalized === "due soon") {
+		return "#F97316"; // Orange
+	}
+	if (normalized === "overdue") {
+		return "#EF4444"; // Red
+	}
+	if (normalized === "active") {
+		return "#16A34A";
+	}
+	return "#64748B";
+};
+
+const LoanHistoryItemComponent = ({ item }: { item: LoanHistoryItem }) => {
+	const statusColor = getStatusColor(item.status);
+
 	return (
 		<View style={styles.itemContainer}>
-			<View style={styles.leftSection}>
-				<Text style={styles.loanNumberText}>{item.loan_number}</Text>
-				<Text style={styles.amountText}>{formatIndianCurrency(item.amount)}</Text>
-				<Text style={styles.dateTimeText}>
-					{t("due")}: {formatDate(item.due_date)}
-				</Text>
+			<View style={styles.topRow}>
+				<Text style={styles.amountText}>{formatLoanAmount(item.amount)}</Text>
+				<Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
 			</View>
-			<View style={styles.rightSection}>
-				<View style={styles.statusContainer}>
-					<Text style={styles.statusText}>{item.status}</Text>
-				</View>
-			</View>
+			<Text style={styles.dateTimeText}>{formatDateTime(item.due_date)}</Text>
 		</View>
 	);
 };
 
 export default function History() {
 	const router = useRouter();
-	const { t, currentLanguage, isHindi } = useTranslation();
+	const insets = useSafeAreaInsets();
+	const { t } = useTranslation();
 
-	console.log("🏠 HISTORY TAB: Component rendered");
+	useFocusEffect(
+		React.useCallback(() => {
+			RNStatusBar.setBarStyle("dark-content");
+			if (Platform.OS === "android") {
+				RNStatusBar.setBackgroundColor("transparent");
+				RNStatusBar.setTranslucent(true);
+			}
+		}, [])
+	);
 
 	// Fetch dashboard data to get loan number
-	const { data: dashboardData, isLoading: isLoadingDashboard } = useNetworkAwareQuery({
+	useNetworkAwareQuery({
 		queryKey: ["userDashboard"],
 		queryFn: getUserDashboardData,
 	});
 
-	const loanNumber = (dashboardData as any)?.primary_loan?.loan_number;
-
-	console.log("📊 HISTORY TAB: Dashboard Data:", {
-		hasDashboardData: !!dashboardData,
-		isLoadingDashboard,
-		loanNumber,
-		primary_loan: (dashboardData as any)?.primary_loan,
-	});
-
-	// Fetch loan history - API doesn't require loan number (it's a list endpoint)
-	const { data: apiData, isLoading, error, isError } = useNetworkAwareQuery({
+	// Fetch loan history
+	const { data: apiData, isLoading } = useNetworkAwareQuery({
 		queryKey: ["loanHistory", "active"],
 		queryFn: getLoanHistory,
 		enabled: true,
@@ -121,7 +140,6 @@ export default function History() {
 	const loanHistoryData: LoanHistoryItem[] = apiData?.loans || [];
 
 	const handleLoanPress = (item: LoanHistoryItem) => {
-		console.log("👆 HISTORY TAB: Loan clicked:", item);
 		router.push({
 			pathname: "/loan-details" as any,
 			params: { loanNumber: item.loan_number },
@@ -129,18 +147,27 @@ export default function History() {
 	};
 
 	return (
-		<SafeAreaView style={styles.container}>
-			<StatusBar style="light" />
-			<View style={styles.header}>
-				<TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-					<Ionicons name="arrow-back" size={24} color={white} />
+		<View style={styles.container}>
+			<StatusBar style="dark" />
+
+			{/* Clean White Top Header */}
+			<View style={[styles.header, { paddingTop: insets.top + (Platform.OS === "android" ? 14 : 10) }]}>
+				<TouchableOpacity
+					style={styles.backButton}
+					onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+					hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+					<Ionicons name="arrow-back" size={24} color="#1E293B" />
 				</TouchableOpacity>
-				<TranslatedText style={styles.headerTitle} translationKey="history" />
+				<Text style={styles.headerTitle}>{t("loanHistory") || "Loan History"}</Text>
 			</View>
 
 			{isLoading ? (
 				<View style={styles.loadingContainer}>
-					<ActivityIndicator size="large" color={dark} />
+					<Image
+						source={Images.BOUNCING_BALL}
+						style={styles.loaderGif}
+						contentFit="contain"
+					/>
 					<TranslatedText style={styles.loadingText} translationKey="loading" />
 				</View>
 			) : loanHistoryData.length === 0 ? (
@@ -153,132 +180,107 @@ export default function History() {
 					data={loanHistoryData}
 					keyExtractor={(item) => item.loan_id}
 					renderItem={({ item }) => (
-						<TouchableOpacity onPress={() => handleLoanPress(item)} activeOpacity={0.7}>
-							<LoanHistoryItemComponent item={item} t={t} />
+						<TouchableOpacity onPress={() => handleLoanPress(item)} activeOpacity={0.8}>
+							<LoanHistoryItemComponent item={item} />
 						</TouchableOpacity>
 					)}
 					showsVerticalScrollIndicator={false}
 					contentContainerStyle={styles.listContainer}
 				/>
 			)}
-		</SafeAreaView>
+		</View>
 	);
 }
 
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: "#fff",
+		backgroundColor: "#FFFFFF",
 	},
 	header: {
 		flexDirection: "row",
 		alignItems: "center",
-		paddingHorizontal: width(4),
-		paddingTop: height(6),
-		paddingBottom: height(2),
-		backgroundColor: "#1a1a1a",
-		borderBottomWidth: 1,
-		borderBottomColor: "#333",
+		paddingHorizontal: 20,
+		paddingBottom: 16,
+		backgroundColor: "#FFFFFF",
 	},
 	backButton: {
-		padding: width(2),
-		marginRight: width(3),
+		marginRight: 16,
 	},
 	headerTitle: {
-		fontSize: font(2.4),
+		fontSize: 22,
 		fontWeight: "700",
-		color: white,
-		flex: 1,
-	},
-	content: {
-		flex: 1,
-		alignItems: "center",
-		justifyContent: "center",
-		paddingHorizontal: width(6),
-	},
-	professionalText: {
-		fontSize: font(2),
-		color: "#666",
-		textAlign: "center",
-		lineHeight: font(2.6),
-		paddingHorizontal: width(4),
+		color: "#1E293B",
+		letterSpacing: -0.3,
 	},
 	listContainer: {
-		paddingTop: height(3),
-		paddingBottom: height(5),
+		paddingTop: 10,
+		paddingBottom: 40,
 	},
 	itemContainer: {
+		backgroundColor: "#F8F9FE",
+		marginHorizontal: 20,
+		marginBottom: 14,
+		paddingHorizontal: 20,
+		paddingVertical: 18,
+		borderRadius: 18,
+		borderWidth: 1,
+		borderColor: "#EAEFF8",
+	},
+	topRow: {
 		flexDirection: "row",
 		justifyContent: "space-between",
 		alignItems: "center",
-		paddingVertical: height(3),
-		paddingHorizontal: width(5),
-		backgroundColor: "#F6F7FF",
-		marginHorizontal: width(4),
-		marginVertical: height(1),
-		borderRadius: 12,
-	},
-	leftSection: {
-		flex: 1,
-	},
-	loanNumberText: {
-		fontSize: font(2.2),
-		fontWeight: "700",
-		color: dark,
-		marginBottom: height(0.5),
 	},
 	amountText: {
-		fontSize: font(2),
-		fontWeight: "600",
-		color: dark,
-		marginBottom: height(0.5),
-	},
-	dateTimeText: {
-		fontSize: font(1.8),
-		color: "#64748B",
-		fontWeight: "400",
-	},
-	rightSection: {
-		alignItems: "flex-end",
-	},
-	statusContainer: {
-		backgroundColor: white,
-		borderRadius: 16,
-		paddingHorizontal: width(3),
-		paddingVertical: height(0.8),
+		fontSize: 24,
+		fontWeight: "800",
+		color: "#1E293B",
+		letterSpacing: -0.5,
 	},
 	statusText: {
-		fontSize: font(1.8),
-		fontWeight: "500",
-		color: dark,
+		fontSize: 14,
+		fontWeight: "700",
+		letterSpacing: 0.2,
+	},
+	dateTimeText: {
+		fontSize: 13,
+		color: "#94A3B8",
+		fontWeight: "400",
+		marginTop: 6,
 	},
 	loadingContainer: {
 		flex: 1,
 		justifyContent: "center",
 		alignItems: "center",
 	},
+	loaderGif: {
+		width: 280,
+		height: 210,
+	},
 	loadingText: {
-		fontSize: font(1.8),
-		color: dark,
-		marginTop: height(2),
+		fontSize: 16,
+		fontWeight: "500",
+		color: "#64748B",
+		marginTop: 8,
 	},
 	emptyContainer: {
 		flex: 1,
 		justifyContent: "center",
 		alignItems: "center",
-		paddingHorizontal: width(8),
+		paddingHorizontal: 32,
 	},
 	emptyTitle: {
-		fontSize: font(2.4),
+		fontSize: 20,
 		fontWeight: "700",
-		color: dark,
-		marginBottom: height(2),
+		color: "#1E293B",
+		marginBottom: 8,
 		textAlign: "center",
 	},
 	emptyText: {
-		fontSize: font(1.8),
+		fontSize: 14,
 		color: "#64748B",
 		textAlign: "center",
-		lineHeight: font(2.6),
+		lineHeight: 20,
 	},
 });

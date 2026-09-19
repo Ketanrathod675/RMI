@@ -9,8 +9,8 @@ import {
 	type RootState,
 	type SigninState,
 } from "@/store";
-import { decode, encode } from "@/utils/encode_decode";
-import { getStorageItem, removeStorageItem, setStorageItem } from "@/utils/storage";
+import SecureStorage from "@/utils/secure-storage";
+import { removeStorageItem } from "@/utils/storage";
 import { useCallback, useEffect } from "react";
 import { useSelector } from "react-redux";
 
@@ -35,16 +35,12 @@ export const useSignin = (shouldLoadOtpVerifyResponse = false) => {
 	);
 
 	const loadOtpVerifyResponse = useCallback(async () => {
-		const otpVerifyResponse = await getStorageItem("@otp-verify-response");
+		const otpVerifyResponse = await SecureStorage.getSensitiveWithLegacyMigration("@otp-verify-response");
 
 		if (!otpVerifyResponse) return false;
 
 		try {
-			const decodedOtpVerifyResponse = decode(otpVerifyResponse);
-
-			if (!decodedOtpVerifyResponse) return false;
-
-			dispatch(setOtpVerifyResponse(JSON.parse(decodedOtpVerifyResponse)));
+			dispatch(setOtpVerifyResponse(JSON.parse(otpVerifyResponse)));
 
 			return true;
 		} catch {}
@@ -77,7 +73,7 @@ export const useSignin = (shouldLoadOtpVerifyResponse = false) => {
 
 	const changeOtpVerifyResponse = useCallback(
 		(otpVerifyResponse: NonNullable<SigninState["otpVerifyResponse"]>) => {
-			setStorageItem("@otp-verify-response", encode(JSON.stringify(otpVerifyResponse)));
+			void SecureStorage.setSensitive("@otp-verify-response", JSON.stringify(otpVerifyResponse));
 
 			dispatch(setOtpVerifyResponse(otpVerifyResponse));
 		},
@@ -85,7 +81,8 @@ export const useSignin = (shouldLoadOtpVerifyResponse = false) => {
 	);
 
 	const clearOtpVerify = useCallback(() => {
-		removeStorageItem("@otp-verify-response");
+		void SecureStorage.removeSensitive("@otp-verify-response");
+		void removeStorageItem("@otp-verify-response");
 		dispatch(clearOtpVerifyResponse());
 	}, [dispatch]);
 

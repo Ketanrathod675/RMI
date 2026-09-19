@@ -12,14 +12,19 @@ import {
 import React, { useEffect, useState } from "react";
 import {
 	Modal,
+	Platform,
+	ScrollView,
 	StyleSheet,
 	Switch,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
+import { getApiBaseUrl, setApiBaseUrl } from "@/utils/api";
+import CONFIG from "@/utils/config";
 
 export function DevMockBanner() {
 	// Guard #1: Physical static return in release builds
@@ -31,6 +36,7 @@ export function DevMockBanner() {
 	const [isMockEnabled, setIsMockEnabled] = useState(getIsMockModeEnabled());
 	const [showDevModal, setShowDevModal] = useState(false);
 	const [options, setOptions] = useState<DevMockOptions>(getDevMockOptions());
+	const [activeUrl, setActiveUrl] = useState(getApiBaseUrl());
 
 	useEffect(() => {
 		initDevMockMode().then((enabled) => {
@@ -124,158 +130,278 @@ export function DevMockBanner() {
 							Mock API configuration (Persisted in AsyncStorage)
 						</Text>
 
-						<View style={styles.optionRow}>
-							<View style={styles.optionTextContainer}>
-								<Text style={styles.optionLabel}>Enable Mock API Mode</Text>
-								<Text style={styles.optionDesc}>
-									Bypasses backend and returns simulated login & OTP responses
-								</Text>
-							</View>
-							<Switch value={isMockEnabled} onValueChange={handleToggle} />
-						</View>
-
-						<View style={styles.divider} />
-
-						{/* Workflow Current Step Section */}
-						<Text style={styles.sectionHeader}>Workflow Current Step</Text>
-						<View style={styles.activeStepContainer}>
-							<Text style={styles.activeStepLabel}>Active Step in Mock Dashboard:</Text>
-							<Text style={styles.activeStepValue}>{currentStepVal}</Text>
-						</View>
-
-						<View style={styles.stepChipsRow}>
-							{[
-								{ label: "Personal Details", value: "personal_details" },
-								{ label: "Assessment Fee", value: "assessment_fee_payment" },
-								{ label: "Professional Details", value: "professional_details" },
-								{ label: "CKYC", value: "ckyc" },
-								{ label: "Address KYC", value: "address_submission" },
-							].map((item) => (
-								<TouchableOpacity
-									key={item.value}
-									style={[
-										styles.stepChip,
-										currentStepVal === item.value && styles.stepChipActive,
-									]}
-									onPress={() => handleSetStep(item.value)}
-									activeOpacity={0.75}>
-									<Text
-										style={[
-											styles.stepChipText,
-											currentStepVal === item.value && styles.stepChipTextActive,
-										]}>
-										{item.label}
+						<ScrollView
+							style={styles.modalScroll}
+							contentContainerStyle={styles.modalScrollContent}
+							showsVerticalScrollIndicator={true}
+							keyboardShouldPersistTaps="handled">
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>Enable Mock API Mode</Text>
+									<Text style={styles.optionDesc}>
+										Bypasses backend and returns simulated login & OTP responses
 									</Text>
-								</TouchableOpacity>
-							))}
-						</View>
-
-						<TouchableOpacity
-							style={styles.resetStepButton}
-							onPress={handleResetStep}
-							activeOpacity={0.8}>
-							<Text style={styles.resetStepButtonText}>
-								🔄 Reset Step to "personal_details"
-							</Text>
-						</TouchableOpacity>
-
-						<View style={styles.divider} />
-
-						<Text style={styles.sectionHeader}>Simulated Response Flags</Text>
-
-						<View style={styles.optionRow}>
-							<View style={styles.optionTextContainer}>
-								<Text style={styles.optionLabel}>Permission Given</Text>
-								<Text style={styles.optionDesc}>
-									Routes to /(tabs) if true, /request-permissions if false
-								</Text>
+								</View>
+								<Switch value={isMockEnabled} onValueChange={handleToggle} />
 							</View>
-							<Switch
-								value={options.permissionGiven}
-								onValueChange={() => handleOptionToggle("permissionGiven")}
-							/>
-						</View>
 
-						<View style={styles.optionRow}>
-							<View style={styles.optionTextContainer}>
-								<Text style={styles.optionLabel}>First Time User (New Signup)</Text>
-								<Text style={styles.optionDesc}>
-									Simulates is_first_login flag in verify-otp response
-								</Text>
-							</View>
-							<Switch
-								value={options.isFirstLogin}
-								onValueChange={() => handleOptionToggle("isFirstLogin")}
-							/>
-						</View>
+							<View style={styles.divider} />
 
-						<View style={styles.optionRow}>
-							<View style={styles.optionTextContainer}>
-								<Text style={styles.optionLabel}>Soft Pull Consent Required</Text>
-								<Text style={styles.optionDesc}>
-									Shows soft-pull checkbox on OTP screen if enabled
-								</Text>
-							</View>
-							<Switch
-								value={options.softPullConsentRequired}
-								onValueChange={() =>
-									handleOptionToggle("softPullConsentRequired")
-								}
-							/>
-						</View>
-
-						<View style={styles.divider} />
-						<Text style={styles.sectionHeader}>CKYC & Face Match Simulation</Text>
-
-						<Text style={styles.optionDesc}>Mount check outcome:</Text>
-						<View style={styles.stepChipsRow}>
-							{[
-								{ label: "Happy Path", value: "happy_path" },
-								{ label: "DigiLocker Redirect", value: "digilocker_redirect" },
-								{ label: "Reapply (Selfie)", value: "reapplication_selfie" },
-							].map((item) => (
+							{/* Backend Server Target Section */}
+							<Text style={styles.sectionHeader}>🌐 Backend Server Target</Text>
+							<Text style={styles.optionDesc}>Active Base URL for live requests:</Text>
+							<View style={[styles.stepChipsRow, { marginTop: 6 }]}>
 								<TouchableOpacity
-									key={item.value}
 									style={[
 										styles.stepChip,
-										(options.ckycOutcome || "happy_path") === item.value && styles.stepChipActive,
+										activeUrl === CONFIG.API.BASE_URL && styles.stepChipActive,
 									]}
 									onPress={() => {
-										updateDevMockOptions({ ckycOutcome: item.value as any });
+										setApiBaseUrl(CONFIG.API.BASE_URL);
+										setActiveUrl(CONFIG.API.BASE_URL);
+										Toast.show({
+											type: "info",
+											text1: "Target: Local FastAPI",
+											text2: CONFIG.API.BASE_URL,
+										});
 									}}
 									activeOpacity={0.75}>
 									<Text
 										style={[
 											styles.stepChipText,
-											(options.ckycOutcome || "happy_path") === item.value && styles.stepChipTextActive,
+											activeUrl === CONFIG.API.BASE_URL && styles.stepChipTextActive,
 										]}>
-										{item.label}
+										🖥️ Local FastAPI (Port 8000)
 									</Text>
 								</TouchableOpacity>
-							))}
-						</View>
 
-						<View style={styles.optionRow}>
-							<View style={styles.optionTextContainer}>
-								<Text style={styles.optionLabel}>Face Match Successful</Text>
-								<Text style={styles.optionDesc}>Simulates whether selfie matches Aadhaar</Text>
+								<TouchableOpacity
+									style={[
+										styles.stepChip,
+										activeUrl === CONFIG.API.BASE_URL && styles.stepChipActive,
+									]}
+									onPress={() => {
+										setApiBaseUrl(CONFIG.API.BASE_URL);
+										setActiveUrl(CONFIG.API.BASE_URL);
+										Toast.show({
+											type: "info",
+											text1: "Target: Cloud / UAT",
+											text2: CONFIG.API.BASE_URL,
+										});
+									}}
+									activeOpacity={0.75}>
+									<Text
+										style={[
+											styles.stepChipText,
+											activeUrl === CONFIG.API.BASE_URL && styles.stepChipTextActive,
+										]}>
+										☁️ Cloud / UAT Server
+									</Text>
+								</TouchableOpacity>
 							</View>
-							<Switch
-								value={options.faceMatchSuccess !== false}
-								onValueChange={() => handleOptionToggle("faceMatchSuccess")}
-							/>
-						</View>
 
-						<View style={styles.optionRow}>
-							<View style={styles.optionTextContainer}>
-								<Text style={styles.optionLabel}>CKYC Send OTP Success</Text>
-								<Text style={styles.optionDesc}>Simulates CKYC OTP dispatch</Text>
+							<View style={styles.divider} />
+
+							{/* Quick Screen Preview Navigation */}
+							<Text style={styles.sectionHeader}>🚀 Quick Screen Navigation (DEV)</Text>
+							<Text style={styles.optionDesc}>
+								Directly preview newly added screens for visual inspection:
+							</Text>
+
+							<View style={styles.quickNavList}>
+								<TouchableOpacity
+									style={styles.quickNavCard}
+									onPress={() => {
+										setShowDevModal(false);
+										router.push("/application-verification" as any);
+									}}
+									activeOpacity={0.75}>
+									<View style={styles.quickNavHeader}>
+										<Text style={styles.quickNavTitle}>Application Verification</Text>
+										<Text style={[styles.quickNavBadge, { backgroundColor: "#E0F2FE", color: "#0284C7" }]}>
+											BRE QUEUE
+										</Text>
+									</View>
+									<Text style={styles.quickNavRoute}>/application-verification</Text>
+								</TouchableOpacity>
+
+								<TouchableOpacity
+									style={styles.quickNavCard}
+									onPress={() => {
+										setShowDevModal(false);
+										router.push("/application-approved" as any);
+									}}
+									activeOpacity={0.75}>
+									<View style={styles.quickNavHeader}>
+										<Text style={styles.quickNavTitle}>Application Approved</Text>
+										<Text style={[styles.quickNavBadge, { backgroundColor: "#DCFCE7", color: "#16A34A" }]}>
+											HB REAPPLY
+										</Text>
+									</View>
+									<Text style={styles.quickNavRoute}>/application-approved</Text>
+								</TouchableOpacity>
+
+								<TouchableOpacity
+									style={styles.quickNavCard}
+									onPress={() => {
+										setShowDevModal(false);
+										router.push("/loan-congratulations" as any);
+									}}
+									activeOpacity={0.75}>
+									<View style={styles.quickNavHeader}>
+										<Text style={styles.quickNavTitle}>Loan Congratulations</Text>
+										<Text style={[styles.quickNavBadge, { backgroundColor: "#FEF3C7", color: "#D97706" }]}>
+											POST-ENACH
+										</Text>
+									</View>
+									<Text style={styles.quickNavRoute}>/loan-congratulations</Text>
+								</TouchableOpacity>
 							</View>
-							<Switch
-								value={options.ckycSendOtpSuccess !== false}
-								onValueChange={() => handleOptionToggle("ckycSendOtpSuccess")}
-							/>
-						</View>
+
+							<View style={styles.divider} />
+
+							{/* Workflow Current Step Section */}
+							<Text style={styles.sectionHeader}>Workflow Current Step</Text>
+							<View style={styles.activeStepContainer}>
+								<Text style={styles.activeStepLabel}>Active Step in Mock Dashboard:</Text>
+								<Text style={styles.activeStepValue}>{currentStepVal}</Text>
+							</View>
+
+							<View style={styles.stepChipsRow}>
+								{[
+									{ label: "Personal Details", value: "personal_details" },
+									{ label: "Assessment Fee", value: "assessment_fee_payment" },
+									{ label: "Credit Queue", value: "credit_queue" },
+									{ label: "Professional Details", value: "professional_details" },
+									{ label: "CKYC", value: "ckyc" },
+									{ label: "Address KYC", value: "address_submission" },
+								].map((item) => (
+									<TouchableOpacity
+										key={item.value}
+										style={[
+											styles.stepChip,
+											currentStepVal === item.value && styles.stepChipActive,
+										]}
+										onPress={() => handleSetStep(item.value)}
+										activeOpacity={0.75}>
+										<Text
+											style={[
+												styles.stepChipText,
+												currentStepVal === item.value && styles.stepChipTextActive,
+											]}>
+											{item.label}
+										</Text>
+									</TouchableOpacity>
+								))}
+							</View>
+
+							<TouchableOpacity
+								style={styles.resetStepButton}
+								onPress={handleResetStep}
+								activeOpacity={0.8}>
+								<Text style={styles.resetStepButtonText}>
+									🔄 Reset Step to "personal_details"
+								</Text>
+							</TouchableOpacity>
+
+							<View style={styles.divider} />
+
+							<Text style={styles.sectionHeader}>Simulated Response Flags</Text>
+
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>Permission Given</Text>
+									<Text style={styles.optionDesc}>
+										Routes to /(tabs) if true, /request-permissions if false
+									</Text>
+								</View>
+								<Switch
+									value={options.permissionGiven}
+									onValueChange={() => handleOptionToggle("permissionGiven")}
+								/>
+							</View>
+
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>First Time User (New Signup)</Text>
+									<Text style={styles.optionDesc}>
+										Simulates is_first_login flag in verify-otp response
+									</Text>
+								</View>
+								<Switch
+									value={options.isFirstLogin}
+									onValueChange={() => handleOptionToggle("isFirstLogin")}
+								/>
+							</View>
+
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>Soft Pull Consent Required</Text>
+									<Text style={styles.optionDesc}>
+										Shows soft-pull checkbox on OTP screen if enabled
+									</Text>
+								</View>
+								<Switch
+									value={options.softPullConsentRequired}
+									onValueChange={() =>
+										handleOptionToggle("softPullConsentRequired")
+									}
+								/>
+							</View>
+
+							<View style={styles.divider} />
+							<Text style={styles.sectionHeader}>CKYC & Face Match Simulation</Text>
+
+							<Text style={styles.optionDesc}>Mount check outcome:</Text>
+							<View style={styles.stepChipsRow}>
+								{[
+									{ label: "Happy Path", value: "happy_path" },
+									{ label: "DigiLocker Redirect", value: "digilocker_redirect" },
+									{ label: "Reapply (Selfie)", value: "reapplication_selfie" },
+								].map((item) => (
+									<TouchableOpacity
+										key={item.value}
+										style={[
+											styles.stepChip,
+											(options.ckycOutcome || "happy_path") === item.value && styles.stepChipActive,
+										]}
+										onPress={() => {
+											updateDevMockOptions({ ckycOutcome: item.value as any });
+										}}
+										activeOpacity={0.75}>
+										<Text
+											style={[
+												styles.stepChipText,
+												(options.ckycOutcome || "happy_path") === item.value && styles.stepChipTextActive,
+											]}>
+											{item.label}
+										</Text>
+									</TouchableOpacity>
+								))}
+							</View>
+
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>Face Match Successful</Text>
+									<Text style={styles.optionDesc}>Simulates whether selfie matches Aadhaar</Text>
+								</View>
+								<Switch
+									value={options.faceMatchSuccess !== false}
+									onValueChange={() => handleOptionToggle("faceMatchSuccess")}
+								/>
+							</View>
+
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>CKYC Send OTP Success</Text>
+									<Text style={styles.optionDesc}>Simulates CKYC OTP dispatch</Text>
+								</View>
+								<Switch
+									value={options.ckycSendOtpSuccess !== false}
+									onValueChange={() => handleOptionToggle("ckycSendOtpSuccess")}
+								/>
+							</View>
+						</ScrollView>
 
 						<TouchableOpacity
 							style={styles.closeButton}
@@ -334,6 +460,48 @@ const styles = StyleSheet.create({
 		padding: 20,
 		width: "100%",
 		maxWidth: 400,
+		maxHeight: "85%",
+	},
+	modalScroll: {
+		maxHeight: 480,
+	},
+	modalScrollContent: {
+		paddingBottom: 10,
+	},
+	quickNavList: {
+		marginTop: 8,
+		gap: 8,
+	},
+	quickNavCard: {
+		backgroundColor: "#F8FAFC",
+		borderWidth: 1,
+		borderColor: "#E2E8F0",
+		borderRadius: 8,
+		padding: 10,
+	},
+	quickNavHeader: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		marginBottom: 2,
+	},
+	quickNavTitle: {
+		fontSize: 13,
+		fontWeight: "700",
+		color: "#0F172A",
+	},
+	quickNavBadge: {
+		fontSize: 9,
+		fontWeight: "700",
+		paddingHorizontal: 6,
+		paddingVertical: 2,
+		borderRadius: 4,
+		overflow: "hidden",
+	},
+	quickNavRoute: {
+		fontSize: 11,
+		color: "#64748B",
+		fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
 	},
 	modalTitle: {
 		fontSize: 18,

@@ -1,6 +1,8 @@
-import { decode } from "@/utils/encode_decode";
-import { getStorageItem, STORAGE_KEYS } from "@/utils/storage";
-import { axios, DIGILOCKER_BASE_URL, URLS } from ".";
+// LEGACY — old backend, disabled during in-house rebuild
+import Logger from "@/utils/logger";
+import SecureStorage from "@/utils/secure-storage";
+import { STORAGE_KEYS } from "@/utils/storage";
+import { axios, URLS } from ".";
 
 // region: VERIFY PAN
 
@@ -28,8 +30,7 @@ export type VerifyPanResponseType = {
 };
 
 export const verifyPan = async (data: VerifyPanRequestType) => {
-	const encodedToken = await getStorageItem(STORAGE_KEYS["@access-token"]);
-	const token = encodedToken ? decode(encodedToken) : "";
+	const token = (await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"])) || "";
 	
 	const response = await axios.post<Partial<VerifyPanResponseType>>(
 		URLS.kyc.verify_pan, 
@@ -41,8 +42,7 @@ export const verifyPan = async (data: VerifyPanRequestType) => {
 		}
 	);
 
-	console.log("=== VERIFY PAN API RESPONSE ===");
-	console.log(JSON.stringify(response.data, null, 2));
+	Logger.debug("PAN verification response", response.data);
 
 	return response.data;
 };
@@ -167,7 +167,7 @@ export const getProfessionalDetails = async () => {
 	try {
 		console.log("🚀 Calling GET /kyc/professional-details");
 		const response = await axios.get<ProfessionalDetailsResponseType>(URLS.kyc.professional_details);
-		console.log("📥 Get Professional Details Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Get professional details response", response.data);
 		return response.data;
 	} catch (error: any) {
 		console.error("❌ Get Professional Details API error:", error);
@@ -364,7 +364,7 @@ export const verifyAddress = async (data: AddressVerificationRequestType) => {
 
 		return response.data;
 	} catch (error: any) {
-		console.error("Address verification API error:", error);
+		Logger.error("Address verification API error", error);
 		throw error;
 	}
 };
@@ -419,7 +419,7 @@ export const uploadKycDocument = async (data: UploadKycDocumentRequestType) => {
 
 		return response.data;
 	} catch (error: any) {
-		console.error("Upload document API error:", error);
+		Logger.error("Upload document API error", error);
 		throw error;
 	}
 };
@@ -466,7 +466,7 @@ export const getLoanTerms = async () => {
 		console.log("🚀 Calling GET /api/v1/loans/loan-terms for interest rate data");
 		const response = await axios.get<Partial<LoanTermsResponseType>>(URLS.loans.loan_terms);
 
-		console.log("📥 Loan Terms API Full Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Loan terms response", response.data);
 		
 		// Log specific interest rate data
 		if (response.data?.loan_terms) {
@@ -474,8 +474,7 @@ export const getLoanTerms = async () => {
 			console.log("💰 Interest Rate Data from Backend:");
 			console.log(`   - Interest Rate: ${interest_rate}%`);
 			console.log(`   - Monthly Rate: ${monthly_rate}%`);
-			console.log(`   - Amount Approved: ${response.data.loan_terms.amount_approved}`);
-			console.log(`   - Tenure Days: ${response.data.loan_terms.tenure_days}`);
+			Logger.debug("Loan terms received", response.data.loan_terms);
 		} else {
 			console.warn("⚠️ No loan_terms found in response");
 		}
@@ -539,7 +538,7 @@ export const submitLoanApplication = async (data: SubmitLoanApplicationRequestTy
 
 		return response.data;
 	} catch (error: any) {
-		console.error("Submit loan application API error:", error);
+		Logger.error("Submit loan application API error", error);
 		throw error;
 	}
 };
@@ -571,18 +570,15 @@ export type GenerateDigitalLockerUrlResponseType = {
 
 export const generateDigitalLockerUrl = async (data: GenerateDigitalLockerUrlRequestType) => {
 	try {
-		// Using the external API URL from the image
+		// The RapidMoney backend proxies provider credentials; the app never holds them.
 		const response = await axios.post<GenerateDigitalLockerUrlResponseType>(
 			URLS.digilocker.generate_url,
 			data,
-			{
-				baseURL: DIGILOCKER_BASE_URL,
-			},
 		);
 
 		return response.data;
 	} catch (error: any) {
-		console.error("Digital Locker API error:", error?.response?.data);
+		Logger.error("Digital Locker API error", error);
 		throw error;
 	}
 };
@@ -662,14 +658,11 @@ export const fetchKycDetails = async (data: FetchKycDetailsRequestType) => {
 		const response = await axios.post<FetchKycDetailsResponseType>(
 			URLS.digilocker.kyc_details,
 			data,
-			{
-				baseURL: DIGILOCKER_BASE_URL,
-			},
 		);
 
 		return response.data;
 	} catch (error: any) {
-		console.error("Fetch KYC Details API error:", error);
+		Logger.error("Fetch KYC details API error", error);
 		throw error;
 	}
 };
@@ -732,14 +725,14 @@ export type SaveDigilockerDataResponseType = {
 
 export const saveDigilockerData = async (data: SaveDigilockerDataRequestType) => {
 	console.log("🚀 Calling POST /kyc/save-digilocker");
-	console.log("📤 Request Data:", JSON.stringify(data, null, 2));
+	Logger.debug("Saving DigiLocker data", data);
 
 	const response = await axios.post<SaveDigilockerDataResponseType>(
 		URLS.kyc.save_digilocker,
 		data,
 	);
 
-	console.log("📥 Response Data:", JSON.stringify(response.data, null, 2));
+	Logger.debug("Save DigiLocker response", response.data);
 
 	return response.data;
 };
@@ -763,8 +756,7 @@ export type VerifyEmailResponse = {
 };
 
 export const verifyEmail = async (email: string) => {
-	const encodedToken = await getStorageItem(STORAGE_KEYS["@access-token"]);
-	const token = encodedToken ? decode(encodedToken) : "";
+	const token = (await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"])) || "";
 
 	const response = await axios.get<VerifyEmailResponse>(
 		URLS.kyc.verify_email(email),
@@ -798,11 +790,11 @@ export type InitialApprovalRequestType = {
 
 export const initialApproval = async (data: InitialApprovalRequestType) => {
 	console.log("=== INITIAL APPROVAL REQUEST ===");
-	console.log(JSON.stringify(data, null, 2));
+	Logger.debug("Submitting initial approval request", data);
 
 	const response = await axios.post<InitialApprovalResponseType>("kyc/initial-approval", data);
 	console.log("=== INITIAL APPROVAL RESPONSE ===");
-	console.log(JSON.stringify(response.data, null, 2));
+	Logger.debug("Initial approval response", response.data);
 	return response.data;
 };
 
@@ -832,7 +824,7 @@ export const getMyDetails = async () => {
     try {
         console.log("🚀 Calling GET /kyc/get-my-details");
         const response = await axios.get<GetMyDetailsResponseType>(URLS.kyc.get_my_details);
-        console.log("📥 Get My Details Response:", JSON.stringify(response.data, null, 2));
+        Logger.debug("Get my details response", response.data);
         return response.data;
     } catch (error: any) {
         console.error("❌ Get My Details API error:", error);
@@ -856,7 +848,7 @@ export const getMyCkyc = async () => {
     try {
         console.log("🚀 Calling GET /kyc/get-my-ckyc");
         const response = await axios.get<GetMyCkycResponseType>(URLS.kyc.get_my_ckyc);
-        console.log("📥 Get My CKYC Response:", JSON.stringify(response.data, null, 2));
+        Logger.debug("Get my CKYC response", response.data);
         return response.data;
     } catch (error: any) {
         console.error("❌ Get My CKYC API error:", error);
@@ -878,7 +870,7 @@ export const verifyLeadCreation = async () => {
 	try {
 		console.log("🚀 Calling GET /kyc/verify-lead-creation");
 		const response = await axios.get<VerifyLeadCreationResponseType>(URLS.kyc.verify_lead_creation);
-		console.log("📥 Verify Lead Creation Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Verify lead creation response", response.data);
 		return response.data;
 	} catch (error: any) {
 		console.error("❌ Verify Lead Creation API error:", error);

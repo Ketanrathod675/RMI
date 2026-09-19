@@ -1,4 +1,6 @@
+// LEGACY — old backend, disabled during in-house rebuild
 import { URLS, axios } from ".";
+import Logger from "@/utils/logger";
 
 // region: IFSC LOOKUP
 
@@ -195,7 +197,7 @@ export const submitBankDetails = async (data: BankDetailsSubmitRequestType) => {
 	try {
 		console.log("=== SUBMITTING BANK DETAILS ===");
 		console.log("Endpoint:", URLS.bank_details.submit);
-		console.log("Payload:", JSON.stringify(data, null, 2));
+		Logger.debug("Submitting bank details", data);
 		console.log("==============================");
 
 		const response = await axios.post<Partial<BankDetailsSubmitResponseType>>(
@@ -205,7 +207,7 @@ export const submitBankDetails = async (data: BankDetailsSubmitRequestType) => {
 
 		console.log("=== BANK DETAILS SUBMIT RESPONSE ===");
 		console.log("Status:", response.status);
-		console.log("Response:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Bank details submission response", response.data);
 		console.log("===================================");
 
 		return response.data;
@@ -248,8 +250,7 @@ export const getBankAccounts = async (): Promise<GetBankAccountsResponseType> =>
 
 		console.log("=== GET BANK ACCOUNTS API RESPONSE ===");
 		console.log("Status:", response.status);
-		console.log("Full Response Object:", JSON.stringify(response, null, 2));
-		console.log("Response Data:", JSON.stringify(response.data, null, 2));
+		Logger.debug("Bank accounts response", response.data);
 		console.log("Response Data Type:", typeof response.data);
 		console.log("Is Array:", Array.isArray(response.data));
 		console.log("Array Length:", Array.isArray(response.data) ? response.data.length : "N/A");
@@ -310,7 +311,7 @@ export const getBankDetailsHbPartner = async () => {
 	const response = await axios.get<BankDetailsHbPartnerResponseType>(
 		URLS.bank_details.hb_partner,
 	);
-	console.log("📥 Get Bank Details Hb Partner Response:", JSON.stringify(response.data, null, 2));
+	Logger.debug("HB partner bank details response", response.data);
 
 	return response.data;
 };

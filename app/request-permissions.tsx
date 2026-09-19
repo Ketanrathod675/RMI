@@ -64,7 +64,7 @@ export default function RequestPermissions() {
 		requestPermissions: requestNotificationPermissions,
 		permissions: notificationPermissions,
 	} = useNotifications();
-	const { loginResponse } = useSignin();
+	const { loginResponse, otpVerifyResponse } = useSignin(true);
 
 	const navigation = useNavigation();
 	const appState = useRef(AppState.currentState);
@@ -163,8 +163,8 @@ export default function RequestPermissions() {
 
 		setIsLoading(true);
 
+		// Step 1: Call mark-consent-permission API
 		try {
-			// Step 1: Call mark-consent-permission API
 			if (__DEV__) {
 				console.log("🚀 Calling POST /workflow/mark-consent-permission");
 			}
@@ -172,8 +172,14 @@ export default function RequestPermissions() {
 			if (__DEV__) {
 				console.log("✅ Consent API Response status:", response.status);
 			}
+		} catch (error: any) {
+			if (__DEV__) {
+				console.warn("⚠️ [Consent] mark-consent-permission not available on backend (non-fatal):", error?.message);
+			}
+		}
 
-			// Step 2: Call mark_permissions API
+		// Step 2: Call mark_permissions API
+		try {
 			if (__DEV__) {
 				console.log("🚀 Calling POST /users/permissions");
 			}
@@ -183,15 +189,8 @@ export default function RequestPermissions() {
 			}
 		} catch (error: any) {
 			if (__DEV__) {
-				console.error("❌ API Error:", error?.response?.data || error);
+				console.warn("⚠️ [Permissions] mark_permissions not available on backend (non-fatal):", error?.message);
 			}
-			Toast.show({
-				type: "error",
-				text1: t("error"),
-				text2: error?.response?.data?.message || t("somethingWentWrong"),
-			});
-			setIsLoading(false);
-			return;
 		}
 
 		// Step 3: Request Camera Permission
@@ -212,7 +211,26 @@ export default function RequestPermissions() {
 			}
 		}
 
-		// Step 5: Determine next screen dynamically from Dashboard data
+		// Step 5: Determine next screen dynamically from login signal or Dashboard data
+		const verifyOtpData = (otpVerifyResponse as any) || (loginResponse as any);
+		if (verifyOtpData?.next_step === "dashboard" || verifyOtpData?.is_profile_completed === true) {
+			if (__DEV__) {
+				console.log("🎯 [request-permissions] Verified user profile completed -> routing to /(tabs)");
+			}
+			setIsLoading(false);
+			router.replace("/(tabs)");
+			return;
+		}
+
+		if (verifyOtpData?.next_step === "basic_details" || verifyOtpData?.is_profile_completed === false) {
+			if (__DEV__) {
+				console.log("🎯 [request-permissions] New user / profile incomplete -> routing to /loan-application");
+			}
+			setIsLoading(false);
+			router.replace("/loan-application" as any);
+			return;
+		}
+
 		try {
 			if (__DEV__) {
 				console.log("🔄 Fetching dashboard data to determine next step...");
@@ -226,7 +244,6 @@ export default function RequestPermissions() {
 					currentStep,
 					dashboardType,
 				});
-				// [FOWS-DIAGNOSTIC] Log full loginResponse and user_exists at exact moment of check
 				console.log("🔍 [FOWS-DIAG][request-permissions] Full loginResponse at check time:", JSON.stringify(loginResponse));
 				console.log("🔍 [FOWS-DIAG][request-permissions] loginResponse?.user_exists:", loginResponse?.user_exists);
 			}
@@ -275,7 +292,7 @@ export default function RequestPermissions() {
 			router.replace("/loan-application" as any);
 		} catch (dashError) {
 			if (__DEV__) {
-				console.error("❌ [FOWS-DIAG][request-permissions] CATCH BLOCK HIT: Error fetching dashboard data:", dashError, "-> router.replace('/loan-application')");
+				console.warn("⚠️ [FOWS-DIAG][request-permissions] CATCH BLOCK HIT: Error fetching dashboard data:", dashError, "-> router.replace('/loan-application')");
 			}
 			setIsLoading(false);
 			router.replace("/loan-application" as any);

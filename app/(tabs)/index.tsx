@@ -8,6 +8,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
+import { VIDEO_TUTORIALS } from "@/constants/videoTutorials";
 import { useAuth } from "@/hooks/useAuth";
 import { useDefault } from "@/hooks/useDefault";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
@@ -15,9 +16,12 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useTranslation } from "@/hooks/useTranslation";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
-import { checkCanReapply, getUserDashboardData, Status, StepHref, verifyLeadCreation, checkEasebuzzPaymentStatus } from "@/utils/api";
+import { checkCanReapply, getUserDashboardData, Status, StepHref } from "@/utils/api";
+// TODO: migrate off legacy API
+import { verifyLeadCreation, checkEasebuzzPaymentStatus } from "@/utils/api/kyc";
 import { font, height, width } from "@/utils/dimensions";
 import { decode } from "@/utils/encode_decode";
+import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useNavigation } from "expo-router";
@@ -34,6 +38,7 @@ import {
 	Platform,
 	Pressable,
 	ScrollView,
+	StatusBar as RNStatusBar,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
@@ -214,7 +219,7 @@ export default function Home() {
 			try {
 				console.log(`[Dashboard] Checking Easebuzz status for transaction ${txnId}...`);
 				const res = await checkEasebuzzPaymentStatus(txnId);
-				console.log("[Dashboard] Easebuzz status response:", res);
+				Logger.debug("Dashboard payment status response", res);
 
 				if (res.status === "success") {
 					if (paymentPollIntervalRef.current) clearInterval(paymentPollIntervalRef.current);
@@ -256,7 +261,7 @@ export default function Home() {
 					return true;
 				}
 			} catch (err) {
-				console.error("[Dashboard] Error checking Easebuzz status:", err);
+				Logger.error("Dashboard payment status check failed", err);
 			}
 			return false;
 		};
@@ -307,7 +312,7 @@ export default function Home() {
 			try {
 				console.log("🚀 Calling verifyLeadCreation() from dashboard...");
 				const res = await verifyLeadCreation();
-				console.log("📥 Verify Lead Response from dashboard:", JSON.stringify(res));
+				Logger.debug("Dashboard lead verification response", res);
 
 				if (res?.lead_created) {
 					console.log("✅ Lead created is true! Continuing to verify-email...");
@@ -318,7 +323,7 @@ export default function Home() {
 					return true;
 				}
 			} catch (err) {
-				console.error("❌ Error verify-lead-creation on dashboard:", err);
+				Logger.error("Dashboard lead verification failed", err);
 			}
 			return false;
 		};
@@ -389,6 +394,11 @@ export default function Home() {
 	// Refetch dashboard data when screen comes into focus to update progress
 	useFocusEffect(
 		useCallback(() => {
+			RNStatusBar.setBarStyle("light-content");
+			if (Platform.OS === "android") {
+				RNStatusBar.setBackgroundColor("transparent");
+				RNStatusBar.setTranslucent(true);
+			}
 			refetch();
 			  try {
                 console.log("FB _ dashboard_viewed");
@@ -398,7 +408,7 @@ export default function Home() {
 		}, [refetch])
 	);
 
-	console.log("data", data);
+	Logger.debug("Dashboard response", data);
 
 	
 
@@ -774,26 +784,7 @@ export default function Home() {
 		},
 	];
 
-	const placeholderVideos = [
-		{
-			id: "1",
-			title: "How to claim ₹15,000\nin 2 mins",
-			duration: "1:24",
-			thumbnail: Images.VIDEO_CARD_1,
-		},
-		{
-			id: "2",
-			title: "Avoid these common\nloan rejection mista...",
-			duration: "0:45",
-			thumbnail: Images.VIDEO_CARD_2,
-		},
-		{
-			id: "3",
-			title: "How RBI-partners\nverify Aadhaar...",
-			duration: "1:15",
-			thumbnail: Images.VIDEO_CARD_3,
-		},
-	];
+	const placeholderVideos = VIDEO_TUTORIALS;
 
 	// const handleDeleteAccount = () => {
 	// 	const deleteAccountUrl = "https://rapidmoney.in/delete-my-account";
@@ -1416,9 +1407,10 @@ export default function Home() {
 							<TouchableOpacity
 								activeOpacity={0.7}
 								onPress={() => {
-									if (__DEV__) {
-										console.log("See All videos pressed");
-									}
+									router.push({
+										pathname: "/reel-player" as any,
+										params: { initialIndex: "0" },
+									});
 								}}>
 								<Text style={styles.seeAllText}>See All</Text>
 							</TouchableOpacity>
@@ -1430,15 +1422,16 @@ export default function Home() {
 							contentContainerStyle={styles.videoScrollContainer}
 							decelerationRate="fast"
 							snapToInterval={152}>
-							{placeholderVideos.map((video) => (
+							{placeholderVideos.map((video, index) => (
 								<TouchableOpacity
 									key={video.id}
 									activeOpacity={0.85}
 									style={styles.videoCard}
 									onPress={() => {
-										if (__DEV__) {
-											console.log("Video card pressed:", video.id);
-										}
+										router.push({
+											pathname: "/reel-player" as any,
+											params: { initialIndex: index.toString() },
+										});
 									}}>
 									<ImageBackground
 										source={video.thumbnail}
@@ -2891,3 +2884,5 @@ const styles = StyleSheet.create({
 	}
 
 });
+
+export { RouteErrorBoundary as ErrorBoundary } from "@/components/ErrorBoundary";

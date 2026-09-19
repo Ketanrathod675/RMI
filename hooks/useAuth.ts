@@ -14,6 +14,7 @@ import {
 } from "@/store/slices/auth";
 import type { SigninState } from "@/store/slices/signin";
 import { decode, encode } from "@/utils/encode_decode";
+import SecureStorage from "@/utils/secure-storage";
 import {
 	AuthKeys,
 	getStorageItem,
@@ -79,7 +80,7 @@ export const useAuth = (shouldAutoLoad = false) => {
 
 				// 2. Read stored auth session values (sanitized without logging sensitive data)
 				const isLoggedInVal = await getStorageItem(STORAGE_KEYS["@is-logged-in"]);
-				const refreshTokenVal = await getStorageItem(STORAGE_KEYS["@refresh-token"]);
+				const refreshTokenVal = await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@refresh-token"]);
 				const countryCodeVal = await getStorageItem(STORAGE_KEYS["@country-code"]);
 				const phoneNumberVal = await getStorageItem(STORAGE_KEYS["@phone-number"]);
 
@@ -107,14 +108,14 @@ export const useAuth = (shouldAutoLoad = false) => {
 					return false;
 				}
 
-				const decodedRefreshToken = decode(refreshTokenVal);
-				const accessTokenVal = await getStorageItem(STORAGE_KEYS["@access-token"]);
+				const decodedRefreshToken = refreshTokenVal;
+				const accessTokenVal = await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]);
 				const tokenTypeVal = await getStorageItem(STORAGE_KEYS["@token-type"]);
 				const userIdVal = await getStorageItem(STORAGE_KEYS["@user-id"]);
 				const applicantFromVal = await getStorageItem(STORAGE_KEYS["@applicant-from"]);
 
 				// Hydrate Redux state securely
-				if (accessTokenVal) dispatch(setAuthAccessToken(decode(accessTokenVal)));
+				if (accessTokenVal) dispatch(setAuthAccessToken(accessTokenVal));
 				if (decodedRefreshToken) dispatch(setAuthRefreshToken(decodedRefreshToken));
 				if (tokenTypeVal) dispatch(setAuthTokenType(decode(tokenTypeVal)));
 				if (userIdVal) dispatch(setAuthUserId(decode(userIdVal)));
@@ -190,9 +191,9 @@ export const useAuth = (shouldAutoLoad = false) => {
 				return false;
 			}
 
-			await setStorageItem(STORAGE_KEYS["@access-token"], encode(accessTokenVal));
-			await setStorageItem(STORAGE_KEYS["@token"], encode(accessTokenVal));
-			await setStorageItem(STORAGE_KEYS["@refresh-token"], encode(refreshTokenVal));
+			await SecureStorage.setSensitive(STORAGE_KEYS["@access-token"], accessTokenVal);
+			await SecureStorage.setSensitive(STORAGE_KEYS["@token"], accessTokenVal);
+			await SecureStorage.setSensitive(STORAGE_KEYS["@refresh-token"], refreshTokenVal);
 			await setStorageItem(STORAGE_KEYS["@token-type"], encode(tokenTypeVal));
 
 			dispatch(setAuthAccessToken(accessTokenVal));
@@ -210,7 +211,7 @@ export const useAuth = (shouldAutoLoad = false) => {
 	}, [dispatch]);
 
 	const logout = useCallback(() => {
-		removeMultipleStorageItems(RemovableKeys);
+		void Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
 		dispatch(clearAuth());
 	}, [dispatch]);
 

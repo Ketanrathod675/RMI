@@ -2,8 +2,10 @@
 dist/
 web-build/
 node_modules/
+.env
 .env.local
 .env.*.local
+.env.production
 npm-debug.*
 *.jks
 *.p8

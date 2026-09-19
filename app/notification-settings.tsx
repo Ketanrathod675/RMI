@@ -1,100 +1,158 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { dark, white, primary } from "@/constants/Colors";
-import { font, width, height } from "@/utils/dimensions";
+import { TranslatedText } from "@/components/TranslatedText";
+import { dark, primary, white } from "@/constants/Colors";
+import { type TranslationKey } from "@/constants/translations";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useTranslation } from "@/hooks/useTranslation";
+import { font, height, width } from "@/utils/dimensions";
+import { router, Stack, useFocusEffect } from "expo-router";
+import React, { useState } from "react";
+import { BackHandler, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+
+interface NotificationSetting {
+	id: string;
+	titleKey: TranslationKey;
+	isEnabled: boolean;
+}
 
 export default function NotificationSettings() {
-	const insets = useSafeAreaInsets();
-	const router = useRouter();
 	useJourneyTracker("/notification-settings");
+	const { t } = useTranslation();
+
+	// Handle hardware back press on Android
+	useFocusEffect(
+		React.useCallback(() => {
+			const onBackPress = () => {
+				router.back();
+				return true;
+			};
+
+			const subscription = BackHandler.addEventListener(
+				"hardwareBackPress",
+				onBackPress
+			);
+
+			return () => subscription.remove();
+		}, [])
+	);
+
+	const [settings, setSettings] = useState<NotificationSetting[]>([
+		{ id: "general", titleKey: "generalNotification", isEnabled: false },
+		{ id: "security", titleKey: "securityAlerts", isEnabled: true },
+		{ id: "loanStatus", titleKey: "loanApplicationStatus", isEnabled: true },
+		{ id: "payment", titleKey: "paymentConfirmation", isEnabled: true },
+		{ id: "disbursement", titleKey: "loanDisbursement", isEnabled: false },
+		{ id: "paymentReminders", titleKey: "upcomingPaymentReminders", isEnabled: false },
+		{ id: "rewards", titleKey: "rewardGamification", isEnabled: false },
+		{ id: "coupons", titleKey: "redeemableCoupons", isEnabled: false },
+		{ id: "referral", titleKey: "referralBonus", isEnabled: false },
+		{ id: "offers", titleKey: "specialOffers", isEnabled: false },
+		{ id: "survey", titleKey: "surveyFeedbackRequests", isEnabled: false },
+		{ id: "announcements", titleKey: "importantAnnouncements", isEnabled: false },
+		{ id: "tips", titleKey: "appTipsTutorials", isEnabled: false },
+	]);
+
+	const toggleSetting = (id: string) => {
+		setSettings((prev) =>
+			prev.map((setting) =>
+				setting.id === id ? { ...setting, isEnabled: !setting.isEnabled } : setting,
+			),
+		);
+	};
+
+	const ToggleSwitch = ({
+		isEnabled,
+		onToggle,
+	}: {
+		isEnabled: boolean;
+		onToggle: () => void;
+	}) => {
+		return (
+			<TouchableOpacity
+				style={[
+					styles.switchContainer,
+					{ backgroundColor: isEnabled ? primary : "#E5E5E5" },
+				]}
+				onPress={onToggle}
+				activeOpacity={0.7}>
+				<View
+					style={[
+						styles.switchThumb,
+						{
+							transform: [{ translateX: isEnabled ? width(6) : width(0.5) }],
+						},
+					]}
+				/>
+			</TouchableOpacity>
+		);
+	};
+
+	const NotificationRow = ({ setting }: { setting: NotificationSetting }) => {
+		return (
+			<View style={styles.notificationRow}>
+				<TranslatedText style={styles.notificationText} translationKey={setting.titleKey} />
+				<ToggleSwitch
+					isEnabled={setting.isEnabled}
+					onToggle={() => toggleSetting(setting.id)}
+				/>
+			</View>
+		);
+	};
 
 	return (
-		<View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-			{/* Top Header */}
-			<View style={styles.header}>
-				<TouchableOpacity
-					style={styles.backButton}
-					onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
-					accessibilityLabel="Go back"
-				>
-					<MaterialIcons name="arrow-back" size={24} color={dark} />
-				</TouchableOpacity>
-				<Text style={styles.headerTitle}>Notification Settings</Text>
-				<View style={styles.headerRight} />
-			</View>
-
-			{/* Placeholder Body */}
+		<ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+			<Stack.Screen options={{ headerShown: true, title: t("notification") }} />
 			<View style={styles.content}>
-				<View style={styles.iconCircle}>
-					<MaterialIcons name="notifications" size={40} color={primary} />
-				</View>
-				<Text style={styles.title}>Notification Settings</Text>
-				<Text style={styles.subtitle}>
-					Manage your push notifications, SMS alerts, and promotional communication preferences. This feature is coming soon.
-				</Text>
+				{settings.map((setting) => (
+					<NotificationRow key={setting.id} setting={setting} />
+				))}
 			</View>
-		</View>
+		</ScrollView>
 	);
 }
 
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: "#F9FAFB",
-	},
-	header: {
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "space-between",
-		paddingHorizontal: 16,
-		paddingVertical: 12,
 		backgroundColor: white,
-		borderBottomWidth: 1,
-		borderBottomColor: "#F3F4F6",
-	},
-	backButton: {
-		padding: 6,
-		borderRadius: 8,
-	},
-	headerTitle: {
-		fontSize: 18,
-		fontWeight: "600",
-		color: dark,
-	},
-	headerRight: {
-		width: 36,
 	},
 	content: {
-		flex: 1,
-		justifyContent: "center",
-		alignItems: "center",
-		paddingHorizontal: width(6),
+		padding: width(5),
+		marginBottom: height(5),
 	},
-	iconCircle: {
-		width: 80,
-		height: 80,
-		borderRadius: 40,
-		backgroundColor: "#EEF2FF",
-		justifyContent: "center",
+	notificationRow: {
+		flexDirection: "row",
+		justifyContent: "space-between",
 		alignItems: "center",
-		marginBottom: 20,
+		paddingVertical: height(2.5),
+		paddingHorizontal: width(2),
+		borderBottomWidth: 0.5,
+		borderBottomColor: "#F0F0F0",
 	},
-	title: {
+	notificationText: {
 		fontSize: font(2.2),
-		fontWeight: "700",
 		color: dark,
-		marginBottom: height(1.5),
-		textAlign: "center",
+		fontWeight: "400",
+		flex: 1,
 	},
-	subtitle: {
-		fontSize: font(1.6),
-		color: "#666",
-		textAlign: "center",
-		lineHeight: font(2.4),
-		maxWidth: 320,
+	switchContainer: {
+		width: width(12),
+		height: height(3.2),
+		borderRadius: width(6),
+		justifyContent: "center",
+		position: "relative",
+	},
+	switchThumb: {
+		width: width(4.5),
+		height: width(4.5),
+		borderRadius: width(2.25),
+		backgroundColor: white,
+		shadowColor: "#000",
+		shadowOffset: {
+			width: 0,
+			height: 1,
+		},
+		shadowOpacity: 0.2,
+		shadowRadius: 1.41,
+		elevation: 2,
 	},
 });

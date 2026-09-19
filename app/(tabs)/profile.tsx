@@ -12,6 +12,7 @@ import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useNavigation } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	Animated,
@@ -19,8 +20,10 @@ import {
 	Dimensions,
 	Image,
 	Modal,
+	Platform,
 	Pressable,
 	ScrollView,
+	StatusBar as RNStatusBar,
 	StyleSheet,
 	Text,
 	TextInput,
@@ -65,6 +68,10 @@ export default function Profile() {
 	const slideAnim = useRef(new Animated.Value(screenHeight)).current;
 	const backgroundOpacity = useRef(new Animated.Value(0)).current;
 
+	// Rate Us modal animation state
+	const rateSlideAnim = useRef(new Animated.Value(screenHeight)).current;
+	const rateBackgroundOpacity = useRef(new Animated.Value(0)).current;
+
 	// Selfie state
 	const [selfieUri, setSelfieUri] = useState<string | null>(null);
 
@@ -81,9 +88,7 @@ export default function Profile() {
 
 	// Update selfie URI when data is fetched from API only
 	useEffect(() => {
-		console.log("🔍 Selfie data from API:", selfieData);
 		if (selfieData?.selfie_url) {
-			console.log("📸 Setting selfie from API:", selfieData.selfie_url);
 			setSelfieUri(selfieData.selfie_url);
 		} else {
 			setSelfieUri(null);
@@ -95,6 +100,17 @@ export default function Profile() {
 		React.useCallback(() => {
 			refetchSelfie();
 		}, [refetchSelfie]),
+	);
+
+	// Ensure system status bar is visible (dark icons over white header) when Profile is focused
+	useFocusEffect(
+		React.useCallback(() => {
+			RNStatusBar.setBarStyle("dark-content");
+			if (Platform.OS === "android") {
+				RNStatusBar.setBackgroundColor("transparent");
+				RNStatusBar.setTranslucent(true);
+			}
+		}, []),
 	);
 
 	// Handle back press - navigate to dashboard
@@ -143,17 +159,44 @@ export default function Profile() {
 		setRating(starIndex + 1);
 	};
 
-	const handleSubmitFeedback = () => {
-		console.log("Rating:", rating, "Feedback:", feedback);
-		setModalVisible(false);
-		setRating(0);
-		setFeedback("");
+	const openRateModal = () => {
+		setModalVisible(true);
+		rateBackgroundOpacity.setValue(0);
+		rateSlideAnim.setValue(screenHeight);
+
+		Animated.timing(rateBackgroundOpacity, {
+			toValue: 1,
+			duration: 200,
+			useNativeDriver: true,
+		}).start(() => {
+			Animated.timing(rateSlideAnim, {
+				toValue: 0,
+				duration: 280,
+				useNativeDriver: true,
+			}).start();
+		});
 	};
 
 	const handleCloseModal = () => {
-		setModalVisible(false);
-		setRating(0);
-		setFeedback("");
+		Animated.timing(rateSlideAnim, {
+			toValue: screenHeight,
+			duration: 250,
+			useNativeDriver: true,
+		}).start(() => {
+			Animated.timing(rateBackgroundOpacity, {
+				toValue: 0,
+				duration: 200,
+				useNativeDriver: true,
+			}).start(() => {
+				setModalVisible(false);
+				setRating(0);
+				setFeedback("");
+			});
+		});
+	};
+
+	const handleSubmitFeedback = () => {
+		handleCloseModal();
 	};
 
 	const menuItems: MenuItem[] = [
@@ -165,7 +208,7 @@ export default function Profile() {
 		{
 			title: t("loanHistory"),
 			icon: "loan-history",
-			onPress: () => router.push("/loan-history" as any),
+			onPress: () => router.push("/(tabs)/history" as any),
 		},
 		{
 			title: t("lendingPartners"),
@@ -195,7 +238,7 @@ export default function Profile() {
 		{
 			title: t("rateUs"),
 			icon: "rate-us",
-			onPress: () => setModalVisible(true),
+			onPress: openRateModal,
 		},
 	];
 
@@ -253,6 +296,7 @@ export default function Profile() {
 
 	return (
 		<ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+			<StatusBar style="dark" />
 			{/* User Profile Card */}
 			<View style={styles.profileCardWrapper}>
 				<LinearGradient
@@ -330,73 +374,83 @@ export default function Profile() {
 			<Modal
 				visible={modalVisible}
 				transparent={true}
-				animationType="slide"
+				animationType="none"
 				onRequestClose={handleCloseModal}>
-				<TouchableOpacity
-					style={styles.modalOverlay}
-					activeOpacity={1}
-					onPress={handleCloseModal}>
-					<TouchableOpacity
-						style={styles.modalContent}
-						activeOpacity={1}
-						onPress={(e) => e.stopPropagation()}>
-						{/* Modal Header Line */}
-						<View style={styles.modalHeaderLine} />
+				<Animated.View
+					style={[
+						styles.modalOverlay,
+						{
+							opacity: rateBackgroundOpacity,
+						},
+					]}>
+					<Pressable style={styles.modalOverlayPressable} onPress={handleCloseModal}>
+						<Animated.View
+							style={[
+								styles.modalContainer,
+								{
+									transform: [{ translateY: rateSlideAnim }],
+								},
+							]}>
+							<Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+								{/* Modal Header Line */}
+								<View style={styles.modalHeaderLine} />
 
-						{/* Title */}
-						<TranslatedText style={styles.modalTitle} translationKey="reviewFeedback" />
+								{/* Title */}
+								<TranslatedText style={styles.modalTitle} translationKey="reviewFeedback" />
 
-						{/* Rating Section */}
-						<TranslatedText
-							style={styles.ratingQuestion}
-							translationKey="howWouldYouRate"
-						/>
-						<View style={styles.starsContainer}>
-							{[...Array(5)].map((_, index) => (
+								{/* Rating Section */}
+								<TranslatedText
+									style={styles.ratingQuestion}
+									translationKey="howWouldYouRate"
+								/>
+								<View style={styles.starsContainer}>
+									{[...Array(5)].map((_, index) => (
+										<TouchableOpacity
+											key={index}
+											onPress={() => handleStarPress(index)}
+											style={styles.starButton}>
+											<Text
+												style={[
+													styles.star,
+													index < rating ? styles.filledStar : styles.emptyStar,
+												]}>
+												★
+											</Text>
+										</TouchableOpacity>
+									))}
+								</View>
+
+								{/* Feedback Section */}
+								<TranslatedText
+									style={styles.feedbackLabel}
+									translationKey="tellUsWhatYouThink"
+								/>
+
+								{/* Text Input */}
+								<TextInput
+									style={styles.feedbackInput}
+									placeholder={t("enterFeedback")}
+									placeholderTextColor="#999"
+									multiline={true}
+									numberOfLines={4}
+									value={feedback}
+									onChangeText={setFeedback}
+									textAlignVertical="top"
+								/>
+
+								{/* Submit Button */}
 								<TouchableOpacity
-									key={index}
-									onPress={() => handleStarPress(index)}
-									style={styles.starButton}>
-									<Text
-										style={[
-											styles.star,
-											index < rating ? styles.filledStar : styles.emptyStar,
-										]}>
-										★
-									</Text>
+									style={styles.submitButton}
+									onPress={handleSubmitFeedback}>
+									<TranslatedText
+										style={styles.submitButtonText}
+										translationKey="submit"
+									/>
 								</TouchableOpacity>
-							))}
-						</View>
-
-						{/* Feedback Section */}
-						<TranslatedText
-							style={styles.feedbackLabel}
-							translationKey="tellUsWhatYouThink"
-						/>
-
-						{/* Text Input */}
-						<TextInput
-							style={styles.feedbackInput}
-							placeholder={t("enterFeedback")}
-							placeholderTextColor="#999"
-							multiline={true}
-							numberOfLines={4}
-							value={feedback}
-							onChangeText={setFeedback}
-							textAlignVertical="top"
-						/>
-
-						{/* Submit Button */}
-						<TouchableOpacity
-							style={styles.submitButton}
-							onPress={handleSubmitFeedback}>
-							<TranslatedText
-								style={styles.submitButtonText}
-								translationKey="submit"
-							/>
-						</TouchableOpacity>
-					</TouchableOpacity>
-				</TouchableOpacity>
+							</Pressable>
+						</Animated.View>
+					</Pressable>
+				</Animated.View>
 			</Modal>
 
 			{/* Language Selection Modal */}

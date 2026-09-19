@@ -560,6 +560,9 @@ export const translations = {
 		retryMandate: "Retry Mandate",
 		congratulationsAssessmentFeePaid: "Congratulations! Your Assessment fee has been paid.",
 		mandateSetupSuccessful: "Auto-debit setup successful! Your mandate is now active.",
+		kycSuccess: "KYC Success",
+		kycSuccessSubtitle: "Congratulations! Your KYC verification was successful.",
+		continueToProcess: "Continue to process",
 
 		// MPIN Login screen
 		areYouSureExitApp: "Are you sure you want to exit the app?",
@@ -1858,6 +1861,9 @@ export const translations = {
 		retryMandate: "मैंडेट पुनः करें",
 		congratulationsAssessmentFeePaid: "बधाई हो! आपका मूल्यांकन शुल्क का भुगतान हो गया है।",
 		mandateSetupSuccessful: "ऑटो-डेबिट सेटअप सफल! आपका जनादेश अब सक्रिय है।",
+		kycSuccess: "केवाईसी सफल",
+		kycSuccessSubtitle: "बधाई हो! आपका केवाईसी सत्यापन सफल रहा।",
+		continueToProcess: "प्रक्रिया जारी रखें",
 
 		// MPIN Login screen
 		areYouSureExitApp: "क्या आप वाकई ऐप से बाहर निकलना चाहते हैं?",

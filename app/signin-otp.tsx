@@ -12,12 +12,14 @@ import { errorHandler, login, verifyOtp } from "@/utils/api";
 import { setBranchIdentity } from "@/utils/branch";
 import { font, height, width } from "@/utils/dimensions";
 import { encode } from "@/utils/encode_decode";
+import Logger from "@/utils/logger";
 import RNOtpVerify from "@/utils/otpVerify";
 import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { MaterialIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Image } from "expo-image";
 import { router, useFocusEffect, useNavigation } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -25,6 +27,7 @@ import {
 	Keyboard,
 	Platform,
 	ScrollView,
+	StatusBar as RNStatusBar,
 	StyleSheet,
 	Text,
 	TextInput,
@@ -68,9 +71,15 @@ export default function SigninSignupOtp() {
 		};
 	}, [navigation]);
 
-	// Handle hardware back button - go back to login screen
+	// Handle hardware back button & status bar style
 	useFocusEffect(
 		React.useCallback(() => {
+			RNStatusBar.setBarStyle("dark-content");
+			if (Platform.OS === "android") {
+				RNStatusBar.setBackgroundColor("transparent");
+				RNStatusBar.setTranslucent(true);
+			}
+
 			const onBackPress = () => {
 				router.back();
 				return true;
@@ -84,15 +93,13 @@ export default function SigninSignupOtp() {
 	const { mutate: verifyOtpMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: verifyOtp,
 		onSuccess: async (data) => {
-			if (__DEV__) {
-				console.log("=== OTP Verification Response ===");
-				console.log("User ID:", data?.user_id);
-				console.log("Next Action:", data?.next_action);
-				console.log("Is MPIN Set:", data?.user?.is_mpin_set);
-				console.log("Access Token:", data?.access_token ? "✅ Received" : "❌ Not received");
-				console.log("Refresh Token:", data?.refresh_token ? "✅ Received" : "❌ Not received");
-				console.log("=================================");
-			}
+			Logger.debug("OTP verification succeeded", {
+				user_id: data?.user_id,
+				next_action: data?.next_action,
+				is_mpin_set: data?.user?.is_mpin_set,
+				access_token: data?.access_token,
+				refresh_token: data?.refresh_token,
+			});
 
 			// Store the OTP verification response data (including user_id)
 			changeOtpVerifyResponse(data as any);
@@ -164,6 +171,8 @@ export default function SigninSignupOtp() {
 				const rawPermissionGiven =
 					(data as any)?.permission_given ?? (data as any)?.user?.permission_given;
 				const isNewUser =
+					data?.is_new_user === true ||
+					data?.is_profile_completed === false ||
 					loginResponse?.user_exists === false ||
 					(data as any)?.user?.is_first_login === true ||
 					(data as any)?.is_first_login === true ||
@@ -406,6 +415,8 @@ export default function SigninSignupOtp() {
 
 	return (
 		<View style={styles.container}>
+			<StatusBar style="dark" />
+
 			{/* Top Header App Bar */}
 			<View style={[styles.header, { paddingTop: insets.top + height(1) }]}>
 				<TouchableOpacity
@@ -475,11 +486,9 @@ export default function SigninSignupOtp() {
 						))}
 					</View>
 
-					{/* Didn't Receive OTP prompt */}
-					<Text style={styles.didntReceiveText}>Didn’t Receive OTP ?</Text>
-
-					{/* Centered Countdown / Resend Link */}
-					<View style={styles.resendCenterWrap}>
+					{/* Didn't Receive OTP & Resend Row in the same line */}
+					<View style={styles.resendRow}>
+						<Text style={styles.didntReceiveText}>Didn’t Receive OTP ?</Text>
 						{countdown > 0 ? (
 							<Text style={styles.countdownText}>
 								Re-send in {formatTime(countdown)}s
@@ -487,7 +496,8 @@ export default function SigninSignupOtp() {
 						) : (
 							<TouchableOpacity
 								onPress={handleResend}
-								disabled={isResendOtpPending}>
+								disabled={isResendOtpPending}
+								hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
 								{isResendOtpPending ? (
 									<ActivityIndicator size="small" color={dark_primary} />
 								) : (
@@ -496,62 +506,6 @@ export default function SigninSignupOtp() {
 							</TouchableOpacity>
 						)}
 					</View>
-
-					{/* Consent Checkbox */}
-					<View style={styles.consentSection}>
-						<TouchableOpacity
-							style={styles.checkboxContainer}
-							onPress={() => setIsChecked(!isChecked)}
-							activeOpacity={0.8}>
-							<View
-								style={[
-									styles.checkbox,
-									isChecked && styles.checkboxChecked,
-								]}>
-								{isChecked && <Text style={styles.checkmark}>✓</Text>}
-							</View>
-						</TouchableOpacity>
-
-						<Text style={styles.consentText}>
-							I hereby provide my consent to access credit information from CICs,
-							KYC and agree to the{" "}
-							<Text
-								style={styles.consentLink}
-								onPress={() => setShowTermsAndConditions(true)}>
-								Terms
-							</Text>
-							,{" "}
-							<Text
-								style={styles.consentLink}
-								onPress={() => setShowPrivacyPolicy(true)}>
-								Privacy Policy
-							</Text>
-							, and to be contacted via SMS, WhatsApp, call, or email, including
-							on DND-registered numbers".
-						</Text>
-					</View>
-
-					{/* Soft-Pull Consent if required */}
-					{loginResponse?.soft_pull_consent === false && (
-						<View style={[styles.consentSection, { marginTop: -height(1), marginBottom: height(2) }]}>
-							<TouchableOpacity
-								style={styles.checkboxContainer}
-								onPress={() => setIsSoftPullChecked(!isSoftPullChecked)}
-								activeOpacity={0.8}>
-								<View
-									style={[
-										styles.checkbox,
-										isSoftPullChecked && styles.checkboxChecked,
-									]}>
-									{isSoftPullChecked && <Text style={styles.checkmark}>✓</Text>}
-								</View>
-							</TouchableOpacity>
-
-							<Text style={styles.consentText}>
-								I provide consent to fetch my credit bureau score for eligibility assessment.
-							</Text>
-						</View>
-					)}
 
 					{/* Continue Button */}
 					<TouchableOpacity
@@ -572,6 +526,65 @@ export default function SigninSignupOtp() {
 							<Text style={styles.continueButtonText}>Continue</Text>
 						)}
 					</TouchableOpacity>
+
+					{/* Bottom Terms & Consent Section (pushed to complete bottom) */}
+					<View style={styles.bottomTermsContainer}>
+						{/* Consent Checkbox */}
+						<View style={styles.consentSection}>
+							<TouchableOpacity
+								style={styles.checkboxContainer}
+								onPress={() => setIsChecked(!isChecked)}
+								activeOpacity={0.8}>
+								<View
+									style={[
+										styles.checkbox,
+										isChecked && styles.checkboxChecked,
+									]}>
+									{isChecked && <Text style={styles.checkmark}>✓</Text>}
+								</View>
+							</TouchableOpacity>
+
+							<Text style={styles.consentText}>
+								I hereby provide my consent to access credit information from CICs,
+								KYC and agree to the{" "}
+								<Text
+									style={styles.consentLink}
+									onPress={() => setShowTermsAndConditions(true)}>
+									Terms
+								</Text>
+								,{" "}
+								<Text
+									style={styles.consentLink}
+									onPress={() => setShowPrivacyPolicy(true)}>
+									Privacy Policy
+								</Text>
+								, and to be contacted via SMS, WhatsApp, call, or email, including
+								on DND-registered numbers".
+							</Text>
+						</View>
+
+						{/* Soft-Pull Consent if required */}
+						{loginResponse?.soft_pull_consent === false && (
+							<View style={[styles.consentSection, { marginTop: -height(0.5), marginBottom: height(1) }]}>
+								<TouchableOpacity
+									style={styles.checkboxContainer}
+									onPress={() => setIsSoftPullChecked(!isSoftPullChecked)}
+									activeOpacity={0.8}>
+									<View
+										style={[
+											styles.checkbox,
+											isSoftPullChecked && styles.checkboxChecked,
+										]}>
+										{isSoftPullChecked && <Text style={styles.checkmark}>✓</Text>}
+									</View>
+								</TouchableOpacity>
+
+								<Text style={styles.consentText}>
+									I provide consent to fetch my credit bureau score for eligibility assessment.
+								</Text>
+							</View>
+						)}
+					</View>
 				</View>
 			</ScrollView>
 
@@ -633,6 +646,7 @@ const styles = StyleSheet.create({
 		height: (width(42) * 224) / 203,
 	},
 	content: {
+		flex: 1,
 		paddingHorizontal: width(6),
 	},
 	title: {
@@ -676,32 +690,36 @@ const styles = StyleSheet.create({
 	otpInputFilled: {
 		borderColor: dark,
 	},
+	resendRow: {
+		flexDirection: "row",
+		justifyContent: "space-between",
+		alignItems: "center",
+		marginBottom: height(3.5),
+	},
 	didntReceiveText: {
 		fontSize: font(1.6),
 		color: "#333333",
-		marginBottom: height(3),
-	},
-	resendCenterWrap: {
-		alignItems: "center",
-		justifyContent: "center",
-		marginBottom: height(3.5),
 	},
 	countdownText: {
-		fontSize: font(1.8),
+		fontSize: font(1.6),
 		color: dark,
 		fontWeight: "600",
 		textDecorationLine: "underline",
 	},
 	resendLink: {
-		fontSize: font(1.8),
+		fontSize: font(1.6),
 		color: dark_primary,
 		fontWeight: "700",
 		textDecorationLine: "underline",
 	},
+	bottomTermsContainer: {
+		marginTop: "auto",
+		paddingTop: height(2),
+	},
 	consentSection: {
 		flexDirection: "row",
 		alignItems: "flex-start",
-		marginBottom: height(3.5),
+		marginBottom: height(1),
 	},
 	checkboxContainer: {
 		marginRight: width(3),
@@ -749,6 +767,7 @@ const styles = StyleSheet.create({
 		shadowOpacity: 0.3,
 		shadowRadius: 6,
 		elevation: 3,
+		marginBottom: height(2.5),
 	},
 	continueButtonText: {
 		color: dark,
