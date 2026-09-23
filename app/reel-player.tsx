@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Animated,
@@ -28,6 +28,9 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { useEventListener } from "expo";
 import { VIDEO_TUTORIALS, VideoTutorialItem } from "@/constants/videoTutorials";
+import { getVideos } from "@/utils/api";
+import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { Images } from "@/constants/images";
 
 // ─── Looped Reel Data Definition ──────────────────────────────────────────────
 export const TOTAL_BASE_ITEMS = VIDEO_TUTORIALS.length; // 3
@@ -63,6 +66,7 @@ interface ReelPlayerViewProps {
 	isActive: boolean;
 	itemWidth: number;
 	itemHeight: number;
+	onDurationLoaded?: (formattedDuration: string) => void;
 }
 
 const ReelPlayerView: React.FC<ReelPlayerViewProps> = ({
@@ -70,6 +74,7 @@ const ReelPlayerView: React.FC<ReelPlayerViewProps> = ({
 	isActive,
 	itemWidth,
 	itemHeight,
+	onDurationLoaded,
 }) => {
 	const [isManuallyPaused, setIsManuallyPaused] = useState(false);
 	const [isLoading, setIsLoading] = useState(true);
@@ -80,10 +85,15 @@ const ReelPlayerView: React.FC<ReelPlayerViewProps> = ({
 		p.pause(); // Initialize paused; playback is driven by isActive
 	});
 
-	// Listen for player status transitions to toggle the buffering spinner
+	// Listen for player status transitions to toggle the buffering spinner and report duration
 	useEventListener(player, "statusChange", ({ status }) => {
 		if (status === "readyToPlay" || status === "idle") {
 			setIsLoading(false);
+			if (player.duration > 0 && onDurationLoaded) {
+				const mins = Math.floor(player.duration / 60);
+				const secs = Math.floor(player.duration % 60);
+				onDurationLoaded(`${mins}:${secs.toString().padStart(2, "0")}`);
+			}
 		} else if (status === "loading") {
 			setIsLoading(true);
 		}
@@ -374,6 +384,7 @@ interface ReelItemProps {
 	activeIndex: number;
 	itemWidth: number;
 	itemHeight: number;
+	totalCount: number;
 	insets: { top: number; bottom: number };
 	onClose: () => void;
 	onLoopToStart: () => void;
@@ -385,6 +396,7 @@ const ReelItem: React.FC<ReelItemProps> = ({
 	activeIndex,
 	itemWidth,
 	itemHeight,
+	totalCount,
 	insets,
 	onClose,
 	onLoopToStart,
@@ -394,10 +406,17 @@ const ReelItem: React.FC<ReelItemProps> = ({
 	// and keep index 0 mounted when approaching the loop transition so loop-jump is instant.
 	const shouldMountPlayer =
 		Math.abs(index - activeIndex) <= 1 ||
-		(activeIndex >= TOTAL_BASE_ITEMS - 1 && index === 0);
+		(activeIndex >= totalCount - 1 && index === 0);
 
 	const originalIndex = item.originalIndex;
-	const isLastVideo = index === TOTAL_BASE_ITEMS - 1;
+	const isLastVideo = index === totalCount - 1;
+
+	const [computedDuration, setComputedDuration] = useState<string | undefined>(item.duration);
+	const displayDuration = item.duration || computedDuration;
+
+	const handleDurationLoaded = useCallback((formatted: string) => {
+		setComputedDuration((prev) => prev || formatted);
+	}, []);
 
 	return (
 		<View style={[styles.reelItemContainer, { width: itemWidth, height: itemHeight }]}>
@@ -407,6 +426,7 @@ const ReelItem: React.FC<ReelItemProps> = ({
 					isActive={isActive}
 					itemWidth={itemWidth}
 					itemHeight={itemHeight}
+					onDurationLoaded={handleDurationLoaded}
 				/>
 			) : (
 				<ReelThumbnailView
@@ -444,17 +464,19 @@ const ReelItem: React.FC<ReelItemProps> = ({
 
 				<View style={styles.counterBadge}>
 					<Text style={styles.counterText}>
-						{originalIndex + 1} / {TOTAL_BASE_ITEMS}
+						{originalIndex + 1} / {totalCount}
 					</Text>
 				</View>
 			</View>
 
 			{/* Bottom Info Section */}
 			<View style={[styles.bottomInfoContainer, { bottom: insets.bottom + 20 }]}>
-				<View style={styles.durationPill}>
-					<MaterialCommunityIcons name="clock-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-					<Text style={styles.durationText}>{item.duration}</Text>
-				</View>
+				{displayDuration ? (
+					<View style={styles.durationPill}>
+						<MaterialCommunityIcons name="clock-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+						<Text style={styles.durationText}>{displayDuration}</Text>
+					</View>
+				) : null}
 
 				<Text style={styles.videoTitle}>{item.title}</Text>
 
@@ -495,6 +517,48 @@ export default function ReelPlayerScreen() {
 	const { height: windowHeight, width: windowWidth } = useWindowDimensions();
 	const params = useLocalSearchParams<{ initialIndex?: string }>();
 
+	// Fetch videos from real backend endpoint with automatic fallback
+	const { data: remoteVideos } = useNetworkAwareQuery({
+		queryKey: ["videos"],
+		queryFn: getVideos,
+		staleTime: 5 * 60 * 1000,
+	});
+
+	const baseVideos: VideoTutorialItem[] = useMemo(() => {
+		if (remoteVideos && remoteVideos.length > 0) {
+			return remoteVideos.map((v) => ({
+				id: String(v.id),
+				title: v.title,
+				thumbnail: v.thumbnail_url ? { uri: v.thumbnail_url } : Images.VIDEO_CARD_1,
+				videoUrl: v.video_url,
+				description: v.description,
+				duration: v.duration,
+			}));
+		}
+		return VIDEO_TUTORIALS;
+	}, [remoteVideos]);
+
+	const totalBaseItems = baseVideos.length;
+
+	const reelData: ReelLoopItem[] = useMemo(() => {
+		if (baseVideos.length === 0) return [];
+		return [
+			...baseVideos.map((item, idx) => ({
+				...item,
+				loopIndex: idx,
+				originalIndex: idx,
+				isLoopClone: false,
+			})),
+			{
+				...baseVideos[0],
+				id: `${baseVideos[0].id}_loop`,
+				loopIndex: baseVideos.length,
+				originalIndex: 0,
+				isLoopClone: true,
+			},
+		];
+	}, [baseVideos]);
+
 	// Measure exact container layout height to prevent Android status bar / modal height drift
 	const initialHeight =
 		Platform.OS === "android"
@@ -523,7 +587,7 @@ export default function ReelPlayerScreen() {
 	const parsedIndex = params.initialIndex ? parseInt(params.initialIndex, 10) : 0;
 	const startIndex = isNaN(parsedIndex)
 		? 0
-		: Math.max(0, Math.min(parsedIndex, TOTAL_BASE_ITEMS - 1));
+		: Math.max(0, Math.min(parsedIndex, totalBaseItems - 1));
 
 	const [activeIndex, setActiveIndex] = useState<number>(startIndex);
 	const [bubbleState, setBubbleState] = useState<BubbleState>("hidden");
@@ -566,7 +630,7 @@ export default function ReelPlayerScreen() {
 				const visibleItem = viewableItems[0];
 				if (typeof visibleItem.index === "number" && visibleItem.index !== null) {
 					const newIdx = visibleItem.index;
-					if (newIdx < TOTAL_BASE_ITEMS) {
+					if (newIdx < totalBaseItems) {
 						setActiveIndex(newIdx);
 					}
 				}
@@ -584,7 +648,7 @@ export default function ReelPlayerScreen() {
 		const offsetY = event.nativeEvent.contentOffset.y;
 
 		// The bubble ONLY rises if the user is sitting on the LAST video and actively drags UPWARDS
-		if (isUserDragging.current && activeIndex === TOTAL_BASE_ITEMS - 1) {
+		if (isUserDragging.current && activeIndex === totalBaseItems - 1) {
 			const dragDelta = offsetY - dragStartY.current;
 			// Trigger only after user has dragged upward by at least 35px towards the first video
 			if (dragDelta > 35 && bubbleState === "hidden") {
@@ -605,19 +669,17 @@ export default function ReelPlayerScreen() {
 		const offsetY = event.nativeEvent.contentOffset.y;
 		const newIndex = Math.round(offsetY / activeHeight);
 
-		if (newIndex === TOTAL_BASE_ITEMS) {
-			// Landed on the looped first video (Index 3)
+		if (newIndex === totalBaseItems) {
+			// Landed on the looped first video
 			setBubbleState("bursting");
 
 			// Instantly reset to Index 0 without animation.
-			// Because Index 0 and Index 3 are both Video 1, there is ZERO visual glitch,
-			// AND at Index 0 the user CANNOT scroll back up to the last video!
 			setTimeout(() => {
 				flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
 				setActiveIndex(0);
 			}, 30);
 		} else {
-			if (newIndex >= 0 && newIndex < TOTAL_BASE_ITEMS) {
+			if (newIndex >= 0 && newIndex < totalBaseItems) {
 				setActiveIndex(newIndex);
 			}
 			if (bubbleState === "rising") {
@@ -631,7 +693,7 @@ export default function ReelPlayerScreen() {
 		if (bubbleState !== "hidden") return;
 		setBubbleState("rising");
 		flatListRef.current?.scrollToIndex({
-			index: TOTAL_BASE_ITEMS,
+			index: totalBaseItems,
 			animated: true,
 		});
 		setTimeout(() => {
@@ -649,7 +711,7 @@ export default function ReelPlayerScreen() {
 
 			<FlatList
 				ref={flatListRef}
-				data={REEL_DATA}
+				data={reelData}
 				keyExtractor={(item) => item.id}
 				renderItem={({ item, index }) => (
 					<ReelItem
@@ -658,6 +720,7 @@ export default function ReelPlayerScreen() {
 						activeIndex={activeIndex}
 						itemWidth={activeWidth}
 						itemHeight={activeHeight}
+						totalCount={totalBaseItems}
 						insets={insets}
 						onClose={handleClose}
 						onLoopToStart={handleLoopToStart}

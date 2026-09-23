@@ -181,6 +181,30 @@ export function resetDevMockCurrentStep(): void {
  */
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const MOCK_FAQS = [
+	{
+		id: "mock-faq-general-1",
+		category: "general",
+		question: "What is RapidMoney and how does it work?",
+		answer: "RapidMoney offers a paperless digital loan journey with verified KYC and lender offers.",
+		created_at: "2026-01-01T00:00:00Z",
+	},
+	{
+		id: "mock-faq-repayments-1",
+		category: "repayments",
+		question: "Can I repay my loan early?",
+		answer: "You can review the available repayment options from your loan dashboard.",
+		created_at: "2026-01-01T00:00:00Z",
+	},
+	{
+		id: "mock-faq-security-1",
+		category: "security",
+		question: "How is my information protected?",
+		answer: "Your account session is protected with device-secure token storage and verified KYC flows.",
+		created_at: "2026-01-01T00:00:00Z",
+	},
+];
+
 /**
  * Evaluates an outgoing Axios request config and returns a mocked AxiosResponse
  * if Mock Mode is enabled and a matching mock handler exists.
@@ -202,6 +226,57 @@ export async function handleDevMockRequest(
 	const url = config.url ?? "";
 	const method = (config.method ?? "get").toLowerCase();
 
+	if ((url.includes("general-info/customer-care") || url.includes("general-info")) && method === "get") {
+		await delay(150);
+		return {
+			data: {
+				success: true,
+				message: "Mock customer care retrieved successfully",
+				data: {
+					email: "care@rapidmoney.in",
+					phone: "+911234567890",
+					whatsapp: "+919029003135",
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+
+	// Help & Support: mirrors the public backend response envelopes.
+	if (url === "faqs" && method === "get") {
+		await delay(250);
+		return {
+			data: {
+				success: true,
+				message: "Mock FAQs retrieved successfully",
+				data: { items: MOCK_FAQS, total: MOCK_FAQS.length, page: 1, page_size: 100, total_pages: 1 },
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// Videos: mirrors the public backend response envelopes
+	if (url.includes("videos") && method === "get") {
+		await delay(200);
+		return {
+			data: {
+				success: true,
+				message: "Mock videos retrieved successfully",
+				data: { items: [], total: 0, page: 1, page_size: 100, total_pages: 1 },
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
 	// ─── 1. Endpoint: auth/login & auth/request-otp ──────────────────────────
 	if ((url.includes("auth/login") || url.includes("auth/request-otp")) && method === "post") {
 		await delay(450); // Simulate network latency
@@ -223,6 +298,7 @@ export async function handleDevMockRequest(
 			user_exists: false,
 			next_action: "verify_otp",
 			otp_id: "mock_otp_id_889900",
+			sign_in_key: "app:mock_sign_in_key_889900",
 			expires_in: 600,
 			user_id: "mock_user_id_12345",
 			customer_id: "mock_cust_98765",
@@ -1700,4 +1776,3 @@ export async function handleDevMockRequest(
 		config,
 	};
 }
-

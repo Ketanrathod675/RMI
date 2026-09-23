@@ -23,6 +23,8 @@ export * from "./services/auth.service";
 export * from "./services/user.service";
 export * from "./services/loans.service";
 export * from "./services/notifications.service";
+export * from "./services/faq.service";
+export * from "./services/video.service";
 
 // LEGACY — old backend, disabled during in-house rebuild
 // Domain Modules & Legacy Fallbacks

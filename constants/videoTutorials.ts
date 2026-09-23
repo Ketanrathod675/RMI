@@ -5,7 +5,7 @@ import { VideoSource } from "expo-video";
 export interface VideoTutorialItem {
 	id: string;
 	title: string;
-	duration: string;
+	duration?: string;
 	thumbnail: ImageSourcePropType;
 	videoUrl: VideoSource;
 	description?: string;

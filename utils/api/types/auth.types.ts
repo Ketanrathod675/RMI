@@ -9,6 +9,7 @@ export interface FastApiRequestOtpPayload {
 	phone_number: string;
 	otp_type?: OTPType;
 	full_name?: string;
+	client_type?: "web" | "app";
 }
 
 export interface FastApiRequestOtpResponse {
@@ -23,6 +24,7 @@ export interface FastApiVerifyOtpPayload {
 	phone_number: string;
 	otp: number;
 	sign_in_key?: string;
+	client_type?: "web" | "app";
 }
 
 export interface FastApiTokenResponse {

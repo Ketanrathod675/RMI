@@ -1,4 +1,5 @@
 import * as Application from "expo-application";
+import { Platform } from "react-native";
 import { getBranchDeviceToken } from "@/utils/branch";
 import { getBranchDeviceContext } from "@/utils/deviceContext";
 import { axios } from "../core/client";
@@ -31,8 +32,9 @@ import type { StandardResponse } from "../types/common";
 export const requestOtp = async (data: LoginRequestType): Promise<Partial<LoginResponseType>> => {
 	const payload = {
 		...data,
+		client_type: "app" as const,
 		version: Application.nativeApplicationVersion,
-		platform: "android",
+		platform: Platform.OS,
 	};
 
 	// Attempt FastAPI /auth/request-otp directly
@@ -75,8 +77,10 @@ export const verifyOtp = async (
 	const payload = {
 		...data,
 		otp: data.otp,
+		sign_in_key: data.sign_in_key,
+		client_type: "app" as const,
 		version: Application.nativeApplicationVersion,
-		platform: "android",
+		platform: Platform.OS,
 		branch_device_context: branchDeviceContext,
 	};
 

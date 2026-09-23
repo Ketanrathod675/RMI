@@ -102,7 +102,8 @@ export default function Login() {
 	const { mutate: loginMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: login,
 		onSuccess: (res) => {
-			if (!res?.otp_id) {
+			const signInKey = res?.sign_in_key ?? res?.otp_id;
+			if (!signInKey) {
 				Toast.show({
 					type: "error",
 					text1: t("errorOccurredWhileRequestingOTP"),
@@ -119,7 +120,10 @@ export default function Login() {
 				visibilityTime: 2500,
 			});
 
-			router.push("/signin-otp");
+			router.push({
+				pathname: "/signin-otp",
+				params: { signInKey },
+			});
 		},
 		onError: (err, variables, ctx) => {
 			const { error: errData } = errorHandler(err, variables, ctx);

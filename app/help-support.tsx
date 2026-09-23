@@ -1,11 +1,13 @@
 import { HyperlinkText } from "@/components/HyperlinkText";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
-import { useTranslation } from "@/hooks/useTranslation";
+import { getCustomerCare, getFaqs } from "@/utils/api/services/faq.service";
 import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
+import { useQuery } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
+	ActivityIndicator,
 	BackHandler,
 	Image,
 	Linking,
@@ -20,14 +22,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-interface FAQItemData {
-	id: number;
-	question: string;
-	answer: string;
-	category: "general" | "repayments" | "security";
-}
-
-const CATEGORIES = [
+const DEFAULT_CATEGORIES = [
 	{ id: "all", label: "All Questions" },
 	{ id: "general", label: "General" },
 	{ id: "repayments", label: "Repayments" },
@@ -46,7 +41,6 @@ export default function HelpAndSupport() {
 	const mascotHeight = Math.round(mascotWidth / 0.8326);
 	const circleSize = Math.round(W * 0.15);
 
-	const { t } = useTranslation();
 	useJourneyTracker("/help-support");
 
 	// Search & Category filter states
@@ -54,12 +48,49 @@ export default function HelpAndSupport() {
 	const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
 	// First item active and expanded by default matching the latest screenshot
-	const [activeFaq, setActiveFaq] = useState<number | null>(0);
-	const [expandedAnswerId, setExpandedAnswerId] = useState<number | null>(0);
+	const [activeFaq, setActiveFaq] = useState<string | null>(null);
+	const [expandedAnswerId, setExpandedAnswerId] = useState<string | null>(null);
+	const { data: faqList = [], isLoading: isFaqsLoading } = useQuery({
+		queryKey: ["faqs"],
+		queryFn: getFaqs,
+	});
+
+	// Dynamically build category tabs from FAQ API items, with fallback to default categories
+	const categories = useMemo(() => {
+		const categorySet = new Set<string>();
+		faqList.forEach((faq) => {
+			const cat = faq.category?.trim();
+			if (cat) {
+				categorySet.add(cat);
+			}
+		});
+
+		if (categorySet.size === 0) {
+			return DEFAULT_CATEGORIES;
+		}
+
+		const dynamicTabs = Array.from(categorySet).map((cat) => ({
+			id: cat.toLowerCase(),
+			label: cat.charAt(0).toUpperCase() + cat.slice(1),
+		}));
+
+		return [{ id: "all", label: "All Questions" }, ...dynamicTabs];
+	}, [faqList]);
+
+	const { data: customerCare, refetch: refetchCustomerCare } = useQuery({
+		queryKey: ["customer-care"],
+		queryFn: getCustomerCare,
+	});
+	const supportPhone = customerCare?.phone || "+911234567890";
+	const supportWhatsApp = customerCare?.whatsapp || "+919029003135";
+	const supportEmail = customerCare?.email || "care@rapidmoney.in";
 
 	// Handle hardware back press on Android
 	useFocusEffect(
 		useCallback(() => {
+			// Contact details are managed remotely; refresh whenever this screen is revisited.
+			void refetchCustomerCare();
+
 			const onBackPress = () => {
 				if (router.canGoBack()) {
 					router.back();
@@ -75,246 +106,47 @@ export default function HelpAndSupport() {
 			);
 
 			return () => subscription.remove();
-		}, [])
+		}, [refetchCustomerCare])
 	);
 
-	const toggleFaq = (id: number) => {
+	const toggleFaq = (id: string) => {
 		setActiveFaq(id);
 		setExpandedAnswerId((prev) => (prev === id ? null : id));
 	};
 
 	const handleCallPress = () => {
-		Linking.openURL("tel:+911234567890").catch((err) =>
+		Linking.openURL(`tel:${supportPhone}`).catch((err) =>
 			console.error("Failed to dial:", err)
 		);
 	};
 
 	const handleWhatsAppPress = () => {
 		Linking.openURL(
-			"https://wa.me/+919029003135?text=" +
+			`https://wa.me/${supportWhatsApp.replace(/[^0-9]/g, "")}?text=` +
 			encodeURIComponent("Hi! Can we have a chat.")
 		).catch((err) => console.error("Failed to open WhatsApp:", err));
 	};
 
 	const handleEmailPress = () => {
 		Linking.openURL(
-			"mailto:care@rapidmoney.in?subject=" +
+			`mailto:${supportEmail}?subject=` +
 			encodeURIComponent("RapidMoney App Support")
 		).catch((err) => console.error("Failed to open Email:", err));
 	};
 
-	const faqList: FAQItemData[] = [
-		{
-			id: 0,
-			question: "What is RapidMoney and how does it work?",
-			answer:
-				"RapidMoney is an RBI-compliant digital personal lending platform designed for salaried & self-employed professionals in India. We offer collateral-free personal credit disbursed straight to your verified bank account within minutes via 100% paperless e-KYC.",
-			category: "general",
-		},
-		{
-			id: 1,
-			question: t("faqQ2"),
-			answer: t("faqA2"),
-			category: "general",
-		},
-		{
-			id: 2,
-			question: t("faqQ3"),
-			answer: t("faqA3"),
-			category: "security",
-		},
-		{
-			id: 3,
-			question: t("faqQ4"),
-			answer: t("faqA4"),
-			category: "repayments",
-		},
-		{
-			id: 4,
-			question: t("isRapidMoneyBankOrNBFC"),
-			answer: t("faqAnswer1"),
-			category: "general",
-		},
-		{
-			id: 5,
-			question: t("whyShouldIBorrowFromRapidMoney"),
-			answer: t("faqAnswer3"),
-			category: "general",
-		},
-		{
-			id: 6,
-			question: t("whatIfIHaveToRaiseComplaint"),
-			answer: t("faqAnswer4"),
-			category: "general",
-		},
-		{
-			id: 7,
-			question: t("canIApplyForLoanFirstTime"),
-			answer: t("faqAnswer5"),
-			category: "general",
-		},
-		{
-			id: 8,
-			question: t("canIApplyWithoutSmartphone"),
-			answer: t("faqAnswer6"),
-			category: "general",
-		},
-		{
-			id: 9,
-			question: t("howIsRapidMoneyDifferent"),
-			answer: t("faqAnswer7"),
-			category: "general",
-		},
-		{
-			id: 10,
-			question: t("whatIsInstantPersonalLoan"),
-			answer: t("faqAnswer8"),
-			category: "general",
-		},
-		{
-			id: 11,
-			question: t("howDoesPersonalLoanWork"),
-			answer: t("faqAnswer9"),
-			category: "general",
-		},
-		{
-			id: 12,
-			question: t("howQuicklyCanIReceiveFunds"),
-			answer: t("faqAnswer10"),
-			category: "general",
-		},
-		{
-			id: 13,
-			question: t("howDoesRapidMoneyEnsureSecurity"),
-			answer: t("faqAnswer11"),
-			category: "security",
-		},
-		{
-			id: 14,
-			question: t("whatIsMinimumIncomeRequirement"),
-			answer: t("faqAnswer12"),
-			category: "general",
-		},
-		{
-			id: 15,
-			question: t("areThereFeesForEarlyRepayment"),
-			answer: t("faqAnswer13"),
-			category: "repayments",
-		},
-		{
-			id: 16,
-			question: t("whatIsTypicalRepaymentTenure"),
-			answer: t("faqAnswer14"),
-			category: "repayments",
-		},
-		{
-			id: 17,
-			question: t("canIApplyJointlyWithSpouse"),
-			answer: t("faqAnswer15"),
-			category: "general",
-		},
-		{
-			id: 18,
-			question: t("whatIsMyLoanEligibility"),
-			answer: t("faqAnswer16"),
-			category: "general",
-		},
-		{
-			id: 19,
-			question: t("whatDocumentsAreRequired"),
-			answer: t("faqAnswer17"),
-			category: "general",
-		},
-		{
-			id: 20,
-			question: t("amGettingSalaryViaCash"),
-			answer: t("faqAnswer18"),
-			category: "general",
-		},
-		{
-			id: 21,
-			question: t("myLoanGotRejected"),
-			answer: t("faqAnswer19"),
-			category: "general",
-		},
-		{
-			id: 22,
-			question: t("howCanIIncreaseChances"),
-			answer: t("faqAnswer20"),
-			category: "general",
-		},
-		{
-			id: 23,
-			question: t("whichPlatformsCanBeUsed"),
-			answer: t("faqAnswer21"),
-			category: "general",
-		},
-		{
-			id: 24,
-			question: t("recentlyStartedNewJob"),
-			answer: t("faqAnswer22"),
-			category: "general",
-		},
-		{
-			id: 25,
-			question: t("benefitsOfHigherCreditScore"),
-			answer: t("faqAnswer23"),
-			category: "general",
-		},
-		{
-			id: 26,
-			question: t("whatIsCreditScore"),
-			answer: t("faqAnswer24"),
-			category: "general",
-		},
-		{
-			id: 27,
-			question: t("howIsCreditLimitDecided"),
-			answer: t("faqAnswer25"),
-			category: "general",
-		},
-		{
-			id: 28,
-			question: t("whatIsAPR"),
-			answer: t("faqAnswer26"),
-			category: "repayments",
-		},
-		{
-			id: 29,
-			question: t("whyDoYouNeedBankAccountDetails"),
-			answer: t("faqAnswer27"),
-			category: "security",
-		},
-		{
-			id: 30,
-			question: t("canIGetMyLoanCancelled"),
-			answer: t("faqAnswer28"),
-			category: "repayments",
-		},
-		{
-			id: 31,
-			question: t("howCanITrackRepaymentSchedule"),
-			answer: t("faqAnswer29"),
-			category: "repayments",
-		},
-		{
-			id: 32,
-			question: t("canIPayBeforeEMIDate"),
-			answer: t("faqAnswer30"),
-			category: "repayments",
-		},
-	];
-
-	const filteredFaqs = faqList.filter((item) => {
-		const matchesCategory =
-			selectedCategory === "all" || item.category === selectedCategory;
+	const filteredFaqs = useMemo(() => {
 		const query = searchQuery.trim().toLowerCase();
-		const matchesSearch =
-			!query ||
-			item.question.toLowerCase().includes(query) ||
-			item.answer.toLowerCase().includes(query);
-		return matchesCategory && matchesSearch;
-	});
+		return faqList.filter((item) => {
+			const itemCategory = (item.category ?? "").trim().toLowerCase();
+			const matchesCategory =
+				selectedCategory === "all" || itemCategory === selectedCategory.toLowerCase();
+			const matchesSearch =
+				!query ||
+				item.question.toLowerCase().includes(query) ||
+				item.answer.toLowerCase().includes(query);
+			return matchesCategory && matchesSearch;
+		});
+	}, [faqList, selectedCategory, searchQuery]);
 
 	return (
 		<View style={[styles.screenContainer, { paddingTop: insets.top }]}>
@@ -360,7 +192,7 @@ export default function HelpAndSupport() {
 								onPress={handleCallPress}
 								style={styles.phonePill}>
 								<MaterialIcons name="call" size={Math.round(W * 0.042)} color="#65A30D" />
-								<Text style={styles.phoneNumberText}>+91 - 1234567890</Text>
+								<Text style={styles.phoneNumberText}>{supportPhone}</Text>
 							</TouchableOpacity>
 
 							<Text style={styles.availableTitle}>We're available from:</Text>
@@ -464,7 +296,7 @@ export default function HelpAndSupport() {
 						horizontal
 						showsHorizontalScrollIndicator={false}
 						contentContainerStyle={styles.categoriesContainer}>
-						{CATEGORIES.map((category) => {
+						{categories.map((category) => {
 							const isSelected = selectedCategory === category.id;
 							return (
 								<TouchableOpacity
@@ -491,7 +323,16 @@ export default function HelpAndSupport() {
 
 					{/* FAQ Cards Accordion */}
 					<View style={styles.faqCardContainer}>
-						{filteredFaqs.map((item, index) => {
+						{isFaqsLoading ? (
+							<View style={styles.faqStatusContainer}>
+								<ActivityIndicator color="#4CAE38" />
+								<Text style={styles.faqStatusText}>Loading FAQs...</Text>
+							</View>
+						) : filteredFaqs.length === 0 ? (
+							<View style={styles.faqStatusContainer}>
+								<Text style={styles.faqStatusText}>No FAQs available right now.</Text>
+							</View>
+						) : filteredFaqs.map((item, index) => {
 							const isActive = activeFaq === item.id;
 							const isAnswerOpen = expandedAnswerId === item.id;
 							const isLast = index === filteredFaqs.length - 1;
@@ -826,6 +667,17 @@ const styles = StyleSheet.create({
 		fontSize: 13.5,
 		color: "#475569",
 		lineHeight: 20,
+		fontFamily: Platform.select({ ios: "System", android: "sans-serif" }),
+	},
+	faqStatusContainer: {
+		alignItems: "center",
+		paddingHorizontal: 16,
+		paddingVertical: 24,
+		gap: 10,
+	},
+	faqStatusText: {
+		fontSize: 14,
+		color: "#475569",
 		fontFamily: Platform.select({ ios: "System", android: "sans-serif" }),
 	},
 });

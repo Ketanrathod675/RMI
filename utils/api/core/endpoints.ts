@@ -99,6 +99,12 @@ export const URLS = {
 		get_notifications: ({ skip = 0, limit = 50, unread_only = false }) =>
 			`notifications/?skip=${skip}&limit=${limit}&unread_only=${unread_only}`,
 	},
+	faq: {
+		list: "faqs",
+	},
+	general_info: {
+		customer_care: "general-info/customer-care",
+	},
 	sanction_letter: {
 		generate: "sanction-letter/generate",
 		kfs_document: "sanction-letter/kfs-document",
@@ -111,5 +117,8 @@ export const URLS = {
 	},
 	autocollect: {
 		check_mandate: (txnId: string) => `autocollect/mandate/check/${txnId}`,
+	},
+	videos: {
+		list: "videos",
 	},
 } as const;

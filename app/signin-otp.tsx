@@ -18,7 +18,7 @@ import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { MaterialIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Image } from "expo-image";
-import { router, useFocusEffect, useNavigation } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams, useNavigation } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -52,7 +52,20 @@ export default function SigninSignupOtp() {
 	const [showTermsAndConditions, setShowTermsAndConditions] = useState(false);
 	const inputRefs = useRef<(TextInput | null)[]>([]);
 
-	const { countryCode, phoneNumber, changeOtpVerifyResponse, loginResponse } = useSignin();
+	const params = useLocalSearchParams<{ signInKey?: string }>();
+	const { countryCode, phoneNumber, changeOtpVerifyResponse, loginResponse, changeLoginResponse } = useSignin();
+	const [currentSignInKey, setCurrentSignInKey] = useState<string | undefined>(
+		params.signInKey || loginResponse?.sign_in_key || loginResponse?.otp_id
+	);
+
+	useEffect(() => {
+		if (params.signInKey) {
+			setCurrentSignInKey(params.signInKey);
+		} else if (loginResponse?.sign_in_key || loginResponse?.otp_id) {
+			setCurrentSignInKey(loginResponse.sign_in_key ?? loginResponse.otp_id);
+		}
+	}, [params.signInKey, loginResponse?.sign_in_key, loginResponse?.otp_id]);
+
 	const { handleLoginAndSignup, validateMobileAndCountryCode, handleSetTokens } = useAuth(false);
 	const dispatch = useDispatch();
 
@@ -238,9 +251,9 @@ export default function SigninSignupOtp() {
 		const requestPayload: any = {
 			phone_number: validate.phoneNumber.data,
 			otp: otpCode,
+			sign_in_key: currentSignInKey,
 			verification_type: "",
 			language,
-			platform: "mobile",
 			version: Constants.expoConfig?.version,
 		};
 
@@ -329,7 +342,8 @@ export default function SigninSignupOtp() {
 	const { mutate: resendMutation, isPending: isResendOtpPending } = useNetworkAwareMutation({
 		mutationFn: login,
 		onSuccess: (res) => {
-			if (!res.otp_id || !res.expires_in) {
+			const newSignInKey = res?.sign_in_key ?? res?.otp_id;
+			if (!newSignInKey || !res?.expires_in) {
 				Toast.show({
 					type: "error",
 					text1: t("errorOccurredWhileRequestingOTP"),
@@ -337,6 +351,11 @@ export default function SigninSignupOtp() {
 				});
 				return;
 			}
+
+			if (newSignInKey) {
+				setCurrentSignInKey(newSignInKey);
+			}
+			changeLoginResponse(res as any);
 
 			Toast.show({
 				type: "success",
@@ -376,9 +395,9 @@ export default function SigninSignupOtp() {
 		const requestPayload: any = {
 			phone_number: validate.phoneNumber.data,
 			otp: otp.join(""),
+			sign_in_key: currentSignInKey,
 			verification_type: "",
 			language,
-			platform: "mobile",
 			version: Constants.expoConfig?.version,
 		};
 
