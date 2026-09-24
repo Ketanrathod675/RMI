@@ -37,12 +37,15 @@ export const requestOtp = async (data: LoginRequestType): Promise<Partial<LoginR
 		platform: Platform.OS,
 	};
 
-	// Attempt FastAPI /auth/request-otp directly
-	const response = await axios.post<
-		StandardResponse<FastApiRequestOtpResponse> | Partial<LoginResponseType>
-	>(URLS.auth.request_otp, payload);
+	console.log(`➡️ [AUTH] Calling OTP endpoint: ${axios.defaults.baseURL}/${URLS.auth.request_otp}`, payload);
 
-	const resData = response.data;
+	try {
+		// Attempt FastAPI /auth/request-otp directly
+		const response = await axios.post<
+			StandardResponse<FastApiRequestOtpResponse> | Partial<LoginResponseType>
+		>(URLS.auth.request_otp, payload);
+		console.log("✅ [AUTH] OTP Response received:", response.data);
+		const resData = response.data;
 
 	// Normalized FastAPI envelope handling
 	if (resData && "data" in resData && (resData as any).data?.sign_in_key) {
@@ -57,7 +60,18 @@ export const requestOtp = async (data: LoginRequestType): Promise<Partial<LoginR
 		};
 	}
 
-	return resData as Partial<LoginResponseType>;
+		return resData as Partial<LoginResponseType>;
+	} catch (error: any) {
+		console.error("❌ [AUTH] requestOtp error details:", {
+			message: error?.message,
+			code: error?.code,
+			status: error?.response?.status,
+			data: error?.response?.data,
+			configUrl: error?.config?.url,
+			baseURL: error?.config?.baseURL,
+		});
+		throw error;
+	}
 };
 
 /**

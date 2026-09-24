@@ -253,7 +253,7 @@ export default function Login() {
 		<Layout01 contentStyle={styles.layoutContent}>
 			<View style={styles.formContainer}>
 				{/* Section Title */}
-				<TranslatedText style={styles.title} translationKey="signInWith" />
+				<Text style={styles.title}>Mobile Number</Text>
 
 				{/* Unified Phone Input Box */}
 				<View style={styles.unifiedInputContainer}>
@@ -267,13 +267,15 @@ export default function Login() {
 							contentFit="cover"
 						/>
 						<Text style={styles.countryCodeText}>{countryCode}</Text>
-						<MaterialIcons name="keyboard-arrow-down" size={18} color="#333" />
+						<MaterialIcons name="keyboard-arrow-down" size={18} color="#64748B" />
 					</TouchableOpacity>
+
+					<View style={styles.inputDivider} />
 
 					<TextInput
 						style={styles.phoneTextInput}
-						placeholder="Mobile Number"
-						placeholderTextColor="#999999"
+						placeholder="Enter 10-digit number"
+						placeholderTextColor="#94A3B8"
 						keyboardType="number-pad"
 						maxLength={10}
 						value={mobile}
@@ -286,7 +288,7 @@ export default function Login() {
 							onPress={() => setMobile("")}
 							style={styles.clearButton}
 							hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-							<MaterialIcons name="close" size={18} color="#999999" />
+							<MaterialIcons name="close" size={18} color="#94A3B8" />
 						</TouchableOpacity>
 					)}
 				</View>
@@ -294,61 +296,73 @@ export default function Login() {
 				{/* Error text if present */}
 				{error ? <Text style={styles.error}>{error}</Text> : null}
 
-				{/* Aadhaar Helper Text */}
-				<Text style={styles.infoText}>
-					Please enter your{" "}
-					<Text style={styles.aadhaarHighlight}>AADHAAR</Text> linked mobile number
-				</Text>
+				{/* Aadhaar Helper Text with Info Icon */}
+				<View style={styles.infoRow}>
+					<MaterialIcons name="info" size={15} color="#4D7C0F" style={styles.infoIcon} />
+					<Text style={styles.infoText}>
+						Please enter your{" "}
+						<Text style={styles.aadhaarHighlight}>AADHAAR</Text>-linked mobile number
+					</Text>
+				</View>
 
 				{/* Request OTP Primary Button */}
 				<TouchableOpacity
 					style={[
 						styles.button,
-						(isPending || mobile.length < 10) && { opacity: 0.8 },
+						(isPending || mobile.length < 10) && styles.buttonDisabled,
 					]}
 					onPress={handleRequestOtp}
-					disabled={isPending}>
+					disabled={isPending || mobile.length < 10}>
 					{isPending ? (
-						<ActivityIndicator size="small" color="#11181C" />
+						<ActivityIndicator size="small" color="#3F6212" />
 					) : (
 						<View style={styles.buttonContent}>
-							<TranslatedText
-								style={styles.buttonText}
-								translationKey="requestOTP"
-							/>
-							<IconSymbol
-								name="arrow.right"
+							<Text style={styles.buttonText}>Request OTP</Text>
+							<MaterialIcons
+								name="arrow-forward"
 								size={18}
-								color="#11181C"
+								color="#3F6212"
 								style={styles.buttonArrow}
 							/>
 						</View>
 					)}
 				</TouchableOpacity>
 
-				{/* Bottom Trust & Verification Badges */}
-				<View style={styles.trustBadgesRow}>
+				{/* Subtle Horizontal Divider */}
+				<View style={styles.horizontalDivider} />
+
+				{/* Bottom Trust & Verification Badges Card */}
+				<View style={styles.trustCard}>
 					{/* RBI Approved */}
 					<View style={styles.badgeItem}>
-						<Image
-							source={Images.BANK}
-							style={styles.bankIcon}
-							contentFit="contain"
-						/>
+						<View style={styles.bankIconContainer}>
+							<MaterialIcons name="account-balance" size={18} color="#B45309" />
+						</View>
 						<View style={styles.badgeTextWrap}>
 							<Text style={styles.badgeTitle}>RBI Approved</Text>
 							<Text style={styles.badgeSubtitle}>Powered by RBI NBFC</Text>
 						</View>
 					</View>
 
+					{/* Vertical Separator */}
+					<View style={styles.cardSeparator} />
+
 					{/* 10 Lakh+ Customers */}
 					<View style={styles.badgeItem}>
-						<CustomersIcon size={28} />
+						<View style={styles.customersIconContainer}>
+							<MaterialIcons name="groups" size={20} color="#EA580C" />
+						</View>
 						<View style={styles.badgeTextWrap}>
 							<Text style={styles.badgeTitle}>10 Lakh+</Text>
-							<Text style={styles.badgeSubtitle}>Customers</Text>
+							<Text style={styles.badgeSubtitle}>Customers nationwide</Text>
 						</View>
 					</View>
+				</View>
+
+				{/* SSL Security Footer */}
+				<View style={styles.sslFooter}>
+					<MaterialIcons name="lock" size={13} color="#15803D" style={styles.sslIcon} />
+					<Text style={styles.sslText}>100% Secure & Bank Grade 256-bit SSL</Text>
 				</View>
 			</View>
 
@@ -481,9 +495,9 @@ const styles = StyleSheet.create({
 		width: "100%",
 	},
 	title: {
-		fontSize: font(2.2),
-		fontWeight: "700",
-		color: dark,
+		fontSize: font(2.0),
+		fontWeight: "600",
+		color: "#1E293B",
 		marginTop: height(1.5),
 		marginBottom: height(1.2),
 		textAlign: "left",
@@ -491,21 +505,24 @@ const styles = StyleSheet.create({
 	unifiedInputContainer: {
 		flexDirection: "row",
 		alignItems: "center",
-		backgroundColor: white,
+		backgroundColor: "#FAFAFA",
 		borderWidth: 1,
 		borderColor: "#E2E8F0",
-		borderRadius: width(3),
+		borderRadius: 14,
 		paddingHorizontal: width(3.5),
-		height: height(6.2),
+		height: 54,
 		width: "100%",
 	},
 	countryPickerTrigger: {
 		flexDirection: "row",
 		alignItems: "center",
-		paddingRight: width(2),
-		marginRight: width(2),
-		borderRightWidth: 1,
-		borderRightColor: "#F0F0F0",
+		paddingRight: 6,
+	},
+	inputDivider: {
+		width: 1,
+		height: 24,
+		backgroundColor: "#E2E8F0",
+		marginHorizontal: 10,
 	},
 	flagImage: {
 		width: 22,
@@ -515,17 +532,17 @@ const styles = StyleSheet.create({
 	},
 	countryCodeText: {
 		fontSize: font(1.8),
-		color: dark,
+		color: "#0F172A",
 		fontWeight: "600",
 		marginRight: 2,
 	},
 	phoneTextInput: {
 		flex: 1,
-		fontSize: font(1.9),
+		fontSize: font(1.8),
 		fontWeight: "500",
-		color: dark,
+		color: "#0F172A",
 		paddingVertical: 0,
-		paddingHorizontal: 4,
+		paddingHorizontal: 2,
 	},
 	clearButton: {
 		padding: 4,
@@ -538,31 +555,35 @@ const styles = StyleSheet.create({
 		marginTop: height(0.6),
 		marginLeft: width(1),
 	},
-	infoText: {
-		color: "#666666",
-		fontSize: font(1.5),
+	infoRow: {
+		flexDirection: "row",
+		alignItems: "center",
 		marginTop: height(1.2),
-		lineHeight: height(2.2),
 		marginLeft: width(0.5),
 	},
+	infoIcon: {
+		marginRight: 6,
+	},
+	infoText: {
+		color: "#64748B",
+		fontSize: font(1.4),
+		lineHeight: height(2.0),
+	},
 	aadhaarHighlight: {
-		color: dark_primary,
+		color: "#365314",
 		fontWeight: "700",
 	},
 	button: {
-		backgroundColor: primary,
-		borderRadius: width(7),
-		paddingVertical: height(2.1),
+		backgroundColor: "#D7F98C",
+		borderRadius: 28,
+		height: 52,
 		alignItems: "center",
 		justifyContent: "center",
 		width: "100%",
-		marginTop: height(12),
-		marginBottom: 0,
-		shadowColor: primary,
-		shadowOffset: { width: 0, height: 4 },
-		shadowOpacity: 0.3,
-		shadowRadius: 6,
-		elevation: 3,
+		marginTop: height(3.5),
+	},
+	buttonDisabled: {
+		opacity: 0.95,
 	},
 	buttonContent: {
 		flexDirection: "row",
@@ -570,43 +591,90 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	buttonText: {
-		color: dark,
-		fontSize: font(2.1),
-		fontWeight: "700",
+		color: "#3F6212",
+		fontSize: font(1.9),
+		fontWeight: "600",
 	},
 	buttonArrow: {
-		marginLeft: width(2),
+		marginLeft: 8,
 	},
-	trustBadgesRow: {
+	horizontalDivider: {
+		height: 1,
+		backgroundColor: "#F1F5F9",
+		width: "100%",
+		marginTop: height(4),
+		marginBottom: height(2.5),
+	},
+	trustCard: {
 		flexDirection: "row",
 		alignItems: "center",
-		justifyContent: "center",
-		gap: width(7),
+		justifyContent: "space-between",
+		backgroundColor: "#FAFAFA",
+		borderWidth: 1,
+		borderColor: "#F1F5F9",
+		borderRadius: 16,
+		paddingVertical: 12,
+		paddingHorizontal: 14,
 		width: "100%",
-		marginTop: height(4.5),
-		marginBottom: height(2),
 	},
 	badgeItem: {
+		flex: 1,
 		flexDirection: "row",
 		alignItems: "center",
-		gap: width(2.5),
 	},
-	bankIcon: {
-		width: width(8),
-		height: width(8),
+	bankIconContainer: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		backgroundColor: "#FEF3C7",
+		alignItems: "center",
+		justifyContent: "center",
+		marginRight: 10,
+	},
+	customersIconContainer: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		backgroundColor: "#FFEDD5",
+		alignItems: "center",
+		justifyContent: "center",
+		marginRight: 10,
+	},
+	cardSeparator: {
+		width: 1,
+		height: 34,
+		backgroundColor: "#E2E8F0",
+		marginHorizontal: 8,
 	},
 	badgeTextWrap: {
 		flexDirection: "column",
+		flex: 1,
 	},
 	badgeTitle: {
-		fontSize: font(1.7),
+		fontSize: font(1.5),
 		fontWeight: "700",
-		color: dark,
+		color: "#0F172A",
 	},
 	badgeSubtitle: {
-		fontSize: font(1.3),
-		color: "#666666",
-		marginTop: 1,
+		fontSize: font(1.15),
+		color: "#64748B",
+		marginTop: 2,
+		lineHeight: 14,
+	},
+	sslFooter: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		marginTop: height(2),
+		marginBottom: height(2),
+	},
+	sslIcon: {
+		marginRight: 6,
+	},
+	sslText: {
+		fontSize: font(1.25),
+		color: "#64748B",
+		fontWeight: "500",
 	},
 	modalOverlay: {
 		flex: 1,
