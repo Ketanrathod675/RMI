@@ -1,3 +1,4 @@
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { Select, type SelectOption } from "@/components";
 import { primary } from "@/constants/Colors";
 import { useAuth } from "@/hooks/useAuth";
@@ -6,6 +7,7 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { errorHandler } from "@/utils/api";
 import { getEmploymentDetailsHbPartner } from "@/utils/api/user";
 import {
@@ -22,6 +24,7 @@ import {
 	Alert,
 	Animated,
 	BackHandler,
+	Keyboard,
 	KeyboardAvoidingView,
 	Platform,
 	ScrollView,
@@ -43,6 +46,17 @@ export default function ProfessionalDetails() {
 
 	// Track this screen in the journey
 	useJourneyTracker("/professional-details");
+
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+
+	const companyNameRef = useRef<TextInput>(null);
+	const designationRef = useRef<TextInput>(null);
+
+	const dismissActiveInputs = () => {
+		companyNameRef.current?.blur();
+		designationRef.current?.blur();
+		Keyboard.dismiss();
+	};
 
 	const colorScheme = useColorScheme();
 	const isDark = colorScheme === "dark";
@@ -180,6 +194,7 @@ export default function ProfessionalDetails() {
 			: defaultLanguages;
 
 	const { applicantFrom } = useAuth();
+	const { runStep } = useJourneyLoader();
 
 	// HB Partner API prefill
 	const { data: hbEmploymentData } = useNetworkAwareQuery({
@@ -241,14 +256,7 @@ export default function ProfessionalDetails() {
 
 	// Back button handling
 	const handleBack = () => {
-		Alert.alert(
-			t("areYouSureGoBack", "Are you sure you want to go back?"),
-			t("youWillLoseProgress", "You will lose your progress."),
-			[
-				{ text: t("cancel", "Cancel"), style: "cancel" },
-				{ text: t("goBack", "Go Back"), onPress: () => router.replace("/(tabs)") },
-			]
-		);
+		setIsExitModalVisible(true);
 	};
 
 	useEffect(() => {
@@ -359,11 +367,13 @@ export default function ProfessionalDetails() {
 
 	const { mutate: submitEmploymentDetailsMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: submitEmploymentDetails,
-		onSuccess: () => {
-			Toast.show({
-				type: "success",
-				text1: t("employmentDetailsSubmittedSuccessfully", "Details submitted successfully"),
-				text2: t("proceedingToNextStep", "Proceeding to next step"),
+		onSuccess: async () => {
+			await runStep("professional_details", async () => {
+				Toast.show({
+					type: "success",
+					text1: t("employmentDetailsSubmittedSuccessfully", "Details submitted successfully"),
+					text2: t("proceedingToNextStep", "Proceeding to next step"),
+				});
 			});
 
 			router.replace("/professional-details-success");
@@ -432,7 +442,8 @@ export default function ProfessionalDetails() {
 	}
 
 	return (
-		<KeyboardAvoidingView
+		<>
+			<KeyboardAvoidingView
 			style={styles.container}
 			behavior={Platform.OS === "ios" ? "padding" : "height"}
 			keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}>
@@ -526,11 +537,15 @@ export default function ProfessionalDetails() {
 								Company Name<Text style={styles.requiredAsterisk}> *</Text>
 							</Text>
 							<TextInput
+								ref={companyNameRef}
 								style={styles.textInput}
 								value={formData.companyName}
 								onChangeText={(val) => handleForm("companyName", val)}
 								placeholder="Enter company name"
 								placeholderTextColor="#A0A0A0"
+								blurOnSubmit={true}
+								returnKeyType="done"
+								onSubmitEditing={() => Keyboard.dismiss()}
 							/>
 							{errors.companyName ? (
 								<Text style={styles.errorText}>{errors.companyName}</Text>
@@ -543,11 +558,15 @@ export default function ProfessionalDetails() {
 								Designation<Text style={styles.requiredAsterisk}> *</Text>
 							</Text>
 							<TextInput
+								ref={designationRef}
 								style={styles.textInput}
 								value={formData.designation}
 								onChangeText={(val) => handleForm("designation", val)}
 								placeholder="Enter your designation"
 								placeholderTextColor="#A0A0A0"
+								blurOnSubmit={true}
+								returnKeyType="done"
+								onSubmitEditing={() => Keyboard.dismiss()}
 							/>
 							{errors.designation ? (
 								<Text style={styles.errorText}>{errors.designation}</Text>
@@ -711,6 +730,16 @@ export default function ProfessionalDetails() {
 				</TouchableOpacity>
 			</View>
 		</KeyboardAvoidingView>
+
+			<ExitIntentModal
+				visible={isExitModalVisible}
+				onClose={() => setIsExitModalVisible(false)}
+				onConfirmExit={() => {
+					setIsExitModalVisible(false);
+					router.replace("/(tabs)");
+				}}
+			/>
+		</>
 	);
 }
 

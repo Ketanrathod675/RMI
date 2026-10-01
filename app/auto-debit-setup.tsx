@@ -1,8 +1,9 @@
-import React from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, BackHandler } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { dark, white, primary } from "@/constants/Colors";
 import { font, width, height } from "@/utils/dimensions";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
@@ -10,7 +11,28 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 export default function AutoDebitSetup() {
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
+	const navigation = useNavigation();
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 	useJourneyTracker("/auto-debit-setup");
+
+	useEffect(() => {
+		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+			if (["GO_BACK", "POP"].includes(e.data.action.type)) {
+				e.preventDefault();
+				setIsExitModalVisible(true);
+			}
+		});
+
+		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+			setIsExitModalVisible(true);
+			return true;
+		});
+
+		return () => {
+			unsubscribe();
+			backHandler.remove();
+		};
+	}, [navigation]);
 
 	return (
 		<View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
@@ -18,7 +40,7 @@ export default function AutoDebitSetup() {
 			<View style={styles.header}>
 				<TouchableOpacity
 					style={styles.backButton}
-					onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+					onPress={() => setIsExitModalVisible(true)}
 					accessibilityLabel="Go back"
 				>
 					<MaterialIcons name="arrow-back" size={24} color={dark} />
@@ -37,6 +59,15 @@ export default function AutoDebitSetup() {
 					Set up automated EMI repayments securely via eNACH / NetBanking. This feature is coming soon.
 				</Text>
 			</View>
+
+			<ExitIntentModal
+				visible={isExitModalVisible}
+				onClose={() => setIsExitModalVisible(false)}
+				onConfirmExit={() => {
+					setIsExitModalVisible(false);
+					router.replace("/(tabs)");
+				}}
+			/>
 		</View>
 	);
 }

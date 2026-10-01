@@ -27,28 +27,22 @@ import Toast from "react-native-toast-message";
 
 const PERMISSION_ITEMS = [
 	{
-		key: "security",
-		icon: <Ionicons name="shield-checkmark-outline" size={22} color="#888888" />,
-		title: "Your data is 100 % safe and Secure",
-		desc: "To build your comprehensive credit risk assessment and credit profile and facilitate quicker loan disbursal, we require the following permissions from you.",
-	},
-	{
 		key: "camera",
-		icon: <Ionicons name="camera-outline" size={22} color="#888888" />,
+		icon: <MaterialIcons name="camera-alt" size={24} color="#1E293B" />,
 		title: "Camera Permissions",
-		desc: "Required for KYC verification, uploading loan documents and capturing identity verification selfie.",
+		desc: "We use your camera to capture KYC documents, selfies, and other verification photos needed for your credit profile.",
 	},
 	{
 		key: "media",
-		icon: <MaterialIcons name="perm-media" size={22} color="#888888" />,
+		icon: <MaterialIcons name="image" size={24} color="#1E293B" />,
 		title: "Media Storage Permissions",
-		desc: "Required to securely upload required KYC documents, bank statements and identity proofs.",
+		desc: "This allows us to save uploaded documents and photos securely so your application stays complete and ready for review.",
 	},
 	{
 		key: "location",
-		icon: <Ionicons name="location-outline" size={22} color="#888888" />,
-		title: "Location permissions",
-		desc: "Required to verify service availability in your area and prevent fraudulent loan applications.",
+		icon: <MaterialIcons name="location-on" size={24} color="#1E293B" />,
+		title: "Location Permissions",
+		desc: "Location helps us verify your presence and improve fraud checks while keeping your credit assessment accurate.",
 	},
 ];
 
@@ -301,71 +295,85 @@ export default function RequestPermissions() {
 
 	return (
 		<View style={styles.container}>
-			{/* Top Header Bar */}
-			<View style={[styles.header, { paddingTop: insets.top + height(1.5) }]}>
-				<Text style={styles.headerTitle}>Permissions</Text>
+			{/* Top Header Section */}
+			<View style={[styles.headerSection, { paddingTop: insets.top + height(1.5) }]}>
+				<View style={styles.headerTitleRow}>
+					<View style={styles.shieldIconContainer}>
+						<Ionicons name="shield-outline" size={24} color="#059669" />
+					</View>
+					<Text style={styles.headerTitle}>Permissions</Text>
+				</View>
+				<Text style={styles.headerSubtitle}>
+					We need a few permissions to build your credit profile and speed up loan disbursal. Your data stays safe and secure.
+				</Text>
 			</View>
+
+			<View style={styles.headerDivider} />
 
 			<ScrollView
 				style={styles.scrollContainer}
 				contentContainerStyle={[
 					styles.scrollContent,
-					{ paddingBottom: insets.bottom + height(3) },
+					{ paddingBottom: Math.max(insets.bottom + height(1), height(2.5)) },
 				]}
 				showsVerticalScrollIndicator={false}>
-				{/* Permission & Security List */}
-				{PERMISSION_ITEMS.map((item) => (
-					<View style={styles.itemSection} key={item.key}>
-						<View style={styles.itemHeader}>
-							<View style={styles.itemIconWrap}>{item.icon}</View>
-							<Text style={styles.itemTitle}>{item.title}</Text>
+				{/* 3 Permission Cards */}
+				<View style={styles.cardsContainer}>
+					{PERMISSION_ITEMS.map((item) => (
+						<View style={styles.card} key={item.key}>
+							<View style={styles.cardHeader}>
+								<View style={styles.cardIconBox}>{item.icon}</View>
+								<Text style={styles.cardTitle}>{item.title}</Text>
+							</View>
+							<Text style={styles.cardDesc}>{item.desc}</Text>
 						</View>
-						<Text style={styles.itemDesc}>{item.desc}</Text>
-						<View style={styles.divider} />
-					</View>
-				))}
-
-				{/* Agreement Consent Section */}
-				<View style={styles.agreementSection}>
-					<TouchableOpacity
-						style={styles.checkboxContainer}
-						onPress={() => setIsAgreed(!isAgreed)}
-						activeOpacity={0.8}>
-						<View style={[styles.checkbox, isAgreed && styles.checkboxChecked]}>
-							{isAgreed && <Text style={styles.checkmark}>✓</Text>}
-						</View>
-					</TouchableOpacity>
-					<View style={styles.agreementTextContainer}>
-						<Text style={styles.agreementText}>
-							By Continuing, you agree to our{" "}
-							<Text
-								style={styles.linkText}
-								onPress={() => setShowPrivacyPolicy(true)}>
-								Privacy Policy
-							</Text>{" "}
-							, T&C's and authorize us to retrieve your{" "}
-							<Text
-								style={styles.linkText}
-								onPress={() => setShowTermsAndConditions(true)}>
-								Credit report and communication
-							</Text>{" "}
-							with you via phone , Emails, SMS,{" "}
-							<Text style={styles.linkText}>WhatsApp</Text> etc.
-						</Text>
-					</View>
+					))}
 				</View>
 
-				{/* Action Button: I agree */}
-				<TouchableOpacity
-					style={[styles.button, (!isAgreed || isLoading) && styles.buttonDisabled]}
-					onPress={handleProceed}
-					disabled={!isAgreed || isLoading}>
-					{isLoading ? (
-						<ActivityIndicator size="small" color={dark} />
-					) : (
-						<Text style={styles.buttonText}>I agree</Text>
-					)}
-				</TouchableOpacity>
+				{/* Bottom Actions Section anchored to the bottom */}
+				<View style={styles.bottomSection}>
+					{/* Agreement Consent Section */}
+					<View style={styles.agreementSection}>
+						<TouchableOpacity
+							style={styles.checkboxContainer}
+							onPress={() => setIsAgreed(!isAgreed)}
+							activeOpacity={0.8}>
+							<View style={[styles.checkbox, isAgreed && styles.checkboxChecked]}>
+								{isAgreed && <MaterialIcons name="check" size={16} color={white} />}
+							</View>
+						</TouchableOpacity>
+						<View style={styles.agreementTextContainer}>
+							<Text style={styles.agreementText}>
+								By continuing, you agree to our{" "}
+								<Text
+									style={styles.linkText}
+									onPress={() => setShowPrivacyPolicy(true)}>
+									Privacy Policy
+								</Text>{" "}
+								and{" "}
+								<Text
+									style={styles.linkText}
+									onPress={() => setShowTermsAndConditions(true)}>
+									Terms & Conditions
+								</Text>
+								. You also authorize us to retrieve your{" "}
+								<Text style={styles.boldText}>credit report</Text> and communicate with you via phone, Emails, SMS, WhatsApp etc.
+							</Text>
+						</View>
+					</View>
+
+					{/* Action Button: I agree */}
+					<TouchableOpacity
+						style={[styles.button, (!isAgreed || isLoading) && styles.buttonDisabled]}
+						onPress={handleProceed}
+						disabled={!isAgreed || isLoading}>
+						{isLoading ? (
+							<ActivityIndicator size="small" color="#1E293B" />
+						) : (
+							<Text style={styles.buttonText}>I agree</Text>
+						)}
+					</TouchableOpacity>
+				</View>
 			</ScrollView>
 
 			{/* Privacy Policy Modal */}
@@ -390,116 +398,155 @@ const styles = StyleSheet.create({
 		flex: 1,
 		backgroundColor: white,
 	},
-	header: {
+	headerSection: {
 		paddingHorizontal: width(6),
-		paddingBottom: height(1.5),
+		paddingBottom: height(2),
 		backgroundColor: white,
-		borderBottomWidth: 1,
-		borderBottomColor: "#F0F0F0",
+	},
+	headerTitleRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 14,
+	},
+	shieldIconContainer: {
+		width: 44,
+		height: 44,
+		borderRadius: 12,
+		backgroundColor: "#ECFDF5",
+		alignItems: "center",
+		justifyContent: "center",
 	},
 	headerTitle: {
-		fontSize: font(2.6),
+		fontSize: font(2.8),
 		fontWeight: "700",
-		color: dark,
+		color: "#1E293B",
+	},
+	headerSubtitle: {
+		fontSize: font(1.45),
+		color: "#64748B",
+		lineHeight: font(2.1),
+		marginTop: height(1.5),
+	},
+	headerDivider: {
+		height: 1,
+		backgroundColor: "#F1F5F9",
 	},
 	scrollContainer: {
 		flex: 1,
-		backgroundColor: white,
+		backgroundColor: "#F8FAFC",
 	},
 	scrollContent: {
-		paddingHorizontal: width(6),
-		paddingTop: height(2.5),
+		flexGrow: 1,
+		justifyContent: "space-between",
+		paddingHorizontal: width(5),
+		paddingTop: height(2),
 	},
-	itemSection: {
-		marginBottom: height(2.5),
+	cardsContainer: {
+		gap: height(2.0),
 	},
-	itemHeader: {
+	card: {
+		backgroundColor: white,
+		borderRadius: 18,
+		paddingHorizontal: width(5),
+		paddingVertical: height(2.6),
+		borderWidth: 1,
+		borderColor: "#E2E8F0",
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.04,
+		shadowRadius: 6,
+		elevation: 1.5,
+	},
+	cardHeader: {
 		flexDirection: "row",
 		alignItems: "center",
-		marginBottom: height(0.8),
+		gap: 14,
+		marginBottom: height(1.2),
 	},
-	itemIconWrap: {
-		width: width(8),
-		alignItems: "flex-start",
+	cardIconBox: {
+		width: 48,
+		height: 48,
+		borderRadius: 14,
+		backgroundColor: "#B2FA3F",
+		alignItems: "center",
+		justifyContent: "center",
 	},
-	itemTitle: {
-		fontSize: font(1.9),
+	cardTitle: {
+		fontSize: font(1.95),
 		fontWeight: "700",
-		color: dark,
+		color: "#1E293B",
 		flex: 1,
 	},
-	itemDesc: {
-		fontSize: font(1.45),
-		color: "#4B5563",
+	cardDesc: {
+		fontSize: font(1.4),
+		color: "#64748B",
 		lineHeight: font(2.1),
-		marginTop: height(0.2),
 	},
-	divider: {
-		height: 1,
-		backgroundColor: "#F0F0F0",
-		marginTop: height(2.5),
+	bottomSection: {
+		width: "100%",
+		paddingTop: height(2),
 	},
 	agreementSection: {
-		marginTop: height(2),
-		marginBottom: height(3.5),
+		marginBottom: height(2),
 		flexDirection: "row",
 		alignItems: "flex-start",
+		paddingHorizontal: width(1),
 	},
 	checkboxContainer: {
 		marginRight: width(3),
 		marginTop: 2,
 	},
 	checkbox: {
-		width: 20,
-		height: 20,
+		width: 22,
+		height: 22,
 		borderWidth: 1.5,
-		borderColor: "#D1D5DB",
-		borderRadius: 3,
+		borderColor: "#CBD5E1",
+		borderRadius: 5,
 		backgroundColor: white,
 		alignItems: "center",
 		justifyContent: "center",
 	},
 	checkboxChecked: {
-		backgroundColor: dark_primary,
-		borderColor: dark_primary,
-	},
-	checkmark: {
-		color: white,
-		fontSize: font(1.4),
-		fontWeight: "bold",
+		backgroundColor: "#059669",
+		borderColor: "#059669",
 	},
 	agreementTextContainer: {
 		flex: 1,
 	},
 	agreementText: {
 		fontSize: font(1.35),
-		color: "#4B5563",
-		lineHeight: font(1.9),
+		color: "#64748B",
+		lineHeight: font(1.95),
 	},
 	linkText: {
-		color: dark,
+		color: "#1E293B",
 		textDecorationLine: "underline",
-		fontWeight: "500",
+		fontWeight: "600",
+	},
+	boldText: {
+		color: "#1E293B",
+		fontWeight: "700",
 	},
 	button: {
-		backgroundColor: primary,
-		borderRadius: width(7),
-		paddingVertical: height(2.1),
+		backgroundColor: "#B2FA3F",
+		borderRadius: 16,
+		height: 54,
 		alignItems: "center",
 		justifyContent: "center",
 		width: "100%",
-		shadowColor: primary,
+		shadowColor: "#B2FA3F",
 		shadowOffset: { width: 0, height: 4 },
-		shadowOpacity: 0.3,
-		shadowRadius: 6,
-		elevation: 3,
+		shadowOpacity: 0.25,
+		shadowRadius: 8,
+		elevation: 2,
 	},
 	buttonDisabled: {
-		backgroundColor: "#E5E7EB",
+		backgroundColor: "#E2E8F0",
+		shadowOpacity: 0,
 	},
 	buttonText: {
-		color: dark,
-		fontSize: font(2.1),
+		color: "#1E293B",
+		fontSize: font(1.9),
 		fontWeight: "700",
 	},
 });

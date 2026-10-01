@@ -8,6 +8,8 @@ import type {
 	EmploymentDetailsHbPartnerResponseType,
 	FastApiUser,
 	FastApiUserUpdate,
+	KycSubmitPayload,
+	KycSubmitResponse,
 	PersonalDetailsHbPartnerResponseType,
 	UserDashboardResponseType,
 	UserProfileResponseType,
@@ -22,8 +24,24 @@ export const getUserDashboardData = async () => {
 };
 
 /**
- * Save Basic Details (PATCH /users/basic-details)
- * Updates full_name, pan_card, fathers_name, date_of_birth (DD-MM-YYYY), email, pincode, gender, preferred_language.
+ * Submit Basic Details (POST /kyc/submit)
+ * Creates KYC record + lead + advances workflow.
+ * Working path in RapidMoney PostgreSQL Backend.
+ */
+export const submitBasicDetails = async (
+	payload: KycSubmitPayload,
+): Promise<KycSubmitResponse> => {
+	const response = await axios.post<KycSubmitResponse>(
+		URLS.kyc.submit,
+		payload,
+	);
+	return response.data;
+};
+
+/**
+ * @deprecated Legacy endpoint (PATCH /users/basic-details).
+ * Not supported on PostgreSQL backend (references columns that do not exist on User model).
+ * Kept as an uncalled fallback. Use `submitBasicDetails` (/kyc/submit) instead.
  */
 export const updateBasicDetails = async (
 	payload: BasicDetailsPayload,
@@ -36,10 +54,12 @@ export const updateBasicDetails = async (
 };
 
 /**
- * Fetch User Profile (`/users/me`)
+ * Fetch User Profile
+ * Switched to GET /auth/me because GET /users/me conflicts with /users/{id} (id="me") returning 422.
+ * /auth/me exists on the new FastAPI backend and returns the auth user.
  */
 export const getUserProfile = async () => {
-	const response = await axios.get<UserProfileResponseType>(URLS.user.me);
+	const response = await axios.get<UserProfileResponseType>(URLS.auth.me);
 	return response.data;
 };
 

@@ -1,5 +1,5 @@
 import FAQ from "@/components/FAQ";
-import FiveSecDelay from "@/components/FiveSecDelay";
+import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { PushNotificationDebugger } from "@/components/PushNotificationDebugger";
 import TestimonialCarousel from "@/components/TestimonialCarousel";
 import { TranslatedText } from "@/components/TranslatedText";
@@ -16,7 +16,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useTranslation } from "@/hooks/useTranslation";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
-import { checkCanReapply, getUserDashboardData, Status, StepHref } from "@/utils/api";
+import { checkCanReapply, getPublicReviews, getUserDashboardData, Status, StepHref } from "@/utils/api";
 // TODO: migrate off legacy API
 import { verifyLeadCreation, checkEasebuzzPaymentStatus } from "@/utils/api/kyc";
 import { font, height, width } from "@/utils/dimensions";
@@ -165,10 +165,20 @@ export default function Home() {
 	const loanTermsSlideAnim = useRef(new Animated.Value(screenHeight)).current;
 	const loanTermsBackgroundOpacity = useRef(new Animated.Value(0)).current;
 
+	const { t, tWithValues } = useTranslation();
+	const { show: showJourneyLoader, hide: hideJourneyLoader } = useJourneyLoader();
 	const [delayVisible, setDelayVisible] = useState(false);
 	const [delayStageKey, setDelayStageKey] = useState<string>("verifyingPaymentWait");
 	const [isVerifyLeadFlow, setIsVerifyLeadFlow] = useState(false);
 	const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+	useEffect(() => {
+		if (delayVisible) {
+			showJourneyLoader("assessment_fee", t(delayStageKey as any));
+		} else {
+			hideJourneyLoader();
+		}
+	}, [delayVisible, delayStageKey, showJourneyLoader, hideJourneyLoader, t]);
 
 	const [isPaymentPolling, setIsPaymentPolling] = useState(false);
 	const [modalVisible, setModalVisible] = useState(false);
@@ -349,7 +359,6 @@ export default function Home() {
 	};
 
 	const { logout } = useAuth();
-	const { t, tWithValues } = useTranslation();
 	const { language } = useDefault();
 	const navigation = useNavigation();
 
@@ -363,6 +372,12 @@ export default function Home() {
 		queryFn: getUserDashboardData,
 		staleTime: 3000,
 		retry: 2,
+	});
+
+	const { data: publicReviews, refetch: refetchReviews } = useNetworkAwareQuery({
+		queryKey: ["publicReviews"],
+		queryFn: () => getPublicReviews(15),
+		staleTime: 60000,
 	});
 
 	const progressPercentage = data?.workflow_progress?.completion_percentage ?? 0;
@@ -400,12 +415,13 @@ export default function Home() {
 				RNStatusBar.setTranslucent(true);
 			}
 			refetch();
+			refetchReviews();
 			  try {
                 console.log("FB _ dashboard_viewed");
             } catch (error) {
                 console.error("🔥 [Analytics] FB Dashboard event error:", error);
             }
-		}, [refetch])
+		}, [refetch, refetchReviews])
 	);
 
 	Logger.debug("Dashboard response", data);
@@ -741,7 +757,15 @@ export default function Home() {
 		{ titleKey: "businessLoan" as const, image: Images.BUSINESS_LOAN_ICON_1 },
 	];
 
-	const testimonials = [
+	const testimonialAvatars = [
+		Images.TESTIMONIAL_SAURABH,
+		Images.TESTIMONIAL_MICHAEL,
+		require('@/assets/images/testimonial3.png'),
+		require('@/assets/images/testimonial4.png'),
+		require('@/assets/images/testimonial1.png'),
+	];
+
+	const defaultTestimonials = [
 		{
 			id: '1',
 			text: 'Loan process was smooth and easy, and my amount got disbursed quickly. The processing fee is transparent and totally worth it.',
@@ -783,6 +807,33 @@ export default function Home() {
 			image: require('@/assets/images/testimonial1.png'),
 		},
 	];
+
+	const testimonials = React.useMemo(() => {
+		if (publicReviews && publicReviews.length > 0) {
+			const formatted = publicReviews
+				.filter(
+					(r) =>
+						(r.rating ?? 0) >= 4 &&
+						r.feedback &&
+						r.feedback.trim().length > 0,
+				)
+				.map((r, index) => ({
+					id: r.id || `api-review-${index}`,
+					text: r.feedback.trim(),
+					name: r.user_name?.trim() || "Verified Customer",
+					title: r.is_recommended ? "Verified Customer • Highly Recommended" : "Verified Customer",
+					rating: r.rating || 5,
+					image: testimonialAvatars[index % testimonialAvatars.length],
+				}));
+			if (formatted.length >= 3) {
+				return formatted.slice(0, 5);
+			}
+			if (formatted.length > 0) {
+				return [...formatted, ...defaultTestimonials.slice(formatted.length)].slice(0, 5);
+			}
+		}
+		return defaultTestimonials.slice(0, 5);
+	}, [publicReviews]);
 
 	const placeholderVideos = VIDEO_TUTORIALS;
 
@@ -1388,15 +1439,10 @@ export default function Home() {
 
 					{/* A2: Testimonials */}
 					<View style={styles.sectionContainer}>
-						<View style={styles.sectionHeaderRow}>
-							<TranslatedText
-								style={styles.sectionTitle}
-								translationKey="whatOurUsersSay"
-							/>
-							<TouchableOpacity activeOpacity={0.7} onPress={() => {}}>
-								<Text style={styles.seeAllText}>See All</Text>
-							</TouchableOpacity>
-						</View>
+						<TranslatedText
+							style={[styles.sectionTitle, { marginBottom: 16 }]}
+							translationKey="whatOurUsersSay"
+						/>
 					</View>
 					<TestimonialCarousel testimonials={testimonials} />
 
@@ -1656,13 +1702,6 @@ export default function Home() {
 				</View>
 			</Modal>
 
-			{/* Lead status / Payment status check loader */}
-			<FiveSecDelay 
-				visible={delayVisible} 
-				isPolling={isVerifyLeadFlow || isPaymentPolling} 
-				pollingTextKey={delayStageKey}
-				onComplete={() => setDelayVisible(false)} 
-			/>
 		</View>
 	);
 }

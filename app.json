@@ -27,6 +27,65 @@
       "package": "com.rapidmoney.internal",
       "permissions": [
         "android.permission.CAMERA"
+      ],
+      "//": "TODO: If the team ends up creating a brand-new Branch project instead of reusing the old one, these domain names will need to change to whatever Branch assigns the new project",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "rapidmoney.app.link"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "rapidmoney-alternate.app.link"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "rapidmoney.test-app.link"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        },
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "rapidmoney-alternate.test-app.link"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "web": {
@@ -35,16 +94,8 @@
       "favicon": "./assets/images/rapid-money-logo.png"
     },
     "plugins": [
+      "./plugins/withBranch",
       "expo-router",
-      // [
-      //   "expo-splash-screen",
-      //   {
-      //     "image": "./assets/images/rapid-money-logo.png",
-      //     "imageWidth": 120,
-      //     "resizeMode": "contain",
-      //     "backgroundColor": "#ffffff"
-      //   }
-      // ],
       "@react-native-community/datetimepicker",
       [
         "react-native-vision-camera",
@@ -68,7 +119,9 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-web-browser",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

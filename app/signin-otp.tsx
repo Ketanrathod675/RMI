@@ -11,7 +11,7 @@ import { setUserType, trackSignup } from "@/utils/analytics";
 import { errorHandler, login, verifyOtp } from "@/utils/api";
 import { setBranchIdentity } from "@/utils/branch";
 import { font, height, width } from "@/utils/dimensions";
-import { encode } from "@/utils/encode_decode";
+import { encode, getUserIdFromToken } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import RNOtpVerify from "@/utils/otpVerify";
 import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
@@ -44,16 +44,15 @@ const ValidatePhoneNumber = "Please enter a valid country code and phone number"
 
 export default function SigninSignupOtp() {
 	const { t } = useTranslation();
+	const params = useLocalSearchParams<{ signInKey?: string }>();
+	const { countryCode, phoneNumber, changeOtpVerifyResponse, loginResponse, changeLoginResponse } = useSignin();
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [isChecked, setIsChecked] = useState(true);
 	const [isSoftPullChecked, setIsSoftPullChecked] = useState(true);
-	const [countdown, setCountdown] = useState(60);
+	const [countdown, setCountdown] = useState(loginResponse?.expires_in || 300);
 	const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 	const [showTermsAndConditions, setShowTermsAndConditions] = useState(false);
 	const inputRefs = useRef<(TextInput | null)[]>([]);
-
-	const params = useLocalSearchParams<{ signInKey?: string }>();
-	const { countryCode, phoneNumber, changeOtpVerifyResponse, loginResponse, changeLoginResponse } = useSignin();
 	const [currentSignInKey, setCurrentSignInKey] = useState<string | undefined>(
 		params.signInKey || loginResponse?.sign_in_key || loginResponse?.otp_id
 	);
@@ -64,7 +63,10 @@ export default function SigninSignupOtp() {
 		} else if (loginResponse?.sign_in_key || loginResponse?.otp_id) {
 			setCurrentSignInKey(loginResponse.sign_in_key ?? loginResponse.otp_id);
 		}
-	}, [params.signInKey, loginResponse?.sign_in_key, loginResponse?.otp_id]);
+		if (loginResponse?.expires_in) {
+			setCountdown(loginResponse.expires_in);
+		}
+	}, [params.signInKey, loginResponse?.sign_in_key, loginResponse?.otp_id, loginResponse?.expires_in]);
 
 	const { handleLoginAndSignup, validateMobileAndCountryCode, handleSetTokens } = useAuth(false);
 	const dispatch = useDispatch();
@@ -129,7 +131,12 @@ export default function SigninSignupOtp() {
 
 			// ── Analytics: User Segmentation ──────────────────────────────────
 			const userType = "new_user";
-			const resolvedUserId = data?.user_id ?? data?.user?.user_id ?? "";
+			const resolvedUserId =
+				data?.user_id ||
+				data?.user?.user_id ||
+				data?.user?.id ||
+				getUserIdFromToken(data?.access_token) ||
+				"";
 
 			setUserType(userType).catch(() => {});
 
@@ -147,8 +154,8 @@ export default function SigninSignupOtp() {
 				dispatch(setAuthApplicantFrom("OG"));
 			}
 
-			// Check if the response has user_id or user
-			if (!data?.user_id && !data?.user) {
+			// Check if the response has access token or valid user ID
+			if (!data?.access_token && !resolvedUserId) {
 				Toast.show({
 					type: "error",
 					text1: ErrorVerifyingOtp,
@@ -162,7 +169,7 @@ export default function SigninSignupOtp() {
 				handleLoginAndSignup(
 					countryCode!,
 					phoneNumber!,
-					data.user_id ?? data.user?.user_id ?? ""
+					resolvedUserId
 				)
 			) {
 				// Block to handle set tokens
@@ -229,11 +236,21 @@ export default function SigninSignupOtp() {
 			}
 
 			const { error } = errorHandler(err, variables, ctx);
+			const rawMessage = (error as any)?.detail || error?.message || "";
+
+			let displayError = rawMessage;
+			if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("invalid or expired otp")) {
+				displayError = "Invalid or expired OTP. Please check and try again.";
+			} else if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("client type does not match")) {
+				displayError = "OTP request mismatch. Please request a new OTP.";
+			} else if (!displayError) {
+				displayError = LoginAgain;
+			}
 
 			Toast.show({
 				type: "error",
 				text1: ErrorVerifyingOtp,
-				text2: error?.message ?? LoginAgain,
+				text2: displayError,
 			});
 		},
 	});
@@ -362,7 +379,7 @@ export default function SigninSignupOtp() {
 				text1: t("otpResentSuccessfully"),
 			});
 
-			setCountdown(60);
+			setCountdown(res?.expires_in || 300);
 			setOtp(["", "", "", ""]);
 			inputRefs.current[0]?.focus();
 			startOtpListener();

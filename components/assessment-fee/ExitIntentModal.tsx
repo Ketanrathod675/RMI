@@ -18,6 +18,8 @@ interface ExitIntentModalProps {
 	visible: boolean;
 	onClose: () => void;
 	onConfirmExit: () => void;
+	title?: string;
+	subtitle?: string;
 }
 
 const LIME_PRIMARY = "#B7FB52";
@@ -26,6 +28,8 @@ export const ExitIntentModal: React.FC<ExitIntentModalProps> = ({
 	visible,
 	onClose,
 	onConfirmExit,
+	title,
+	subtitle,
 }) => {
 	const insets = useSafeAreaInsets();
 	const { isHindi } = useTranslation();
@@ -140,15 +144,16 @@ export const ExitIntentModal: React.FC<ExitIntentModalProps> = ({
 
 					{/* Title matching screenshot */}
 					<Text style={styles.exitModalTitle}>
-						{getExitModalText("title", "Are you sure you want to exit?")}
+						{title || getExitModalText("title", "Are you sure you want to exit?")}
 					</Text>
 
 					{/* Subtitle matching screenshot */}
 					<Text style={styles.exitModalSubtitle}>
-						{getExitModalText(
-							"subtitle",
-							"You are close to completing your loan application.\nSubmit your details to unlock loan offers for you.",
-						)}
+						{subtitle ||
+							getExitModalText(
+								"subtitle",
+								"You are close to completing your loan application.\nSubmit your details to unlock loan offers for you.",
+							)}
 					</Text>
 
 					{/* Security row with blue lock icon */}

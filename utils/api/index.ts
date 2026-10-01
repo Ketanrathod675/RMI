@@ -17,14 +17,19 @@ export * from "./core/client";
 export * from "./types/common";
 export * from "./types/auth.types";
 export * from "./types/user.types";
+export * from "./types/lender.types";
+export * from "./types/payment.types";
 
 // Domain Services
 export * from "./services/auth.service";
 export * from "./services/user.service";
+export * from "./services/lender.service";
+export * from "./services/payment.service";
 export * from "./services/loans.service";
 export * from "./services/notifications.service";
 export * from "./services/faq.service";
 export * from "./services/video.service";
+export * from "./services/feedback.service";
 
 // LEGACY — old backend, disabled during in-house rebuild
 // Domain Modules & Legacy Fallbacks

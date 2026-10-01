@@ -15,9 +15,18 @@ import { NavigationBar } from "expo-navigation-bar";
 import React from "react";
 import { Platform, StatusBar as RNStatusBar, StyleSheet, View } from "react-native";
 import "react-native-reanimated";
+import {
+	useFonts,
+	PlusJakartaSans_400Regular,
+	PlusJakartaSans_500Medium,
+	PlusJakartaSans_600SemiBold,
+	PlusJakartaSans_700Bold,
+} from "@expo-google-fonts/plus-jakarta-sans";
 import { Provider } from "react-redux";
 import Toast from "react-native-toast-message";
 import { toastConfig } from "@/utils/toastConfig";
+import { JourneyLoaderProvider } from "@/context/JourneyLoaderProvider";
+import { initBranch } from "@/utils/branch";
 
 // Prevent native splash screen from auto-hiding before JavaScript initializes
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -28,6 +37,21 @@ export const queryClient = new QueryClient();
 
 function RootLayoutNav() {
 	const colorScheme = useColorScheme();
+	const [fontsLoaded] = useFonts({
+		PlusJakartaSans_400Regular,
+		PlusJakartaSans_500Medium,
+		PlusJakartaSans_600SemiBold,
+		PlusJakartaSans_700Bold,
+	});
+
+	// Branch SDK Phase 1: Initialize session tracking (install / open / reinstall)
+	// Must be called once on root mount. Branch auto-tracks all attribution.
+	React.useEffect(() => {
+		const unsubscribeBranch = initBranch();
+		return () => {
+			unsubscribeBranch();
+		};
+	}, []);
 
 	React.useEffect(() => {
 		if (Platform.OS === "android") {
@@ -54,8 +78,11 @@ function RootLayoutNav() {
 				if (typeof navBarAny?.setBehaviorAsync === "function") {
 					navBarAny.setBehaviorAsync("overlay-swipe").catch(() => {});
 				}
-				if (typeof navBarAny?.setVisibilityAsync === "function") {
-					navBarAny.setVisibilityAsync("hidden").catch(() => {});
+				if (typeof navBarAny?.setBackgroundColorAsync === "function") {
+					navBarAny.setBackgroundColorAsync("#FFFFFF").catch(() => {});
+				}
+				if (typeof navBarAny?.setButtonStyleAsync === "function") {
+					navBarAny.setButtonStyleAsync("dark").catch(() => {});
 				}
 			} catch {
 				// Safely ignore if navigation bar methods are not available
@@ -73,7 +100,7 @@ function RootLayoutNav() {
 	} = useSplashController();
 
 	return (
-		<ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+		<ThemeProvider value={DefaultTheme}>
 			{Platform.OS === "android" && <NavigationBar hidden={true} />}
 			<View style={styles.rootContainer}>
 				{/* Main App Navigation Stack */}
@@ -135,6 +162,26 @@ function RootLayoutNav() {
 						}}
 					/>
 					<Stack.Screen name="user-notifications" options={{ headerShown: false }} />
+					<Stack.Screen name="search-loan" options={{ headerShown: false }} />
+					<Stack.Screen name="aadhaar-kyc-redirect" options={{ headerShown: false }} />
+					<Stack.Screen name="assessment-fee" options={{ headerShown: false }} />
+					<Stack.Screen name="enter-otp" options={{ headerShown: false }} />
+					<Stack.Screen name="language" options={{ headerShown: false }} />
+					<Stack.Screen name="loan-agreement" options={{ headerShown: false }} />
+					<Stack.Screen name="loan-approved" options={{ headerShown: false }} />
+					<Stack.Screen name="loan-enter-otp" options={{ headerShown: false }} />
+					<Stack.Screen name="mpin-login" options={{ headerShown: false }} />
+					<Stack.Screen name="rapidcare" options={{ headerShown: false }} />
+					<Stack.Screen name="repayment-options" options={{ headerShown: false }} />
+					<Stack.Screen name="repayment-success" options={{ headerShown: false }} />
+					<Stack.Screen name="sanction-letter" options={{ headerShown: false }} />
+					<Stack.Screen name="set-language" options={{ headerShown: false }} />
+					<Stack.Screen name="set-mpin" options={{ headerShown: false }} />
+					<Stack.Screen name="verify-bank-details" options={{ headerShown: false }} />
+					<Stack.Screen name="verify-pan" options={{ headerShown: false }} />
+					<Stack.Screen name="verifying-bank" options={{ headerShown: false }} />
+					<Stack.Screen name="forgot-mpin" options={{ headerShown: false }} />
+					<Stack.Screen name="dev-loader-preview" options={{ headerShown: false }} />
 					<Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 					<Stack.Screen name="+not-found" options={{ title: "Oops!" }} />
 				</Stack>
@@ -152,7 +199,7 @@ function RootLayoutNav() {
 				{/* High-Performance Reanimated Splash Overlay (Active during boot) */}
 				{isSplashVisible && (
 					<AnimatedSplashScreen
-						isReady={status === "ready"}
+						isReady={status === "ready" && Boolean(fontsLoaded)}
 						onAnimationComplete={onAnimationComplete}
 						onNativeSplashHandoff={onNativeSplashHandoff}
 					/>
@@ -176,7 +223,9 @@ export default function RootLayout() {
 		<ErrorBoundary>
 			<Provider store={store}>
 				<QueryClientProvider client={queryClient}>
-					<RootLayoutNav />
+					<JourneyLoaderProvider>
+						<RootLayoutNav />
+					</JourneyLoaderProvider>
 				</QueryClientProvider>
 			</Provider>
 		</ErrorBoundary>

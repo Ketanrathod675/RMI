@@ -23,6 +23,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { TranslatedText } from "@/components/TranslatedText";
 import { KycSuccessModal } from "@/components/KycSuccessModal";
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { dark } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
@@ -80,6 +81,8 @@ export default function AadhaarKyc() {
 	// Track this screen in the journey
 	useJourneyTracker("/aadhaar-kyc");
 
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+
 	// Step 1: Address verification form (Phase 1 focus)
 	const [address, setAddress] = useState<AddressType | null>(MOCK_DIGILOCKER_ADDRESS);
 	const [currentAddress, setCurrentAddress] = useState<"Yes" | "No">("Yes");
@@ -130,20 +133,13 @@ export default function AadhaarKyc() {
 		}
 	}, [params.permAddressData]);
 
-	// Back button handling with confirmation alert
+	// Back button handling with confirmation modal
 	const handleBack = () => {
 		if (isKycSuccessModalVisible) {
 			handleContinueSuccess();
 			return;
 		}
-		Alert.alert(
-			t("areYouSureGoBack", "Are you sure you want to go back?"),
-			t("youWillLoseProgress", "You will lose your progress."),
-			[
-				{ text: t("cancel", "Cancel"), style: "cancel" },
-				{ text: t("goBack", "Go Back"), onPress: () => router.replace("/(tabs)") },
-			]
-		);
+		setIsExitModalVisible(true);
 	};
 
 	useEffect(() => {
@@ -815,6 +811,15 @@ export default function AadhaarKyc() {
 			<KycSuccessModal
 				visible={isKycSuccessModalVisible}
 				onContinue={handleContinueSuccess}
+			/>
+
+			<ExitIntentModal
+				visible={isExitModalVisible}
+				onClose={() => setIsExitModalVisible(false)}
+				onConfirmExit={() => {
+					setIsExitModalVisible(false);
+					router.replace("/(tabs)");
+				}}
 			/>
 		</SafeAreaView>
 	);

@@ -1,20 +1,18 @@
 import { TranslatedText } from "@/components/TranslatedText";
-import { IconSymbol } from "@/components/ui/IconSymbol";
-import { dark, primary, white } from "@/constants/Colors";
-import { Images } from "@/constants/images";
+import { dark, white } from "@/constants/Colors";
 import { useDefault } from "@/hooks/useDefault";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import { LANGUAGES, type Languages } from "@/store";
-import { getUserDashboardData, getUserProfile } from "@/utils/api";
+import { getUserDashboardData, getUserProfile, getUserFeedback, saveFeedback } from "@/utils/api";
 import { fetchSelfie } from "@/utils/api/kyc";
 import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useNavigation } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
+	ActivityIndicator,
 	Animated,
 	BackHandler,
 	Dimensions,
@@ -30,26 +28,13 @@ import {
 	TouchableOpacity,
 	View,
 } from "react-native";
+import Toast from "react-native-toast-message";
 
 interface MenuItem {
 	title: string;
-	icon: keyof typeof ICON_MAPPING;
+	icon: keyof typeof MaterialIcons.glyphMap;
 	onPress: () => void;
 }
-
-const ICON_MAPPING = {
-	"loan-details": "description",
-	"loan-history": "arrow.clockwise.circle",
-	"bank-account": "account-balance",
-	notification: "bell",
-	"account-security": "security",
-	"app-appearance": "local-offer",
-	"help-support": "gift.fill",
-	"rate-us": "account-balance-wallet",
-	phone: "phone",
-	language: "globe.americas",
-	"lending-partners": "business",
-} as const;
 
 const { height: screenHeight } = Dimensions.get("window");
 
@@ -58,6 +43,11 @@ export default function Profile() {
 	const [modalVisible, setModalVisible] = useState(false);
 	const [rating, setRating] = useState(0);
 	const [feedback, setFeedback] = useState("");
+	const [existingFeedbackId, setExistingFeedbackId] = useState<string | null>(null);
+	const [isAlreadyRated, setIsAlreadyRated] = useState(false);
+	const [isEditingFeedback, setIsEditingFeedback] = useState(false);
+	const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+	const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
 	const [isNavigating, setIsNavigating] = useState(false);
 	const { t } = useTranslation();
 	const { setLanguage } = useDefault();
@@ -159,7 +149,8 @@ export default function Profile() {
 		setRating(starIndex + 1);
 	};
 
-	const openRateModal = () => {
+	const openRateModal = async () => {
+		setIsEditingFeedback(false);
 		setModalVisible(true);
 		rateBackgroundOpacity.setValue(0);
 		rateSlideAnim.setValue(screenHeight);
@@ -175,9 +166,27 @@ export default function Profile() {
 				useNativeDriver: true,
 			}).start();
 		});
+
+		// Fetch existing review if not already cached
+		try {
+			setIsLoadingFeedback(true);
+			const currentUserId = userProfile?.id || userProfile?.user_id || (userProfile as any)?.uuid;
+			const existing = await getUserFeedback(currentUserId);
+			if (existing) {
+				setExistingFeedbackId(existing.id);
+				setRating(existing.rating);
+				setFeedback(existing.feedback || "");
+				setIsAlreadyRated(true);
+			}
+		} catch (_err) {
+			// Non-blocking fallback
+		} finally {
+			setIsLoadingFeedback(false);
+		}
 	};
 
 	const handleCloseModal = () => {
+		if (isSubmittingFeedback) return;
 		Animated.timing(rateSlideAnim, {
 			toValue: screenHeight,
 			duration: 250,
@@ -189,41 +198,105 @@ export default function Profile() {
 				useNativeDriver: true,
 			}).start(() => {
 				setModalVisible(false);
-				setRating(0);
-				setFeedback("");
+				setIsEditingFeedback(false);
+				if (!isAlreadyRated) {
+					setRating(0);
+					setFeedback("");
+					setExistingFeedbackId(null);
+				}
 			});
 		});
 	};
 
-	const handleSubmitFeedback = () => {
-		handleCloseModal();
+	const handleSubmitFeedback = async () => {
+		if (rating === 0) {
+			Toast.show({
+				type: "error",
+				text1: "Rating Required",
+				text2: "Please tap the stars to select a rating.",
+			});
+			return;
+		}
+
+		if (!feedback.trim()) {
+			Toast.show({
+				type: "error",
+				text1: "Feedback Required",
+				text2: "Please enter your feedback.",
+			});
+			return;
+		}
+
+		try {
+			setIsSubmittingFeedback(true);
+			const currentUserId = userProfile?.id || userProfile?.user_id || (userProfile as any)?.uuid;
+			const saved = await saveFeedback(
+				{
+					rating,
+					feedback: feedback.trim(),
+					is_recommended: rating >= 4,
+				},
+				existingFeedbackId,
+				currentUserId,
+			);
+
+			if (saved?.id) {
+				setExistingFeedbackId(saved.id);
+			}
+			setIsAlreadyRated(true);
+			setIsEditingFeedback(false);
+			refetchUserFeedback?.();
+
+			Toast.show({
+				type: "success",
+				text1: "Thank You!",
+				text2: "Your feedback has been submitted successfully.",
+			});
+		} catch (error: any) {
+			const errorMsg =
+				error?.response?.data?.detail ||
+				error?.message ||
+				"Failed to submit feedback. Please try again.";
+			Toast.show({
+				type: "error",
+				text1: "Submission Failed",
+				text2: typeof errorMsg === "string" ? errorMsg : "Please try again later.",
+			});
+		} finally {
+			setIsSubmittingFeedback(false);
+		}
 	};
 
 	const menuItems: MenuItem[] = [
 		{
 			title: t("loanDetails"),
-			icon: "loan-details",
+			icon: "currency-rupee",
 			onPress: () => router.push("/loan-details" as any),
 		},
 		{
 			title: t("loanHistory"),
-			icon: "loan-history",
+			icon: "receipt-long",
 			onPress: () => router.push("/(tabs)/history" as any),
 		},
 		{
-			title: t("lendingPartners"),
-			icon: "lending-partners",
-			onPress: () => router.push("/lending-partners" as any),
-		},
-		{
 			title: t("bankDetails"),
-			icon: "bank-account",
+			icon: "account-balance",
 			onPress: () => router.push("/bank-details-settings" as any),
 		},
 		{
+			title: t("lendingPartners"),
+			icon: "business",
+			onPress: () => router.push("/lending-partners" as any),
+		},
+		{
 			title: t("notifications"),
-			icon: "notification",
+			icon: "notifications-none",
 			onPress: () => router.push("/notification-settings" as any),
+		},
+		{
+			title: t("accountSecurity"),
+			icon: "verified-user",
+			onPress: () => router.push("/personal-details" as any),
 		},
 		{
 			title: t("selectLanguage"),
@@ -232,12 +305,12 @@ export default function Profile() {
 		},
 		{
 			title: t("helpSupport"),
-			icon: "help-support",
+			icon: "help-outline",
 			onPress: () => router.push("/help-support" as any),
 		},
 		{
 			title: t("rateUs"),
-			icon: "rate-us",
+			icon: "star-outline",
 			onPress: openRateModal,
 		},
 	];
@@ -260,6 +333,29 @@ export default function Profile() {
 		queryKey: ["userDashboard"],
 		queryFn: () => getUserDashboardData(),
 	});
+
+	// Fetch user existing feedback status
+	const currentUserId =
+		userProfile?.id ||
+		userProfile?.user_id ||
+		(userProfile as any)?.uuid ||
+		(dashboardData as any)?.user?.id ||
+		(dashboardData as any)?.user?.uuid ||
+		(dashboardData as any)?.user_id;
+	const { data: userFeedbackData, refetch: refetchUserFeedback } = useNetworkAwareQuery({
+		queryKey: ["userFeedback", currentUserId],
+		queryFn: () => getUserFeedback(currentUserId),
+		enabled: !!currentUserId,
+	});
+
+	useEffect(() => {
+		if (userFeedbackData) {
+			setExistingFeedbackId(userFeedbackData.id);
+			setRating(userFeedbackData.rating);
+			setFeedback(userFeedbackData.feedback || "");
+			setIsAlreadyRated(true);
+		}
+	}, [userFeedbackData]);
 
 	useEffect(() => {
 		if (userProfile?.customer_id) {
@@ -299,75 +395,86 @@ export default function Profile() {
 			<StatusBar style="dark" />
 			{/* User Profile Card */}
 			<View style={styles.profileCardWrapper}>
-				<LinearGradient
-					colors={["#1a2332", "#2d3748"]}
-					start={{ x: 0, y: 0 }}
-					end={{ x: 1, y: 0 }}
-					style={styles.profileCard}>
-					{/* Pattern Overlay */}
-					<View style={styles.patternOverlay}>
-						<Image
-							source={Images.BLUE_BG_WAVES}
-							style={styles.patternImage}
-							resizeMode="cover"
-						/>
-					</View>
-
-					{/* Profile Content */}
-					<TouchableOpacity
-						style={styles.profileSection}
-						onPress={() => router.push("/personal-details" as any)}>
+				<TouchableOpacity
+					style={styles.profileCard}
+					onPress={() => router.push("/personal-details" as any)}
+					activeOpacity={0.8}>
+					{/* Avatar */}
+					<View style={styles.avatarContainer}>
 						{selfieUri ? (
 							<Image source={{ uri: selfieUri }} style={styles.profileImage} />
 						) : (
-							<MaterialIcons name="person" size={60} color="#999" />
+							<MaterialIcons name="person" size={38} color="#D97706" />
 						)}
-						<View style={styles.userInfo}>
-							<Text style={styles.userName}>
-								{userProfile?.personal_details?.full_name ?? t("user")}
+					</View>
+
+					{/* User Info */}
+					<View style={styles.userInfo}>
+						<Text style={styles.userName} numberOfLines={1}>
+							{userProfile?.personal_details?.full_name ?? t("user")}
+						</Text>
+						<View style={styles.phoneRow}>
+							<MaterialIcons name="call" size={14} color="#16A34A" />
+							<Text style={styles.userPhone}>
+								{userProfile?.phone_number
+									? userProfile.phone_number.startsWith("+91")
+										? userProfile.phone_number
+										: `+91 - ${userProfile.phone_number}`
+									: ""}
 							</Text>
-							<View style={styles.phoneRow}>
-								<IconSymbol name="phone" size={14} color={primary} />
-								<Text style={styles.userPhone}>
-									{userProfile?.phone_number ?? ""}
-								</Text>
-							</View>
 						</View>
-						<IconSymbol name="chevron.right" size={20} color={white} />
-					</TouchableOpacity>
-				</LinearGradient>
+					</View>
+
+					{/* Circular Right Chevron Button */}
+					<View style={styles.chevronCircle}>
+						<MaterialIcons name="chevron-right" size={24} color="#0F172A" />
+					</View>
+				</TouchableOpacity>
 			</View>
 
-			{/* Menu Items */}
+			{/* Section Header */}
+			<View style={styles.sectionHeaderWrapper}>
+				<Text style={styles.sectionTitle}>{t("settings")}</Text>
+				<Text style={styles.optionsCount}>
+					{menuItems.length} {t("options") || "options"}
+				</Text>
+			</View>
+
+			{/* Menu Items Card */}
 			<View style={styles.menuWrapper}>
-				{menuItems.map((item, index) => (
-					<TouchableOpacity
-						key={index}
-						style={styles.menuItem}
-						onPress={() => {
-							if (isNavigating) return;
-							setIsNavigating(true);
+				<View style={styles.listCard}>
+					{menuItems.map((item, index) => {
+						const isLast = index === menuItems.length - 1;
+						return (
+							<React.Fragment key={index}>
+								<TouchableOpacity
+									style={styles.menuItem}
+									onPress={() => {
+										if (isNavigating) return;
+										setIsNavigating(true);
 
-							item.onPress();
+										item.onPress();
 
-							setTimeout(() => setIsNavigating(false), 400);
-						}}
-						activeOpacity={0.7}>
-						<View style={styles.menuItemContent}>
-							<View style={styles.menuLeft}>
-								<View style={styles.iconWrapper}>
-									<IconSymbol
-										name={ICON_MAPPING[item.icon]}
-										size={26}
-										color="#666"
-									/>
-								</View>
-								<Text style={styles.menuTitle}>{item.title}</Text>
-							</View>
-							<IconSymbol name="chevron.right" size={25} color="#999" />
-						</View>
-					</TouchableOpacity>
-				))}
+										setTimeout(() => setIsNavigating(false), 400);
+									}}
+									activeOpacity={0.6}>
+									<View style={styles.menuLeft}>
+										<View style={styles.iconWrapper}>
+											<MaterialIcons
+												name={item.icon}
+												size={22}
+												color="#1E293B"
+											/>
+										</View>
+										<Text style={styles.menuTitle}>{item.title}</Text>
+									</View>
+									<MaterialIcons name="chevron-right" size={22} color="#94A3B8" />
+								</TouchableOpacity>
+								{!isLast && <View style={styles.divider} />}
+							</React.Fragment>
+						);
+					})}
+				</View>
 			</View>
 
 			{/* Review & Feedback Modal */}
@@ -395,58 +502,145 @@ export default function Profile() {
 								{/* Modal Header Line */}
 								<View style={styles.modalHeaderLine} />
 
-								{/* Title */}
-								<TranslatedText style={styles.modalTitle} translationKey="reviewFeedback" />
+								{isAlreadyRated && !isEditingFeedback ? (
+									/* Thanks for your rating view */
+									<View style={styles.thankYouContainer}>
+										<View style={styles.thankYouIconBox}>
+											<MaterialIcons name="stars" size={48} color="#FFD700" />
+										</View>
 
-								{/* Rating Section */}
-								<TranslatedText
-									style={styles.ratingQuestion}
-									translationKey="howWouldYouRate"
-								/>
-								<View style={styles.starsContainer}>
-									{[...Array(5)].map((_, index) => (
+										<TranslatedText
+											style={styles.thankYouTitle}
+											translationKey="thanksForYourRating"
+										/>
+
+										<TranslatedText
+											style={styles.thankYouSubtitle}
+											translationKey="thanksForRatingDesc"
+										/>
+
+										{/* Stars given */}
+										<View style={styles.thankYouStarsContainer}>
+											{[...Array(5)].map((_, index) => (
+												<Text
+													key={index}
+													style={[
+														styles.thankYouStar,
+														index < rating ? styles.filledStar : styles.emptyStar,
+													]}>
+													★
+												</Text>
+											))}
+										</View>
+
+										{/* Submitted feedback text if available */}
+										{feedback ? (
+											<View style={styles.feedbackQuoteBox}>
+												<Text style={styles.feedbackQuoteText}>"{feedback}"</Text>
+											</View>
+										) : null}
+
+										{/* Done button */}
 										<TouchableOpacity
-											key={index}
-											onPress={() => handleStarPress(index)}
-											style={styles.starButton}>
-											<Text
-												style={[
-													styles.star,
-													index < rating ? styles.filledStar : styles.emptyStar,
-												]}>
-												★
-											</Text>
+											style={styles.submitButton}
+											onPress={handleCloseModal}
+											activeOpacity={0.85}>
+											<TranslatedText
+												style={styles.submitButtonText}
+												translationKey="done"
+											/>
 										</TouchableOpacity>
-									))}
-								</View>
 
-								{/* Feedback Section */}
-								<TranslatedText
-									style={styles.feedbackLabel}
-									translationKey="tellUsWhatYouThink"
-								/>
+										{/* Update Rating button */}
+										<TouchableOpacity
+											style={styles.updateRatingButton}
+											onPress={() => setIsEditingFeedback(true)}
+											activeOpacity={0.7}>
+											<MaterialIcons name="edit" size={16} color="#09A143" />
+											<TranslatedText
+												style={styles.updateRatingButtonText}
+												translationKey="updateRating"
+											/>
+										</TouchableOpacity>
+									</View>
+								) : (
+									/* Editable Rating & Feedback View */
+									<View>
+										{/* Title */}
+										<TranslatedText
+											style={styles.modalTitle}
+											translationKey={isEditingFeedback ? "updateYourFeedback" : "reviewFeedback"}
+										/>
 
-								{/* Text Input */}
-								<TextInput
-									style={styles.feedbackInput}
-									placeholder={t("enterFeedback")}
-									placeholderTextColor="#999"
-									multiline={true}
-									numberOfLines={4}
-									value={feedback}
-									onChangeText={setFeedback}
-									textAlignVertical="top"
-								/>
+										{/* Rating Section */}
+										<TranslatedText
+											style={styles.ratingQuestion}
+											translationKey="howWouldYouRate"
+										/>
+										<View style={styles.starsContainer}>
+											{[...Array(5)].map((_, index) => (
+												<TouchableOpacity
+													key={index}
+													onPress={() => handleStarPress(index)}
+													style={styles.starButton}>
+													<Text
+														style={[
+															styles.star,
+															index < rating ? styles.filledStar : styles.emptyStar,
+														]}>
+														★
+													</Text>
+												</TouchableOpacity>
+											))}
+										</View>
 
-								{/* Submit Button */}
-								<TouchableOpacity
-									style={styles.submitButton}
-									onPress={handleSubmitFeedback}>
-									<TranslatedText
-										style={styles.submitButtonText}
-										translationKey="submit"
-									/>
-								</TouchableOpacity>
+										{/* Feedback Section */}
+										<TranslatedText
+											style={styles.feedbackLabel}
+											translationKey="tellUsWhatYouThink"
+										/>
+
+										{/* Text Input */}
+										<TextInput
+											style={styles.feedbackInput}
+											placeholder={t("enterFeedback")}
+											placeholderTextColor="#999"
+											multiline={true}
+											numberOfLines={4}
+											value={feedback}
+											onChangeText={setFeedback}
+											textAlignVertical="top"
+											editable={!isSubmittingFeedback}
+										/>
+
+										{/* Submit Button */}
+										<TouchableOpacity
+											style={[
+												styles.submitButton,
+												(isSubmittingFeedback || rating === 0) && styles.submitButtonDisabled,
+											]}
+											onPress={handleSubmitFeedback}
+											disabled={isSubmittingFeedback || rating === 0}>
+											{isSubmittingFeedback ? (
+												<ActivityIndicator size="small" color="#000000" />
+											) : (
+												<TranslatedText
+													style={styles.submitButtonText}
+													translationKey={isEditingFeedback ? "updateRating" : "submit"}
+												/>
+											)}
+										</TouchableOpacity>
+
+										{/* Cancel Editing button if in edit mode */}
+										{isEditingFeedback && isAlreadyRated && (
+											<TouchableOpacity
+												style={styles.cancelEditButton}
+												onPress={() => setIsEditingFeedback(false)}>
+												<Text style={styles.cancelEditText}>Cancel</Text>
+											</TouchableOpacity>
+										)}
+									</View>
+								)}
 							</Pressable>
 						</Animated.View>
 					</Pressable>
@@ -531,81 +725,111 @@ export default function Profile() {
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: white,
+		backgroundColor: "#F8FAFC",
 	},
 	profileCardWrapper: {
-		marginHorizontal: width(5),
-		marginTop: height(2),
-		marginBottom: height(2),
+		marginHorizontal: width(4),
+		marginTop: height(1.8),
+		marginBottom: height(0.8),
 	},
 	profileCard: {
+		backgroundColor: white,
 		borderRadius: 20,
-		padding: width(5),
-		paddingVertical: height(3),
-		position: "relative",
-		overflow: "hidden",
-		elevation: 3,
-		shadowColor: "#000",
-		shadowOffset: { width: 0, height: 2 },
-		shadowOpacity: 0.1,
-		shadowRadius: 4,
-	},
-	patternOverlay: {
-		position: "absolute",
-		top: 0,
-		left: 0,
-		right: 0,
-		bottom: 0,
-		opacity: 0.3,
-	},
-	patternImage: {
-		width: "100%",
-		height: "100%",
-	},
-	profileSection: {
+		paddingHorizontal: width(4.5),
+		paddingVertical: height(2),
 		flexDirection: "row",
 		alignItems: "center",
-		justifyContent: "space-between",
-		zIndex: 1,
+		borderWidth: 1,
+		borderColor: "#F1F5F9",
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.04,
+		shadowRadius: 8,
+		elevation: 2,
+	},
+	avatarContainer: {
+		width: 58,
+		height: 58,
+		borderRadius: 29,
+		backgroundColor: "#FEF08A",
+		justifyContent: "center",
+		alignItems: "center",
+		overflow: "hidden",
+		borderWidth: 1,
+		borderColor: "#FDE047",
 	},
 	profileImage: {
-		width: width(16),
-		height: width(16),
-		borderRadius: width(8),
-		borderColor: "#FFF5D6",
-		backgroundColor: "#FFF5D6",
-		borderWidth: 1,
+		width: 58,
+		height: 58,
+		borderRadius: 29,
 	},
 	userInfo: {
 		flex: 1,
-		marginLeft: width(4),
+		marginLeft: width(3.5),
 	},
 	userName: {
-		fontSize: font(2.4),
-		fontWeight: "600",
-		color: white,
-		marginBottom: height(0.5),
+		fontSize: font(2.1),
+		fontWeight: "700",
+		color: "#0F172A",
+		marginBottom: 4,
 	},
 	phoneRow: {
 		flexDirection: "row",
 		alignItems: "center",
 	},
 	userPhone: {
-		fontSize: font(1.8),
-		color: white,
-		opacity: 0.9,
-		marginLeft: width(1.5),
+		fontSize: font(1.6),
+		fontWeight: "500",
+		color: "#64748B",
+		marginLeft: 6,
+	},
+	chevronCircle: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		backgroundColor: "#F1F5F9",
+		justifyContent: "center",
+		alignItems: "center",
+	},
+	sectionHeaderWrapper: {
+		flexDirection: "row",
+		justifyContent: "space-between",
+		alignItems: "center",
+		marginHorizontal: width(4.5),
+		marginTop: height(2),
+		marginBottom: height(1.2),
+	},
+	sectionTitle: {
+		fontSize: font(2.1),
+		fontWeight: "700",
+		color: "#0F172A",
+	},
+	optionsCount: {
+		fontSize: font(1.5),
+		fontWeight: "500",
+		color: "#64748B",
 	},
 	menuWrapper: {
-		marginHorizontal: width(5),
-		paddingBottom: height(2),
+		marginHorizontal: width(4),
+		paddingBottom: height(3),
 	},
-	menuItem: {},
-	menuItemContent: {
+	listCard: {
+		backgroundColor: white,
+		borderRadius: 20,
+		borderWidth: 1,
+		borderColor: "#F1F5F9",
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.04,
+		shadowRadius: 8,
+		elevation: 2,
+		overflow: "hidden",
+	},
+	menuItem: {
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "space-between",
-		paddingVertical: height(2),
+		paddingVertical: height(1.8),
 		paddingHorizontal: width(4),
 	},
 	menuLeft: {
@@ -614,18 +838,24 @@ const styles = StyleSheet.create({
 		flex: 1,
 	},
 	iconWrapper: {
-		width: width(11),
-		height: width(11),
-		borderRadius: width(1),
-		backgroundColor: "#f5f5f5",
+		width: 44,
+		height: 44,
+		borderRadius: 12,
+		backgroundColor: "#F8FAFC",
 		justifyContent: "center",
 		alignItems: "center",
-		marginRight: width(3.5),
+		marginRight: 14,
+		borderWidth: 1,
+		borderColor: "#F1F5F9",
 	},
 	menuTitle: {
-		fontSize: font(2),
-		color: dark,
-		fontWeight: "500",
+		fontSize: font(1.8),
+		fontWeight: "600",
+		color: "#1E293B",
+	},
+	divider: {
+		height: 1,
+		backgroundColor: "#F1F5F9",
 	},
 	modalOverlay: {
 		flex: 1,
@@ -700,10 +930,90 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 		width: "100%",
 	},
+	submitButtonDisabled: {
+		opacity: 0.6,
+	},
 	submitButtonText: {
 		fontSize: 18,
 		fontWeight: "600",
 		color: "#000000",
+	},
+	thankYouContainer: {
+		alignItems: "center",
+		paddingVertical: height(1),
+	},
+	thankYouIconBox: {
+		width: 72,
+		height: 72,
+		borderRadius: 36,
+		backgroundColor: "#FEF9C3",
+		alignItems: "center",
+		justifyContent: "center",
+		marginBottom: height(1.5),
+	},
+	thankYouTitle: {
+		fontSize: font(2.4),
+		fontWeight: "700",
+		color: "#1E293B",
+		textAlign: "center",
+		marginBottom: height(0.8),
+	},
+	thankYouSubtitle: {
+		fontSize: font(1.4),
+		color: "#64748B",
+		textAlign: "center",
+		lineHeight: font(2.0),
+		paddingHorizontal: width(4),
+		marginBottom: height(2),
+	},
+	thankYouStarsContainer: {
+		flexDirection: "row",
+		justifyContent: "center",
+		gap: 6,
+		marginBottom: height(2),
+	},
+	thankYouStar: {
+		fontSize: 28,
+	},
+	feedbackQuoteBox: {
+		backgroundColor: "#F8FAFC",
+		borderWidth: 1,
+		borderColor: "#E2E8F0",
+		borderRadius: 12,
+		paddingHorizontal: width(4),
+		paddingVertical: height(1.5),
+		width: "100%",
+		marginBottom: height(2.5),
+	},
+	feedbackQuoteText: {
+		fontSize: font(1.4),
+		color: "#334155",
+		fontStyle: "italic",
+		textAlign: "center",
+		lineHeight: font(2.0),
+	},
+	updateRatingButton: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: 6,
+		marginTop: height(1.5),
+		paddingVertical: height(1),
+	},
+	updateRatingButtonText: {
+		fontSize: font(1.5),
+		fontWeight: "600",
+		color: "#4D7C0F",
+	},
+	cancelEditButton: {
+		alignItems: "center",
+		marginTop: height(1.2),
+		paddingVertical: height(0.8),
+	},
+	cancelEditText: {
+		fontSize: font(1.5),
+		color: "#64748B",
+		fontWeight: "500",
 	},
 	modalOverlayPressable: {
 		flex: 1,

@@ -4,19 +4,28 @@ import OfferLendersSection, {
 	type LenderOffer,
 } from "@/components/assessment-fee/OfferLendersSection";
 import PaymentSuccessModal from "@/components/assessment-fee/PaymentSuccessModal";
-import FiveSecDelay from "@/components/FiveSecDelay";
 import RejectionModal from "@/components/RejectionModal";
+import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useAssessmentFeePayment } from "@/hooks/useAssessmentFeePayment";
+import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
+	allocateLenderForUser,
 	axios,
 	getUserProfile,
+	runCreditEvaluationAdapter,
+	triggerPostKycAllocationAdapter,
+	verifyCoupon,
 } from "@/utils/api";
+import { STORAGE_KEYS } from "@/utils/storage";
+import { getUserIdFromToken } from "@/utils/encode_decode";
+import SecureStorage from "@/utils/secure-storage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 // TODO: migrate off legacy API
 import {
 	getMyDetails,
@@ -37,6 +46,7 @@ import {
 	ScrollView,
 	StyleSheet,
 	Text,
+	TextInput,
 	TouchableOpacity,
 	View,
 } from "react-native";
@@ -112,6 +122,111 @@ export default function AssessmentFeeScreen() {
 
 	const leadPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+	const { userId } = useAuth();
+	const { runStep, show, hide } = useJourneyLoader();
+
+	// Allocated lender state
+	const [allocatedLender, setAllocatedLender] = useState<{ id: string; name: string } | null>(null);
+
+	// Coupon states
+	const [afFlag, setAfFlag] = useState<string>((params.af as string) || "yes");
+	const [couponCode, setCouponCode] = useState("");
+	const [couponError, setCouponError] = useState("");
+	const [isCouponVerifying, setIsCouponVerifying] = useState(false);
+	const [appliedDiscount, setAppliedDiscount] = useState<number>(0);
+	const [appliedCouponCode, setAppliedCouponCode] = useState<string>("");
+
+	// Assessment fee amount state (loaded from router params or storage, defaults to 826 from backend)
+	const [rawFeeAmount, setRawFeeAmount] = useState<number>(() => {
+		const paramFee = Number(params.fee_amount);
+		if (!isNaN(paramFee) && paramFee > 0) return paramFee;
+		return 826;
+	});
+
+	useEffect(() => {
+		const loadFeeAmount = async () => {
+			try {
+				const savedFee = await AsyncStorage.getItem(STORAGE_KEYS["@assessment-fee-amount"]);
+				if (savedFee) {
+					const parsed = Number(savedFee);
+					if (!isNaN(parsed) && parsed > 0) {
+						setRawFeeAmount(parsed);
+					}
+				}
+			} catch {}
+		};
+		loadFeeAmount();
+	}, []);
+
+	useEffect(() => {
+		const loadAllocationAndAf = async () => {
+			try {
+				const savedAf = await AsyncStorage.getItem(STORAGE_KEYS["@af-flag"]);
+				if (savedAf) {
+					setAfFlag(savedAf);
+				}
+
+				const savedLenderId = await AsyncStorage.getItem(STORAGE_KEYS["@allocated-lender-id"]);
+				const savedLenderName = await AsyncStorage.getItem(STORAGE_KEYS["@allocated-lender-name"]);
+
+				let effectiveUserId: string | null | undefined = userId;
+				if (!effectiveUserId) {
+					const token: string | null | undefined =
+						await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]);
+					effectiveUserId = getUserIdFromToken(token);
+				}
+
+				if (savedLenderId && savedLenderId !== "null") {
+					setAllocatedLender({ id: savedLenderId, name: savedLenderName || "Assigned Partner Lender" });
+				} else if (effectiveUserId) {
+					try {
+						const allocation = await triggerPostKycAllocationAdapter(effectiveUserId);
+						if (allocation && allocation.allocated_lender_id) {
+							const lId = allocation.allocated_lender_id;
+							const lName = allocation.lender_name || "Assigned Partner Lender";
+							await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-id"], lId);
+							await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-name"], lName);
+							setAllocatedLender({ id: lId, name: lName });
+						}
+					} catch (allocErr) {
+						console.warn("⚠️ [AssessmentFee] Allocation adapter fallback failed:", allocErr);
+					}
+				}
+			} catch (err) {
+				console.warn("⚠️ [AssessmentFee] Error loading allocation or af flag:", err);
+			}
+		};
+		loadAllocationAndAf();
+	}, [userId]);
+
+	const handleApplyCoupon = async () => {
+		const trimmedCode = couponCode.trim();
+		if (!trimmedCode) return;
+		setCouponError("");
+		setIsCouponVerifying(true);
+		try {
+			const res = await verifyCoupon(trimmedCode);
+			if (res.success && res.data) {
+				setAppliedDiscount(res.data.discount || 0);
+				setAppliedCouponCode(res.data.coupon_code);
+				Toast.show({
+					type: "success",
+					text1: t("couponApplied" as any, "Coupon Applied"),
+					text2: `₹${res.data.discount} discount applied successfully`,
+				});
+			}
+		} catch (err: any) {
+			const rawDetail = err?.response?.data?.detail;
+			const errorMsg =
+				typeof rawDetail === "string"
+					? rawDetail
+					: err?.response?.data?.message || err?.message || "Invalid coupon.";
+			setCouponError(errorMsg);
+		} finally {
+			setIsCouponVerifying(false);
+		}
+	};
 
 	// Offer countdown timer effect
 	useEffect(() => {
@@ -251,18 +366,36 @@ export default function AssessmentFeeScreen() {
 	}, [lenderOffersError, params.fromReapply, router, t]);
 
 	// Fee calculations
-	const baseAmount = lenderOffersData?.assessment_fee?.amount ?? 99;
-	const gst = lenderOffersData?.assessment_fee?.gst ?? 0;
-	const processingFeeAmount = Math.round(baseAmount + (gst * baseAmount) / 100);
+	const initialFeeAmount =
+		rawFeeAmount ||
+		(lenderOffersData?.assessment_fee?.amount
+			? Math.round(
+					lenderOffersData.assessment_fee.amount +
+						((lenderOffersData.assessment_fee.gst ?? 0) * lenderOffersData.assessment_fee.amount) / 100
+			  )
+			: 826);
+	const processingFeeAmount = Math.max(0, initialFeeAmount - appliedDiscount);
 	const originalPrice =
 		lenderOffersData?.assessment_fee?.original_amount ||
-		(processingFeeAmount === 99 ? 249 : Math.round(processingFeeAmount / 0.75));
+		Math.round(initialFeeAmount * 1.5) ||
+		1249;
 	const discountPercent = Math.max(
 		1,
 		Math.round(((originalPrice - processingFeeAmount) / originalPrice) * 100)
 	);
 
-	const primaryLender = lenderOffersData?.primary_lender;
+	const primaryLender: LenderOffer | undefined = allocatedLender
+		? {
+				lender_id: allocatedLender.id,
+				lender_name: allocatedLender.name,
+				is_rbi_nbfc: true,
+				loan_upto: lenderOffersData?.primary_lender?.loan_upto ?? 15000,
+				tenure_upto: lenderOffersData?.primary_lender?.tenure_upto ?? 60,
+				interest_rate_starts_at:
+					lenderOffersData?.primary_lender?.interest_rate_starts_at ?? "Starts @ 1.5% p.m.",
+		  }
+		: lenderOffersData?.primary_lender;
+
 	const eligibleLenders = lenderOffersData?.eligible_lenders || [];
 
 	// Post-Payment Email & PAN Verification Flow
@@ -304,24 +437,48 @@ export default function AssessmentFeeScreen() {
 					setRejectionMessage(approvalResponse.msg || "Application Rejected");
 					setRejectionModalVisible(true);
 				} else {
-					router.replace({
-						pathname: "/professional-details" as any,
-						params: { disableBack: "true" },
-					});
+					await proceedToProfessionalDetails();
 				}
 			} catch (approvalError) {
 				console.error("❌ Failed during initial approval transition:", approvalError);
-				setDelayVisible(false);
-				router.replace({
-					pathname: "/professional-details" as any,
-					params: { disableBack: "true" },
-				});
+				await proceedToProfessionalDetails();
 			}
 			return;
 		}
 
 		// Standard first-time flow: User moved from Assessment Fee queue to Professional Details queue
 		console.log("➡️ [Payment Flow] Moving user to Professional Details queue (/professional-details)");
+		await proceedToProfessionalDetails();
+	};
+
+	const proceedToProfessionalDetails = async () => {
+		// Execute Credit Evaluation (BRE) behind adapter before navigating to professional-details
+		try {
+			if (userId) {
+				const breResult = await runCreditEvaluationAdapter({
+					userId,
+					lenderId: primaryLender?.lender_id,
+				});
+
+				if (
+					breResult &&
+					(breResult.final_decision === "REJECTED" ||
+						breResult.final_decision === "reject")
+				) {
+					setDelayVisible(false);
+					const friendlyReason = breResult.failed_rule
+						? `Application could not be approved due to ${breResult.failed_rule.replace("_", " ")} criteria.`
+						: "Application could not be approved based on credit evaluation criteria.";
+					setIsSuccessModalVisible(false);
+					setRejectionMessage(friendlyReason);
+					setRejectionModalVisible(true);
+					return;
+				}
+			}
+		} catch (breErr) {
+			console.warn("⚠️ [Payment Flow] Credit evaluation check failed or skipped:", breErr);
+		}
+
 		setDelayVisible(false);
 		router.replace({
 			pathname: "/professional-details" as any,
@@ -329,50 +486,83 @@ export default function AssessmentFeeScreen() {
 		});
 	};
 
-	// Start lead creation polling after success modal
-	const startVerifyLeadFlow = () => {
+	// Start post-payment verification flow via JourneyLoader
+	const startVerifyLeadFlow = async () => {
 		setIsSuccessModalVisible(false);
-		setDelayStageKey("paymentConfirmedVerifyingDetails");
-		setDelayVisible(true);
-		setIsVerifyLeadFlow(true);
 
-		const startTime = Date.now();
+		try {
+			await runStep(
+				"assessment_fee",
+				async ({ advanceSubStep }) => {
+					// Sub-step 1: Payment verified, confirming details
+					advanceSubStep("confirming_details", t("paymentConfirmedVerifyingDetails"));
 
-		const checkLead = async () => {
-			try {
-				const res = await verifyLeadCreation();
-				if (res?.lead_created) {
-					if (leadPollIntervalRef.current) clearInterval(leadPollIntervalRef.current);
-					setIsVerifyLeadFlow(false);
-					setDelayStageKey("evaluatingCreditPolicyCriteria");
-					handleEmailVerificationFlow();
-					return true;
+					// Sub-step 2: Verify lead creation polling (2s interval, up to 60s)
+					const leadStartTime = Date.now();
+					let leadCreated = false;
+
+					while (Date.now() - leadStartTime < 60000) {
+						try {
+							const res = await verifyLeadCreation();
+							if (res?.lead_created) {
+								leadCreated = true;
+								break;
+							}
+						} catch {
+							// continue polling
+						}
+						await new Promise((r) => setTimeout(r, 2000));
+					}
+
+					// Sub-step 3: Credit Evaluation (BRE) / Initial Approval
+					advanceSubStep("evaluating_policy", t("evaluatingCreditPolicyCriteria"));
+
+					if (userId) {
+						try {
+							const breResult = await runCreditEvaluationAdapter({
+								userId,
+								lenderId: primaryLender?.lender_id,
+							});
+
+							if (
+								breResult &&
+								(breResult.final_decision === "REJECTED" ||
+									breResult.final_decision === "reject")
+							) {
+								const friendlyReason = breResult.failed_rule
+									? `Application could not be approved due to ${breResult.failed_rule.replace("_", " ")} criteria.`
+									: "Application could not be approved based on credit evaluation criteria.";
+								const error = new Error(friendlyReason) as any;
+								error.isRejection = true;
+								error.rejectionMessage = friendlyReason;
+								throw error;
+							}
+						} catch (breErr: any) {
+							if (breErr.isRejection) throw breErr;
+							console.warn("⚠️ [Payment Flow] Credit evaluation check failed or skipped:", breErr);
+						}
+					}
 				}
-			} catch (err) {
-				console.error("Error in verifyLeadCreation:", err);
-			}
-			return false;
-		};
+			);
 
-		checkLead();
-
-		leadPollIntervalRef.current = setInterval(async () => {
-			const elapsed = Date.now() - startTime;
-			if (elapsed >= 60000) {
-				if (leadPollIntervalRef.current) clearInterval(leadPollIntervalRef.current);
-				const isCreated = await checkLead();
-				if (!isCreated) {
-					setIsVerifyLeadFlow(false);
-					setDelayVisible(false);
-					router.replace({
-						pathname: "/professional-details" as any,
-						params: { disableBack: "true" },
-					});
-				}
+			// After all sub-steps complete and tick/crossed out:
+			router.replace({
+				pathname: "/professional-details" as any,
+				params: { disableBack: "true" },
+			});
+		} catch (error: any) {
+			if (error?.isRejection) {
+				setIsSuccessModalVisible(false);
+				setRejectionMessage(error.rejectionMessage || "Application Rejected");
+				setRejectionModalVisible(true);
 			} else {
-				await checkLead();
+				// Fallback to professional details on timeout or other error
+				router.replace({
+					pathname: "/professional-details" as any,
+					params: { disableBack: "true" },
+				});
 			}
-		}, 2000);
+		}
 	};
 
 	// Payment Subsystem hook
@@ -388,6 +578,8 @@ export default function AssessmentFeeScreen() {
 		clearTimer,
 	} = useAssessmentFeePayment({
 		processingFeeAmount,
+		leadId: (params.lead_id as string) || undefined,
+		couponCode: appliedCouponCode || undefined,
 		onPaymentSuccess: () => {
 			setIsSuccessModalVisible(true);
 			setTimeout(() => {
@@ -396,10 +588,14 @@ export default function AssessmentFeeScreen() {
 		},
 	});
 
-	// Sync payment polling stage
+	// Sync payment polling stage with loader
+	const hasShownPollingLoaderRef = useRef(false);
 	useEffect(() => {
-		if (isPaymentPolling) {
-			setDelayStageKey("verifyingPaymentWait");
+		if (isPaymentPolling && !hasShownPollingLoaderRef.current) {
+			hasShownPollingLoaderRef.current = true;
+			show("assessment_fee", t("verifyingPaymentWait"));
+		} else if (!isPaymentPolling) {
+			hasShownPollingLoaderRef.current = false;
 		}
 	}, [isPaymentPolling]);
 	useEffect(() => {
@@ -441,22 +637,15 @@ export default function AssessmentFeeScreen() {
 
 	return (
 		<View style={styles.screenContainer}>
-			{isPaymentCompleted && !isSuccessModalVisible ? (
-				<View style={styles.loadingContainer}>
-					<ActivityIndicator size="large" color="#000000" />
-					<Text style={styles.loadingText}>{t("loading")}</Text>
-				</View>
-			) : (
-				<>
-					<ScrollView
-						style={styles.scrollView}
-						contentContainerStyle={styles.scrollContent}
-						showsVerticalScrollIndicator={false}>
+			<ScrollView
+				style={styles.scrollView}
+				contentContainerStyle={styles.scrollContent}
+				showsVerticalScrollIndicator={false}>
 						{/* Subsystem 1: Offer & Lender Section */}
 						<OfferLendersSection
 							primaryLender={primaryLender}
 							eligibleLenders={eligibleLenders}
-							isLoadingFee={isLoadingLenderOffers}
+							isLoadingFee={isLoadingLenderOffers && !rawFeeAmount}
 							processingFeeAmount={processingFeeAmount}
 							originalPrice={originalPrice}
 							discountPercent={discountPercent}
@@ -464,6 +653,54 @@ export default function AssessmentFeeScreen() {
 							offerSeconds={offerSeconds}
 							onBackPress={() => setIsExitModalVisible(true)}
 						/>
+
+						{/* Coupon input section (active when af === "coupon") */}
+						{afFlag === "coupon" && (
+							<View style={styles.couponContainer}>
+								<Text style={styles.couponHeading}>Have a coupon code?</Text>
+								<View style={styles.couponInputRow}>
+									<TextInput
+										style={[
+											styles.couponTextInput,
+											couponError ? styles.couponTextInputError : null,
+										]}
+										placeholder="ENTER COUPON CODE"
+										placeholderTextColor="#888"
+										value={couponCode}
+										onChangeText={(text) => {
+											setCouponCode(text.toUpperCase());
+											if (couponError) setCouponError("");
+										}}
+										autoCapitalize="characters"
+										editable={!isCouponVerifying && !appliedCouponCode}
+									/>
+									<TouchableOpacity
+										style={[
+											styles.couponApplyButton,
+											(!couponCode.trim() || isCouponVerifying || !!appliedCouponCode) &&
+												styles.couponApplyButtonDisabled,
+										]}
+										onPress={handleApplyCoupon}
+										disabled={!couponCode.trim() || isCouponVerifying || !!appliedCouponCode}>
+										{isCouponVerifying ? (
+											<ActivityIndicator size="small" color="#000" />
+										) : (
+											<Text style={styles.couponApplyButtonText}>
+												{appliedCouponCode ? "APPLIED" : "APPLY"}
+											</Text>
+										)}
+									</TouchableOpacity>
+								</View>
+								{couponError ? (
+									<Text style={styles.couponErrorText}>{couponError}</Text>
+								) : null}
+								{appliedCouponCode ? (
+									<Text style={styles.couponSuccessText}>
+										Coupon applied! ₹{appliedDiscount} discount
+									</Text>
+								) : null}
+							</View>
+						)}
 
 						{/* Dev Test Simulator (active in __DEV__ only) */}
 						<DevPaymentSimulator onSimulateDeepLink={simulateDeepLinkReturn} />
@@ -544,26 +781,19 @@ export default function AssessmentFeeScreen() {
 								</Text>
 							) : (
 								<View style={styles.proceedRow}>
-									<Text style={styles.proceedText}>{t("proceed")}</Text>
+									<Text style={styles.proceedText}>
+										{processingFeeAmount > 0
+											? `Pay Assessment Fee • ₹${processingFeeAmount}`
+											: t("proceed")}
+									</Text>
 									<IconSymbol name="arrow.right" size={20} color="#000" />
 								</View>
 							)}
 						</TouchableOpacity>
 					</View>
-				</>
-			)}
 
 			{/* Subsystem 3 & 4 Modals */}
 			<PaymentSuccessModal visible={isSuccessModalVisible} />
-
-			<FiveSecDelay
-				visible={delayVisible}
-				isPolling={isVerifyLeadFlow || isPaymentPolling}
-				pollingTextKey={delayStageKey}
-				onComplete={() => {
-					setDelayVisible(false);
-				}}
-			/>
 
 			<RejectionModal
 				visible={rejectionModalVisible}
@@ -659,6 +889,70 @@ const styles = StyleSheet.create({
 		fontWeight: "bold",
 		zIndex: 10,
 		fontSize: font(1.6),
+	},
+	couponContainer: {
+		backgroundColor: white,
+		marginHorizontal: width(4),
+		marginTop: height(1.5),
+		padding: width(4),
+		borderRadius: width(3),
+		borderWidth: 1,
+		borderColor: "#E5E5E5",
+	},
+	couponHeading: {
+		fontSize: font(1.6),
+		fontWeight: "600",
+		color: dark,
+		marginBottom: height(1),
+	},
+	couponInputRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: width(2),
+	},
+	couponTextInput: {
+		flex: 1,
+		height: height(5.5),
+		borderWidth: 1,
+		borderColor: "#CCC",
+		borderRadius: width(2),
+		paddingHorizontal: width(3),
+		fontSize: font(1.6),
+		color: dark,
+		fontWeight: "600",
+		backgroundColor: "#FAFAFA",
+	},
+	couponTextInputError: {
+		borderColor: "#E53935",
+	},
+	couponApplyButton: {
+		backgroundColor: "#B7FB52",
+		height: height(5.5),
+		paddingHorizontal: width(5),
+		borderRadius: width(2),
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	couponApplyButtonDisabled: {
+		opacity: 0.5,
+	},
+	couponApplyButtonText: {
+		color: dark,
+		fontWeight: "bold",
+		fontSize: font(1.5),
+		letterSpacing: 0.5,
+	},
+	couponErrorText: {
+		marginTop: height(0.6),
+		color: "#E53935",
+		fontSize: font(1.4),
+		fontWeight: "500",
+	},
+	couponSuccessText: {
+		marginTop: height(0.6),
+		color: "#2E7D32",
+		fontSize: font(1.4),
+		fontWeight: "600",
 	},
 });
 

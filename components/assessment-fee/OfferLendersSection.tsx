@@ -135,6 +135,12 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 					return "आरबीआई पंजीकृत एनबीएफसी";
 				case "otherEligibleLenders":
 					return "अन्य योग्य ऋणदाता";
+				case "assessmentFee":
+					return "मूल्यांकन शुल्क";
+				case "assessmentFeeNonRefundable":
+					return "नोट: मूल्यांकन शुल्क गैर-वापसी योग्य है";
+				case "offerEndsIn":
+					return "ऑफ़र समाप्त होने में समय:";
 				case "okay":
 					return "ठीक है";
 				default:
@@ -241,7 +247,7 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 						style={{ width: width(4), height: width(4) }}
 					/>
 					<Text style={styles.offerEndsText}>
-						{t("offerEndsIn")} {offerMinutes}:{offerSeconds}
+						{getLocalText("offerEndsIn", "Offer ends in")} {offerMinutes}:{offerSeconds}
 					</Text>
 				</View>
 				<View style={styles.assessmentFeeRow}>
@@ -249,9 +255,13 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 						<ActivityIndicator size="small" color="#333" />
 					) : (
 						<>
-							<Text style={{ color: "#333333" }}>{t("assessmentFee")} :</Text>
+							<Text style={styles.feeLabel}>
+								{getLocalText("assessmentFee", "Assessment Fee")} :
+							</Text>
 							<View style={styles.assessmentFeePriceRow}>
-								<Text style={styles.strikethroughPrice}>₹{actualOriginalPrice}</Text>
+								{actualOriginalPrice > processingFeeAmount && (
+									<Text style={styles.strikethroughPrice}>₹{actualOriginalPrice}</Text>
+								)}
 								<Text style={styles.actualPrice}>₹{processingFeeAmount}/-</Text>
 							</View>
 						</>
@@ -260,7 +270,7 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 			</View>
 
 			<Text style={styles.nonRefundableText}>
-				{t("assessmentFeeNonRefundable")}
+				{getLocalText("assessmentFeeNonRefundable", "Note: Assessment fee is non-refundable")}
 			</Text>
 
 			{/* Primary Eligible Lender Card */}
@@ -656,9 +666,16 @@ const styles = StyleSheet.create({
 	},
 	assessmentFeeRow: {
 		flexDirection: "row",
-		padding: width(2.5),
+		paddingVertical: height(1.5),
+		paddingHorizontal: width(3.5),
 		justifyContent: "space-between",
 		alignItems: "center",
+		minHeight: height(6),
+	},
+	feeLabel: {
+		color: "#1F2937",
+		fontSize: font(1.8),
+		fontWeight: "600",
 	},
 	assessmentFeePriceRow: {
 		flexDirection: "row",
@@ -666,14 +683,15 @@ const styles = StyleSheet.create({
 		gap: width(2),
 	},
 	strikethroughPrice: {
-		color: "#D50004",
+		color: "#DC2626",
 		textDecorationLine: "line-through",
-		fontSize: font(1.8),
+		fontSize: font(1.6),
+		fontWeight: "500",
 	},
 	actualPrice: {
-		color: "#1D7505",
+		color: "#059669",
 		fontWeight: "bold",
-		fontSize: font(2.0),
+		fontSize: font(2.4),
 	},
 	nonRefundableText: {
 		marginHorizontal: width(8),

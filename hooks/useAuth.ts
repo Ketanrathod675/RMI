@@ -13,7 +13,7 @@ import {
 	toggleMpinSignedIn,
 } from "@/store/slices/auth";
 import type { SigninState } from "@/store/slices/signin";
-import { decode, encode } from "@/utils/encode_decode";
+import { decode, encode, getUserIdFromToken } from "@/utils/encode_decode";
 import SecureStorage from "@/utils/secure-storage";
 import {
 	AuthKeys,
@@ -114,11 +114,19 @@ export const useAuth = (shouldAutoLoad = false) => {
 				const userIdVal = await getStorageItem(STORAGE_KEYS["@user-id"]);
 				const applicantFromVal = await getStorageItem(STORAGE_KEYS["@applicant-from"]);
 
+				let resolvedUserId = userIdVal ? decode(userIdVal) : null;
+				if ((!resolvedUserId || resolvedUserId.trim() === "") && accessTokenVal) {
+					resolvedUserId = getUserIdFromToken(accessTokenVal);
+					if (resolvedUserId) {
+						await setStorageItem(STORAGE_KEYS["@user-id"], encode(resolvedUserId));
+					}
+				}
+
 				// Hydrate Redux state securely
 				if (accessTokenVal) dispatch(setAuthAccessToken(accessTokenVal));
 				if (decodedRefreshToken) dispatch(setAuthRefreshToken(decodedRefreshToken));
 				if (tokenTypeVal) dispatch(setAuthTokenType(decode(tokenTypeVal)));
-				if (userIdVal) dispatch(setAuthUserId(decode(userIdVal)));
+				if (resolvedUserId) dispatch(setAuthUserId(resolvedUserId));
 				if (applicantFromVal) dispatch(setAuthApplicantFrom(decode(applicantFromVal)));
 
 				dispatch(setAuthCountryCode(parsedCountry.data));
@@ -200,6 +208,12 @@ export const useAuth = (shouldAutoLoad = false) => {
 			dispatch(setAuthRefreshToken(refreshTokenVal));
 			dispatch(setAuthTokenType(tokenTypeVal));
 
+			const extractedUserId = getUserIdFromToken(accessTokenVal);
+			if (extractedUserId) {
+				await setStorageItem(STORAGE_KEYS["@user-id"], encode(extractedUserId));
+				dispatch(setAuthUserId(extractedUserId));
+			}
+
 			return true;
 		},
 		[dispatch]
@@ -209,6 +223,13 @@ export const useAuth = (shouldAutoLoad = false) => {
 		setStorageItem(STORAGE_KEYS["@is-mpin-set"], encode("true"));
 		dispatch(toggleIsMpinSet(true));
 	}, [dispatch]);
+
+	const handleMpinSignIn = useCallback(
+		(bool = true) => {
+			dispatch(toggleMpinSignedIn(bool));
+		},
+		[dispatch]
+	);
 
 	const logout = useCallback(() => {
 		void Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
@@ -238,6 +259,7 @@ export const useAuth = (shouldAutoLoad = false) => {
 		handleLoginAndSignup,
 		handleSetTokens,
 		handleMpinSet,
+		handleMpinSignIn,
 		logout,
 	};
 };

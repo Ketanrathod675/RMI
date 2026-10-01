@@ -1,4 +1,5 @@
 export { DateInput } from "./DateInput";
+export { Dropdown, type DropdownOption } from "./Dropdown";
 export { PrivacyPolicy } from "./PrivacyPolicy";
 export { Select, type SelectOption } from "./select";
 export { TermsAndConditions } from "./TermsAndConditions";

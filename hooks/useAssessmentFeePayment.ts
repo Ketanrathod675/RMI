@@ -2,15 +2,23 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { clearTransactionId, setTransactionId, useDispatch } from "@/store";
 import { trackAssessmentFeePaid } from "@/utils/analytics";
-import { errorHandler, URLS } from "@/utils/api";
-// TODO: migrate off legacy API
-import { checkEasebuzzPaymentStatus } from "@/utils/api/kyc";
-import { axios } from "@/utils/api";
+import {
+	checkPaymentStatus,
+	errorHandler,
+	getUserDashboardData,
+	getUserProfile,
+	initiateAssessmentFee,
+	URLS,
+	type InitiateAssessmentFeeResponse,
+	type PaymentStatusResponse,
+} from "@/utils/api";
+import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
 import * as Linking from "expo-linking";
+import * as WebBrowser from "expo-web-browser";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { DeviceEventEmitter, Platform, ToastAndroid } from "react-native";
@@ -44,11 +52,15 @@ export type InitiatePaymentResponse = {
 
 interface UseAssessmentFeePaymentOptions {
 	processingFeeAmount: number;
+	leadId?: string;
+	couponCode?: string;
 	onPaymentSuccess: (txnId: string) => void;
 }
 
 export const useAssessmentFeePayment = ({
 	processingFeeAmount,
+	leadId,
+	couponCode,
 	onPaymentSuccess,
 }: UseAssessmentFeePaymentOptions) => {
 	const { t } = useTranslation();
@@ -69,6 +81,7 @@ export const useAssessmentFeePayment = ({
 
 	const processedTransactionRef = useRef<string | null>(null);
 	const paymentPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const checkStatusRef = useRef<((id: string) => Promise<boolean>) | null>(null);
 	const urlHook = Linking.useLinkingURL();
 
 	const clearTimer = async () => {
@@ -175,10 +188,14 @@ export const useAssessmentFeePayment = ({
 
 		const checkStatus = async (): Promise<boolean> => {
 			try {
-				const res = await checkEasebuzzPaymentStatus(txnId);
+				const res = await checkPaymentStatus(txnId);
 				Logger.debug("Payment status polling response", res);
 
-				if (res.status === "success") {
+				const statusVal =
+					res?.data?.status?.toUpperCase() ||
+					(res?.success && (res?.data as any)?.status !== "PENDING" ? "COMPLETED" : "PENDING");
+
+				if (statusVal === "COMPLETED" || statusVal === "SUCCESS") {
 					if (paymentPollIntervalRef.current) {
 						clearInterval(paymentPollIntervalRef.current);
 					}
@@ -197,14 +214,20 @@ export const useAssessmentFeePayment = ({
 					});
 
 					setIsPaymentCompleted(true);
-					trackAssessmentFeePaid(processingFeeAmount, txnId).catch(() => {});
+					const paymentRef = res?.data?.payment_id || res?.data?.easepayid || txnId;
+					trackAssessmentFeePaid(processingFeeAmount, paymentRef).catch(() => {});
 					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 
-					onPaymentSuccess(txnId);
+					onPaymentSuccess(paymentRef);
 					return true;
 				}
 
-				if (res.status === "failure") {
+				if (
+					statusVal === "FAILED" ||
+					statusVal === "FAILURE" ||
+					statusVal === "REJECTED" ||
+					statusVal === "USERCANCELLED"
+				) {
 					if (paymentPollIntervalRef.current) {
 						clearInterval(paymentPollIntervalRef.current);
 					}
@@ -232,10 +255,47 @@ export const useAssessmentFeePayment = ({
 					return true;
 				}
 			} catch (err) {
-				Logger.error("Payment status polling failed", err);
+				Logger.warn("Primary payment status check error, verifying dashboard workflow fallback", err);
+				try {
+					const dash = await getUserDashboardData();
+					const step = String(
+						(dash as any)?.current_step ||
+						dash?.workflow_progress?.current_step ||
+						dash?.current_step_info?.step ||
+						""
+					).toLowerCase();
+					if (step && step !== "assessment_fee" && step !== "assessment_fee_payment") {
+						console.log("✅ [Payment] User dashboard confirms workflow advanced to:", step);
+						if (paymentPollIntervalRef.current) {
+							clearInterval(paymentPollIntervalRef.current);
+						}
+						setIsPaymentPolling(false);
+						setDelayVisible(false);
+
+						dispatch(clearTransactionId());
+						await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
+						await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
+						setIsPaymentInitiated(false);
+						setPaymentStatus({
+							paymentPending: false,
+							paymentTimer: 0,
+							timerStartTime: 0,
+						});
+
+						setIsPaymentCompleted(true);
+						trackAssessmentFeePaid(processingFeeAmount, txnId).catch(() => {});
+						queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+						onPaymentSuccess(txnId);
+						return true;
+					}
+				} catch (dashErr) {
+					Logger.error("Dashboard fallback check also failed", dashErr);
+				}
 			}
 			return false;
 		};
+
+		checkStatusRef.current = checkStatus;
 
 		// Run immediately
 		checkStatus();
@@ -309,25 +369,90 @@ export const useAssessmentFeePayment = ({
 	// Payment Initiation Mutation
 	const { mutate: initiatePayment, isPending } = useNetworkAwareMutation({
 		mutationFn: async () => {
-			const payload = {
-				amount: processingFeeAmount,
-				purpose: "assessment fee",
-				payment_type: "assessment_fee",
-				platform: "mobile",
-				version: Constants.expoConfig?.version,
-			};
+			let targetLeadId = leadId;
+			if (!targetLeadId) {
+				targetLeadId = (await getStorageItem(STORAGE_KEYS["@lead-id"])) || undefined;
+			}
 
-			Logger.debug("Initiating payment checkout", payload);
-			const response = await axios.post<Partial<InitiatePaymentResponse>>(
-				URLS.payments.initiate_payment,
-				payload,
-			);
-			return response.data;
+			if (!targetLeadId) {
+				throw new Error("Lead ID is missing. Please submit your basic details again.");
+			}
+
+			// Resolve user contact info required by backend Easebuzz schema
+			let resolvedPhone = "";
+			let resolvedName = "Applicant";
+			let resolvedEmail = "applicant@rapidmoney.in";
+
+			try {
+				const rawPhone = await getStorageItem(STORAGE_KEYS["@phone-number"]);
+				if (rawPhone) {
+					try {
+						const decoded = decode(rawPhone);
+						resolvedPhone = decoded.replace(/\D/g, "").slice(-10);
+					} catch {
+						resolvedPhone = rawPhone.replace(/\D/g, "").slice(-10);
+					}
+				}
+			} catch {}
+
+			try {
+				const profile = await getUserProfile();
+				const pDetails = profile?.personal_details;
+				if (pDetails?.full_name) {
+					resolvedName = pDetails.full_name.split(" ")[0].trim() || "Applicant";
+				}
+				if (profile?.email) {
+					resolvedEmail = profile.email.trim();
+				}
+				if (!resolvedPhone && (profile as any)?.phone_number) {
+					resolvedPhone = String((profile as any).phone_number).replace(/\D/g, "").slice(-10);
+				}
+			} catch {}
+
+			if (!resolvedPhone || resolvedPhone.length < 10) {
+				resolvedPhone = "9999999999";
+			}
+
+			Logger.debug("Initiating assessment fee payment", {
+				lead_id: targetLeadId,
+				phone_no: resolvedPhone,
+				firstname: resolvedName,
+				email: resolvedEmail,
+				coupon_code: couponCode,
+			});
+
+			return await initiateAssessmentFee({
+				lead_id: targetLeadId,
+				phone_no: resolvedPhone.slice(-10),
+				firstname: resolvedName.slice(0, 50),
+				email: resolvedEmail.slice(0, 100),
+				coupon_code: couponCode || null,
+			});
 		},
-		onSuccess: async (data) => {
-			Logger.debug("Payment checkout initiated", data);
+		onSuccess: async (res) => {
+			Logger.debug("Assessment fee payment initiated", res);
 
-			if (!data?.payment_data?.payment_link) {
+			const data = (res as any)?.data ?? res;
+			if (!data) {
+				Toast.show({
+					type: "error",
+					text1: t("unableToInitiatePayment"),
+					text2: t("pleaseRetryPayment"),
+				});
+				return;
+			}
+
+			// If fee is waived (100% coupon or 0 fee)
+			if (data.status === "WAIVED" || data.amount === 0) {
+				await clearTimer();
+				setIsPaymentInitiated(false);
+				setIsPaymentCompleted(true);
+				onPaymentSuccess(data.txnid || "WAIVED");
+				return;
+			}
+
+			const paymentUrl = data.payment_url || data.payment_link;
+			if (!paymentUrl) {
 				Toast.show({
 					type: "error",
 					text1: t("unableToInitiatePayment"),
@@ -337,15 +462,15 @@ export const useAssessmentFeePayment = ({
 			}
 
 			await clearTimer();
-			const url = data.payment_data.payment_link;
+			const url = paymentUrl;
+			const txnid = data.txnid || data.transaction_id || data.order_id;
 
 			if (Platform.OS === "android") {
-				ToastAndroid.show(t("redirectingToYourBrowser"), ToastAndroid.SHORT);
+				ToastAndroid.show(t("redirectingToYourBrowser") || "Opening Easebuzz Payment Gateway...", ToastAndroid.SHORT);
 			}
 
-			dispatch(setTransactionId(data.payment_data.transaction_id));
-			// Store order_id as @transaction-id matching Easebuzz txnid
-			await setStorageItem(STORAGE_KEYS["@transaction-id"], data.payment_data.order_id);
+			dispatch(setTransactionId(txnid));
+			await setStorageItem(STORAGE_KEYS["@transaction-id"], txnid);
 
 			setIsPaymentInitiated(true);
 			const startTime = Date.now();
@@ -359,22 +484,40 @@ export const useAssessmentFeePayment = ({
 
 			DeviceEventEmitter.emit("SHOW_GLOBAL_LOADER");
 
+			// Start polling immediately in the background so whenever Easebuzz finishes, status is caught
+			startPaymentPolling(txnid);
+
 			setTimeout(async () => {
 				try {
-					await Linking.openURL(url);
+					const redirectScheme = "rapid-money://";
+					const result = await WebBrowser.openAuthSessionAsync(url, redirectScheme);
+					console.log("💳 [WebBrowser] Auth session completed:", result);
+					// Immediately verify status when returning from gateway without waiting for next poll tick
+					if (checkStatusRef.current) {
+						await checkStatusRef.current(txnid);
+					}
 				} catch (err) {
-					console.error("Failed to open payment URL", err);
+					console.warn("Failed to open via WebBrowser, using Linking.openURL", err);
+					await Linking.openURL(url).catch((openErr) => {
+						console.error("Failed to open payment URL", openErr);
+					});
 				}
-			}, 800);
+			}, 300);
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
 			Logger.error("Payment initiation failed", error);
 
+			const rawDetail = (err as any)?.response?.data?.detail;
+			const displayMessage =
+				typeof rawDetail === "string"
+					? rawDetail
+					: error?.message ?? t("pleaseRetryPayment");
+
 			Toast.show({
 				type: "error",
 				text1: t("errorInitiatingPayment"),
-				text2: error?.message ?? t("pleaseRetryPayment"),
+				text2: displayMessage,
 			});
 		},
 	});

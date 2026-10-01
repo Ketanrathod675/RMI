@@ -43,9 +43,16 @@ export const STORAGE_KEYS = {
 	"@app-installed-flag": "@app-installed-flag",
 	"@app-version": "@app-version",
 	"@applicant-from": "@applicant-from",
+	"@lead-id": "@lead-id",
+	"@af-flag": "@af-flag",
+	"@allocated-lender-id": "@allocated-lender-id",
+	"@allocated-lender-name": "@allocated-lender-name",
+	"@assessment-fee-amount": "@assessment-fee-amount",
+	"@completed-journey-steps": "@completed-journey-steps",
 } as const;
 
 export const TempKeys = [
+	"@completed-journey-steps",
 	"@otp-verify-response",
 	"@transaction-id",
 	"@assessment-timer-id",

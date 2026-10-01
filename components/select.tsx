@@ -6,6 +6,7 @@ import {
 	Animated,
 	Dimensions,
 	FlatList,
+	Keyboard,
 	Modal,
 	Pressable,
 	StyleSheet,
@@ -43,6 +44,8 @@ type SelectProps = {
 	showCheckmark?: boolean;
 	searchable?: boolean;
 	searchPlaceholder?: string;
+	onOpen?: () => void;
+	onClose?: () => void;
 };
 
 export const Select: FC<SelectProps> = ({
@@ -64,6 +67,8 @@ export const Select: FC<SelectProps> = ({
 	showCheckmark = true,
 	searchable = false,
 	searchPlaceholder,
+	onOpen,
+	onClose,
 }) => {
 	const { t } = useTranslation();
 	const [isVisible, setIsVisible] = useState(false);
@@ -82,7 +87,22 @@ export const Select: FC<SelectProps> = ({
 		? options.filter((option) => option.label.toLowerCase().includes(searchText.toLowerCase()))
 		: options;
 
+	const dismissActiveInput = () => {
+		Keyboard.dismiss();
+		try {
+			const currentlyFocused = (TextInput as any).State?.currentlyFocusedInput?.();
+			if (currentlyFocused) {
+				(TextInput as any).State?.blurTextInput?.(currentlyFocused);
+				(currentlyFocused as any)?.blur?.();
+			}
+		} catch {
+			// ignore fallback
+		}
+	};
+
 	const showModal = () => {
+		dismissActiveInput();
+		onOpen?.();
 		setIsVisible(true);
 		Animated.timing(slideAnim, {
 			toValue: 0,
@@ -92,6 +112,7 @@ export const Select: FC<SelectProps> = ({
 	};
 
 	const hideModal = () => {
+		dismissActiveInput();
 		Animated.timing(slideAnim, {
 			toValue: screenHeight,
 			duration: 250,
@@ -99,20 +120,25 @@ export const Select: FC<SelectProps> = ({
 		}).start(() => {
 			setIsVisible(false);
 			setSearchText("");
+			dismissActiveInput();
+			onClose?.();
 		});
 	};
 
 	const handleSelect = (value: string | number) => {
+		dismissActiveInput();
 		onSelect(value);
 		hideModal();
 	};
 
 	const handleOutsidePress = () => {
+		dismissActiveInput();
 		hideModal();
 	};
 
 	const handleButtonPress = () => {
 		if (!disabled) {
+			dismissActiveInput();
 			showModal();
 		}
 	};

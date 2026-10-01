@@ -44,7 +44,7 @@ const getLoanHistory = async () => {
 
 const formatLoanAmount = (amount?: number): string => {
 	if (typeof amount !== "number" || isNaN(amount)) return "₹0.00";
-	return `₹${amount.toFixed(2)}`;
+	return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const formatDateTime = (dateString?: string): string => {
@@ -83,7 +83,7 @@ const getStatusColor = (status: string): string => {
 		return "#334155"; // Slate Dark Grey
 	}
 	if (normalized === "due soon") {
-		return "#F97316"; // Orange
+		return "#f97416ff"; // Orange
 	}
 	if (normalized === "overdue") {
 		return "#EF4444"; // Red
@@ -96,12 +96,18 @@ const getStatusColor = (status: string): string => {
 
 const LoanHistoryItemComponent = ({ item }: { item: LoanHistoryItem }) => {
 	const statusColor = getStatusColor(item.status);
+	const laNumber = item.loan_number || (item.loan_id ? item.loan_id : "LA-N/A");
 
 	return (
 		<View style={styles.itemContainer}>
 			<View style={styles.topRow}>
-				<Text style={styles.amountText}>{formatLoanAmount(item.amount)}</Text>
-				<Text style={[styles.statusText, { color: statusColor }]}>{item.status}</Text>
+				<View style={styles.loanInfoCol}>
+					<Text style={styles.laNumberText}>{laNumber}</Text>
+					<Text style={styles.amountText}>{formatLoanAmount(item.amount)}</Text>
+				</View>
+				<View style={[styles.statusPill, { borderColor: statusColor }]}>
+					<Text style={[styles.statusPillText, { color: statusColor }]}>{item.status}</Text>
+				</View>
 			</View>
 			<Text style={styles.dateTimeText}>{formatDateTime(item.due_date)}</Text>
 		</View>
@@ -230,16 +236,35 @@ const styles = StyleSheet.create({
 	topRow: {
 		flexDirection: "row",
 		justifyContent: "space-between",
-		alignItems: "center",
+		alignItems: "flex-start",
+	},
+	loanInfoCol: {
+		flex: 1,
+		marginRight: 12,
+	},
+	laNumberText: {
+		fontSize: 17,
+		fontWeight: "700",
+		color: "#1E293B",
+		letterSpacing: -0.2,
+		marginBottom: 3,
 	},
 	amountText: {
-		fontSize: 24,
-		fontWeight: "800",
-		color: "#1E293B",
-		letterSpacing: -0.5,
+		fontSize: 15,
+		fontWeight: "600",
+		color: "#64748B",
+		letterSpacing: -0.2,
 	},
-	statusText: {
-		fontSize: 14,
+	statusPill: {
+		borderRadius: 20,
+		borderWidth: 1.5,
+		paddingHorizontal: 12,
+		paddingVertical: 4,
+		backgroundColor: "#FFFFFF",
+		alignSelf: "flex-start",
+	},
+	statusPillText: {
+		fontSize: 12,
 		fontWeight: "700",
 		letterSpacing: 0.2,
 	},
@@ -247,7 +272,7 @@ const styles = StyleSheet.create({
 		fontSize: 13,
 		color: "#94A3B8",
 		fontWeight: "400",
-		marginTop: 6,
+		marginTop: 8,
 	},
 	loadingContainer: {
 		flex: 1,

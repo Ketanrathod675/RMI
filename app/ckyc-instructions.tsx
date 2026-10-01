@@ -1,6 +1,7 @@
 import OvalCameraCapture from "@/components/OvalCameraCapture";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary } from "@/constants/Colors";
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
@@ -39,6 +40,7 @@ export default function CKYCInstructions() {
 	const [isProceedingToCkyc, setIsProceedingToCkyc] = useState(false);
 	const [isLoadingCkyc, setIsLoadingCkyc] = useState(true);
 	const [isFaceMatching, setIsFaceMatching] = useState(false);
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
 	const isMounted = useRef(true);
 	useEffect(() => {
@@ -272,18 +274,7 @@ export default function CKYCInstructions() {
 				setStep(0);
 				return true;
 			} else if (step === 0) {
-				Alert.alert(t("areYouSureGoBack", "Are you sure you want to go back?"), t("youWillLoseProgress", "You will lose your progress."), [
-					{
-						text: t("cancel", "Cancel"),
-						style: "cancel",
-					},
-					{
-						text: t("goBack", "Go Back"),
-						onPress: () => {
-							router.back();
-						},
-					},
-				]);
+				setIsExitModalVisible(true);
 				return true;
 			}
 		}
@@ -298,24 +289,13 @@ export default function CKYCInstructions() {
 				setStep((prevStep) => prevStep - 1);
 			}
 			return true;
-		} else if (step === 1) {
-			Alert.alert(t("areYouSureGoBack", "Are you sure you want to go back?"), t("youWillLoseProgress", "You will lose your progress."), [
-				{
-					text: t("cancel", "Cancel"),
-					style: "cancel",
-				},
-				{
-					text: t("goBack", "Go Back"),
-					onPress: () => {
-						router.replace("/(tabs)");
-					},
-				},
-			]);
+		} else if (step <= 1) {
+			setIsExitModalVisible(true);
 			return true;
 		}
 
 		return false;
-	}, [step, showCamera, handleCameraCancel, router, startSelfie, t]);
+	}, [step, showCamera, handleCameraCancel, startSelfie]);
 
 	useEffect(() => {
 		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
@@ -336,22 +316,7 @@ export default function CKYCInstructions() {
 						setStep((prevStep) => prevStep - 1);
 					}
 				} else {
-					if (startSelfie === "true") {
-						router.replace("/(tabs)");
-					} else {
-						Alert.alert(t("areYouSureGoBack", "Are you sure you want to go back?"), t("youWillLoseProgress", "You will lose your progress."), [
-							{
-								text: t("cancel", "Cancel"),
-								style: "cancel",
-							},
-							{
-								text: t("goBack", "Go Back"),
-								onPress: () => {
-									router.replace("/(tabs)");
-								},
-							},
-						]);
-					}
+					setIsExitModalVisible(true);
 				}
 			}
 		});
@@ -582,6 +547,15 @@ export default function CKYCInstructions() {
 				visible={showCamera}
 				onCapture={handleCameraCapture}
 				onCancel={handleCameraCancel}
+			/>
+
+			<ExitIntentModal
+				visible={isExitModalVisible}
+				onClose={() => setIsExitModalVisible(false)}
+				onConfirmExit={() => {
+					setIsExitModalVisible(false);
+					router.replace("/(tabs)");
+				}}
 			/>
 		</SafeAreaView>
 	);

@@ -130,10 +130,8 @@ axios.interceptors.request.use(async (config) => {
 		config.url?.endsWith(URLS.auth.refresh_token);
 
 	if (isRefreshTokenRequest) {
-		const refreshToken = await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@refresh-token"]);
-		if (refreshToken) {
-			config.headers.Authorization = `Bearer ${refreshToken}`;
-		}
+		// New backend reads refresh_token from JSON body only; Authorization header is unnecessary
+		delete config.headers.Authorization;
 	} else {
 		const token = await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]);
 		if (token) {
@@ -247,9 +245,46 @@ export const errorHandler = <T extends unknown = unknown>(
 		}
 
 		if (error.response?.status === 400) {
+			const detailMessage =
+				typeof data?.detail === "string"
+					? data.detail
+					: Array.isArray(data?.detail)
+					? data?.detail[0]?.msg
+					: data?.message;
+
+			const normalizedData = {
+				...data,
+				message: detailMessage || data?.message || "Invalid request",
+			};
+
 			return {
-				error: data,
+				error: normalizedData as any,
 				errorType: "bad-request",
+				variables,
+				ctx,
+			} as const;
+		}
+
+		if (error.response?.status === 404 || error.response?.status === 422) {
+			const detailMessage =
+				typeof data?.detail === "string"
+					? data.detail
+					: Array.isArray(data?.detail)
+					? data?.detail[0]?.msg
+					: data?.message;
+
+			const normalizedData = {
+				...data,
+				message:
+					detailMessage ||
+					(error.response?.status === 404
+						? "Requested service is temporarily unavailable"
+						: "Validation error occurred"),
+			};
+
+			return {
+				error: normalizedData as any,
+				errorType: error.response?.status === 404 ? "not-found" : "validation-error",
 				variables,
 				ctx,
 			} as const;

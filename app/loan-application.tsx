@@ -1,4 +1,5 @@
-import { DateInput, Select, type SelectOption } from "@/components";
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
+import { DateInput, Dropdown, Select, type SelectOption } from "@/components";
 import TranslatedInput from "@/components/TranslatedInput";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
@@ -6,12 +7,20 @@ import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	errorHandler,
-	updateBasicDetails,
-	type BasicDetailsPayload,
+	submitBasicDetails,
+	triggerPostKycAllocationAdapter,
+	type KycSubmitPayload,
 } from "@/utils/api";
+import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { encode, getUserIdFromToken } from "@/utils/encode_decode";
+import SecureStorage from "@/utils/secure-storage";
+import { useAppDispatch } from "@/store";
+import { setAuthUserId } from "@/store/slices/auth";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
@@ -51,6 +60,8 @@ export default function LoanApplication() {
 
 	// Track this screen in the journey
 	useJourneyTracker("/loan-application");
+
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
 	// Language options
 	const languageOptions: SelectOption[] = [
@@ -101,7 +112,14 @@ export default function LoanApplication() {
 	const [isPanVerified, setIsPanVerified] = useState(false);
 
 	const navigation = useNavigation();
-	const { userId, logout, applicantFrom } = useAuth();
+	const dispatch = useAppDispatch();
+	const { userId, accessToken, logout, applicantFrom } = useAuth(true);
+	const { runStep, resetJourney } = useJourneyLoader();
+
+	useEffect(() => {
+		// When starting basic details, reset any previous completed journey steps
+		resetJourney().catch(() => {});
+	}, [resetJourney]);
 
 	// LEGACY — old backend, disabled during in-house rebuild
 	// HB Partner pre-fill query disabled as endpoint does not exist on RMI_Backend
@@ -142,40 +160,13 @@ export default function LoanApplication() {
 			const unsubscribe = navigation.addListener("beforeRemove", (e) => {
 				if (["GO_BACK", "POP"].includes(e.data.action.type)) {
 					e.preventDefault();
-
-					Alert.alert(
-						t("areYouSureGoBackLoseProgress", "Are you sure you want to go back?"),
-						t("youWillLoseYourProgress", "You will lose your progress."),
-						[
-							{
-								text: t("cancel", "Cancel"),
-								style: "cancel",
-							},
-							{
-								text: t("goBack", "Go Back"),
-								onPress: () => router.replace("/(tabs)"),
-							},
-						]
-					);
+					setIsExitModalVisible(true);
 				}
 			});
 
 			// Intercept Android hardware back button
 			const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
-				Alert.alert(
-					t("areYouSureGoBackLoseProgress", "Are you sure you want to go back?"),
-					t("youWillLoseYourProgress", "You will lose your progress."),
-					[
-						{
-							text: t("cancel", "Cancel"),
-							style: "cancel",
-						},
-						{
-							text: t("goBack", "Go Back"),
-							onPress: () => router.replace("/(tabs)"),
-						},
-					]
-				);
+				setIsExitModalVisible(true);
 				return true; // prevent default app exit
 			});
 
@@ -183,7 +174,7 @@ export default function LoanApplication() {
 				unsubscribe();
 				backHandler.remove();
 			};
-		}, [navigation, t])
+		}, [navigation])
 	);
 
 	// Cleanup timer on unmount
@@ -218,11 +209,74 @@ export default function LoanApplication() {
 	const queryClient = useQueryClient();
 
 	const { mutate: submitPersonalDetailsMutation, isPending } = useNetworkAwareMutation({
-		mutationFn: updateBasicDetails,
-		onSuccess: async (_data) => {
+		mutationFn: submitBasicDetails,
+		onSuccess: async (response) => {
 			if (__DEV__) {
-				console.log("✅ [Basic Details] Submitted successfully to FastAPI backend");
+				console.log("✅ [KYC Submit] Submitted successfully to FastAPI backend");
 			}
+
+			await runStep("basic_details", async () => {
+				const leadId = response?.data?.lead_id ? String(response.data.lead_id) : "";
+				const rawAf = response?.data?.aftype ?? response?.data?.af ?? "yes";
+				const afFlag = typeof rawAf === "string" ? rawAf : Number(rawAf) === 0 ? "no" : "yes";
+
+				const feeAmount = response?.data?.assessment_fee ?? response?.data?.af_amount ?? response?.data?.af ?? 826;
+
+				if (leadId) {
+					await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], leadId);
+				}
+				if (afFlag) {
+					await AsyncStorage.setItem(STORAGE_KEYS["@af-flag"], String(afFlag));
+				}
+				if (feeAmount) {
+					await AsyncStorage.setItem(STORAGE_KEYS["@assessment-fee-amount"], String(feeAmount));
+				}
+
+				queryClient.invalidateQueries({
+					queryKey: ["user", "dashboard"],
+				});
+
+				// Use allocation from KYC submit response, or fallback to adapter once
+				let allocatedId = response?.data?.allocated_lender_id ?? null;
+				let allocatedName = response?.data?.lender_name ?? null;
+
+				let effectiveUserId: string | null | undefined = userId;
+				if (!effectiveUserId) {
+					const token: string | null | undefined =
+						accessToken ||
+						(await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]));
+					effectiveUserId = getUserIdFromToken(token);
+					if (effectiveUserId) {
+						dispatch(setAuthUserId(effectiveUserId));
+						await setStorageItem(STORAGE_KEYS["@user-id"], encode(effectiveUserId));
+					}
+				}
+
+				if (!allocatedId && effectiveUserId) {
+					try {
+						const allocation = await triggerPostKycAllocationAdapter(effectiveUserId);
+						allocatedId = allocation?.allocated_lender_id ?? null;
+						allocatedName = allocation?.lender_name ?? null;
+					} catch {
+						/* user proceeds without an allocated lender */
+					}
+				}
+
+				if (allocatedId) {
+					await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-id"], allocatedId);
+					if (allocatedName) {
+						await AsyncStorage.setItem(
+							STORAGE_KEYS["@allocated-lender-name"],
+							allocatedName,
+						);
+					}
+				} else {
+					await AsyncStorage.multiRemove([
+						STORAGE_KEYS["@allocated-lender-id"],
+						STORAGE_KEYS["@allocated-lender-name"],
+					]);
+				}
+			});
 
 			Toast.show({
 				type: "success",
@@ -230,38 +284,90 @@ export default function LoanApplication() {
 				text2: t("proceedingToNextStep", "Proceeding to next step..."),
 			});
 
-			queryClient.invalidateQueries({
-				queryKey: ["user", "dashboard"],
-			});
+			const leadId = response?.data?.lead_id ? String(response.data.lead_id) : "";
+			const rawAf = response?.data?.aftype ?? response?.data?.af ?? "yes";
+			const afFlag = typeof rawAf === "string" ? rawAf : Number(rawAf) === 0 ? "no" : "yes";
+			const feeAmount = response?.data?.assessment_fee ?? response?.data?.af_amount ?? response?.data?.af ?? 826;
 
-			// TODO: replace once backend exposes an assessment-fee endpoint
-			// For now, pass safe placeholder params without reading them off the response
-			router.replace({
-				pathname: "/new-assessment-fee",
-				params: {
-					amount: "0",
-					currency: "INR",
-					description: "Processing fee for loan application",
-					kyc_id: "",
-					next_step: "",
-					status: "",
-					pre_qualified_amount: "25000",
-				},
-			});
+			// If af is "no", assessment-fee is skipped completely
+			if (afFlag === "no") {
+				router.replace({
+					pathname: "/professional-details" as any,
+					params: { disableBack: "true" },
+				});
+			} else {
+				router.replace({
+					pathname: "/new-assessment-fee",
+					params: {
+						af: String(afFlag),
+						lead_id: leadId,
+						fee_amount: String(feeAmount),
+					},
+				});
+			}
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-			// Surface backend 400 validation / duplicate conflicts (e.g. duplicate PAN or email)
+			const status = (err as any)?.response?.status;
+			const rawDetail = (err as any)?.response?.data?.detail;
+			const detailStr =
+				typeof rawDetail === "string"
+					? rawDetail
+					: Array.isArray(rawDetail)
+						? rawDetail[0]?.msg || ""
+						: "";
+
+			// 400 "KYC details have already been submitted."
+			// Handled as "already done, move on to the next step", not as an error
+			if (
+				status === 400 &&
+				(detailStr.toLowerCase().includes("already been submitted") ||
+					error?.message?.toLowerCase().includes("already been submitted"))
+			) {
+				Toast.show({
+					type: "info",
+					text1: t("kycAlreadySubmitted" as any, "KYC Details Already Submitted"),
+					text2: t("proceedingToNextStep", "Proceeding to next step..."),
+				});
+				router.replace({
+					pathname: "/new-assessment-fee",
+					params: {},
+				});
+				return;
+			}
+
+			// 403 "Phone verification required prior to KYC." -> send the user back to login
+			if (
+				detailStr.toLowerCase().includes("phone verification required") ||
+				(status === 403 && detailStr.toLowerCase().includes("verification required"))
+			) {
+				Toast.show({
+					type: "error",
+					text1: t("phoneVerificationRequired" as any, "Verification Required"),
+					text2: t(
+						"pleaseLoginToContinueApplication",
+						"Phone verification required prior to KYC. Please sign in again.",
+					),
+				});
+				logout();
+				router.replace("/login");
+				return;
+			}
+
+			// Other 400 / validation / server errors: surface clear message, do not crash
 			const backendErrorDetail =
-				(err as any)?.response?.data?.detail ||
+				detailStr ||
 				(err as any)?.response?.data?.message ||
 				error?.message ||
-				t("pleaseRetryPayment", "Please try again");
+				t("errorSubmittingPersonalDetails", "Submission Error");
 
 			Toast.show({
 				type: "error",
 				text1: t("errorSubmittingPersonalDetails", "Submission Error"),
-				text2: typeof backendErrorDetail === "string" ? backendErrorDetail : JSON.stringify(backendErrorDetail),
+				text2:
+					typeof backendErrorDetail === "string"
+						? backendErrorDetail
+						: JSON.stringify(backendErrorDetail),
 			});
 		},
 	});
@@ -501,42 +607,54 @@ export default function LoanApplication() {
 		const year = date.getFullYear();
 		const month = String(date.getMonth() + 1).padStart(2, "0");
 		const day = String(date.getDate()).padStart(2, "0");
-		return `${day}-${month}-${year}`;
+		return `${year}-${month}-${day}`;
 	};
 
 	const proceedWithSubmission = () => {
-		const apiData: BasicDetailsPayload = {
+		const rawGender = (formData.gender || "").toLowerCase().trim();
+		const normalizedGender: "male" | "female" | "other" =
+			rawGender === "female" ? "female" : rawGender === "other" ? "other" : "male";
+
+		const apiData: KycSubmitPayload = {
 			full_name: formData.fullName.trim(),
-			fathers_name: formData.fatherName.trim(),
-			pan_card: formData.panNumber.toUpperCase().trim(),
-			date_of_birth: formatDateForAPI(formData.dateOfBirth!),
-			gender: formData.gender
-				? formData.gender.charAt(0).toUpperCase() + formData.gender.slice(1).toLowerCase()
-				: undefined,
+			father_name: formData.fatherName.trim(),
+			pan_number: formData.panNumber.toUpperCase().trim(),
+			dob: formatDateForAPI(formData.dateOfBirth!),
+			gender: normalizedGender,
 			pincode: formData.pincode.trim(),
 			email: formData.email.trim(),
-			preferred_language: formData.preferredLanguage
-				? formData.preferredLanguage.charAt(0).toUpperCase() + formData.preferredLanguage.slice(1).toLowerCase()
-				: undefined,
 		};
 
 		if (__DEV__) {
-			console.log("🚀 [Basic Details] Initiating submission to FastAPI backend...", apiData);
+			console.log("🚀 [KYC Submit] Initiating submission to FastAPI backend (/kyc/submit)...");
 		}
 
 		submitPersonalDetailsMutation(apiData);
 	};
 
-	const handleProceed = () => {
-		if (!userId) {
+	const handleProceed = async () => {
+		const token =
+			accessToken ||
+			(await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]));
+
+		// The access token is what authorizes the request. If missing, login is required.
+		if (!token) {
 			Toast.show({
 				type: "error",
 				text1: t("authenticationRequired", "Authentication Required"),
 				text2: t("pleaseLoginToContinueApplication", "Please login to continue"),
 			});
-			logout();
 			router.replace("/login");
 			return;
+		}
+
+		// Ensure userId is synced in the background if available from token
+		if (!userId && token) {
+			const extractedUserId = getUserIdFromToken(token);
+			if (extractedUserId) {
+				dispatch(setAuthUserId(extractedUserId));
+				void setStorageItem(STORAGE_KEYS["@user-id"], encode(extractedUserId));
+			}
 		}
 
 		const isValid = validateForm();
@@ -715,7 +833,7 @@ export default function LoanApplication() {
 							translationKey="gender"
 							required={true}
 						/>
-						<Select
+						<Dropdown
 							options={[
 								{ label: t("male", "Male"), value: "male" },
 								{ label: t("female", "Female"), value: "female" },
@@ -726,6 +844,7 @@ export default function LoanApplication() {
 							placeholder={t("selectGender", "Select Gender")}
 							containerStyle={styles.selectContainer}
 							disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.gender)}
+							error={!!fieldErrors.gender}
 						/>
 						{fieldErrors.gender ? (
 							<Text style={styles.errorText}>{fieldErrors.gender}</Text>
@@ -923,6 +1042,15 @@ export default function LoanApplication() {
 					</Animated.View>
 				</View>
 			</Modal>
+
+			<ExitIntentModal
+				visible={isExitModalVisible}
+				onClose={() => setIsExitModalVisible(false)}
+				onConfirmExit={() => {
+					setIsExitModalVisible(false);
+					router.replace("/(tabs)");
+				}}
+			/>
 		</KeyboardAvoidingView>
 	);
 }

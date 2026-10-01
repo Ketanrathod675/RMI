@@ -27,7 +27,5 @@ local.properties
 *.apk
 *.aab
 *.so
-android/.gradle/
-android/app/build/
-android/build/
+/android
 RMI.zip

@@ -1,3 +1,4 @@
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
@@ -18,7 +19,7 @@ const sendEmailOtp = async (_data: SendEmailOtpRequestType): Promise<{ expires_i
 const verifyEmailOtp = async (_data: VerifyEmailOtpRequestType): Promise<{ message?: string }> => ({ message: "" });
 import { font, height, width } from "@/utils/dimensions";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -82,6 +83,8 @@ export default function VerifyEmailScreen() {
 	const [email, setEmail] = useState<string>(params.email ? String(params.email).trim() : "");
 	const [emailError, setEmailError] = useState<string>("");
 	const [dedupError, setDedupError] = useState<string>("");
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+	const navigation = useNavigation();
 
 	// OTP state
 	const [otp, setOtp] = useState<string[]>(["", "", "", ""]);
@@ -185,9 +188,23 @@ export default function VerifyEmailScreen() {
 		};
 	}, [advanceToNextStep, email, params.email]);
 
-	// Handle hardware back press
+	// Handle hardware back press and navigation events
 	useFocusEffect(
 		useCallback(() => {
+			const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+				if (["GO_BACK", "POP"].includes(e.data.action.type)) {
+					if (step === "otp") {
+						e.preventDefault();
+						setStep("email");
+						setOtp(["", "", "", ""]);
+						setOtpError("");
+					} else {
+						e.preventDefault();
+						setIsExitModalVisible(true);
+					}
+				}
+			});
+
 			const onBackPress = () => {
 				if (step === "otp") {
 					// Step back to email editing
@@ -196,13 +213,16 @@ export default function VerifyEmailScreen() {
 					setOtpError("");
 					return true;
 				}
-				router.replace("/(tabs)");
+				setIsExitModalVisible(true);
 				return true;
 			};
 
 			const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
-			return () => sub.remove();
-		}, [step, router])
+			return () => {
+				unsubscribe();
+				sub.remove();
+			};
+		}, [step, navigation])
 	);
 
 	// Mutation: Send Email OTP
@@ -408,7 +428,7 @@ export default function VerifyEmailScreen() {
 							setOtp(["", "", "", ""]);
 							setOtpError("");
 						} else {
-							router.replace("/(tabs)");
+							setIsExitModalVisible(true);
 						}
 					}}
 					style={styles.backButton}
@@ -642,6 +662,15 @@ export default function VerifyEmailScreen() {
 					</View>
 				</ScrollView>
 			</KeyboardAvoidingView>
+
+			<ExitIntentModal
+				visible={isExitModalVisible}
+				onClose={() => setIsExitModalVisible(false)}
+				onConfirmExit={() => {
+					setIsExitModalVisible(false);
+					router.replace("/(tabs)");
+				}}
+			/>
 		</View>
 	);
 }

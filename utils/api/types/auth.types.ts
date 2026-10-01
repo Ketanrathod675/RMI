@@ -25,6 +25,12 @@ export interface FastApiVerifyOtpPayload {
 	otp: number;
 	sign_in_key?: string;
 	client_type?: "web" | "app";
+	source?: string;
+	campaign_id?: string;
+	sub_source?: string;
+	medium?: string;
+	campaign_name?: string;
+	branch_device_context?: any;
 }
 
 export interface FastApiTokenResponse {
@@ -35,22 +41,20 @@ export interface FastApiTokenResponse {
 	is_profile_completed?: boolean;
 	next_step?: string;
 	user: {
-		uuid: string;
+		id: string; // UUID from PostgreSQL
 		phone_number: string;
-		full_name?: string | null;
-		fathers_name?: string | null;
-		mothers_name?: string | null;
-		gender?: string | null;
-		pan_card?: string | null;
-		email?: string | null;
-		phone_verified: boolean;
-		email_verified: boolean;
-		pan_verified: boolean;
-		role: "borrower" | "employee" | "lender";
+		branch?: Record<string, any> | null;
+		ip_address: string;
 		is_active: boolean;
-		image_url?: string | null;
+		role: string;
+		refresh_token?: string | null;
+		is_phone_verified: boolean;
 		created_at: string;
-		updated_at: string;
+		created_by?: string | null;
+		modified_at: string;
+		modified_by?: string | null;
+		last_logged_in?: string | null;
+		extras?: Record<string, any> | null;
 	};
 }
 

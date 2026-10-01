@@ -3,6 +3,7 @@ import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { axios } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
@@ -22,6 +23,7 @@ import {
 
 export default function CKYCOTP() {
 	const { t } = useTranslation();
+	const { runStep } = useJourneyLoader();
 	useJourneyTracker("/ckyc-otp");
 
 	const [otp, setOtp] = useState(["", "", "", "", "", ""]);
@@ -140,27 +142,29 @@ export default function CKYCOTP() {
 			if (__DEV__) {
 				console.log("📤 [CKYC] Validating 6-digit OTP...");
 			}
-			const response = await axios.post("onefin/ckyc/validate-otp", { otp: otpString });
+			await runStep("ekyc_ckyc", async () => {
+				const response = await axios.post("onefin/ckyc/validate-otp", { otp: otpString });
 
-			if (__DEV__) {
-				console.log("✅ [CKYC] OTP validated successfully (status: 200)");
-			}
+				if (__DEV__) {
+					console.log("✅ [CKYC] OTP validated successfully (status: 200)");
+				}
 
-			// After OTP success, reset attempt count and proceed
-			setAttemptCount(0);
-			setErrorMessage(null);
+				// After OTP success, reset attempt count and proceed
+				setAttemptCount(0);
+				setErrorMessage(null);
 
-			// Extract address parts and hand off to ckyc-instructions
-			const addrPerm = JSON.stringify(
-				response.data?.ckyc_data?.permanent_address_parts || {}
-			);
-			const addrCorr = JSON.stringify(
-				response.data?.ckyc_data?.correspondence_address_parts || {}
-			);
+				// Extract address parts and hand off to ckyc-instructions
+				const addrPerm = JSON.stringify(
+					response.data?.ckyc_data?.permanent_address_parts || {}
+				);
+				const addrCorr = JSON.stringify(
+					response.data?.ckyc_data?.correspondence_address_parts || {}
+				);
 
-			router.replace({
-				pathname: "/ckyc-instructions",
-				params: { startSelfie: "true", permAddressData: addrPerm, corrAddressData: addrCorr },
+				router.replace({
+					pathname: "/ckyc-instructions",
+					params: { startSelfie: "true", permAddressData: addrPerm, corrAddressData: addrCorr },
+				});
 			});
 		} catch (error: any) {
 			// Increment attempt count

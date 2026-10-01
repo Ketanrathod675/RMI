@@ -5,6 +5,7 @@ export const STEP_NAMES = [
 	"login_signup",
 	"mpin_set",
 	"personal_details",
+	"assessment_fee",
 	"assessment_fee_payment",
 	"pan_verification",
 	"professional_details",
@@ -27,6 +28,7 @@ export const StepHref: { [key in StepNameTypes]: string } = {
 	login_signup: "/login",
 	mpin_set: "/set-mpin",
 	personal_details: "/loan-application",
+	assessment_fee: "/new-assessment-fee",
 	assessment_fee_payment: "/new-assessment-fee",
 	pan_verification: "/verify-email",
 	professional_details: "/professional-details",
@@ -90,6 +92,29 @@ export interface BasicDetailsPayload {
 	pincode: string;
 	gender?: string;
 	preferred_language?: string;
+}
+
+/**
+ * FastAPI POST /kyc/submit Payload and Response
+ */
+export interface KycSubmitPayload {
+	full_name: string; // letters, spaces, dots only, 2-100
+	father_name: string; // NOTE: father_name, not fathers_name
+	pan_number: string; // uppercase, 10 chars (NOTE: pan_number, not pan_card)
+	dob: string; // YYYY-MM-DD
+	gender: "male" | "female" | "other"; // REQUIRED and lowercase
+	pincode: string; // 6 digits
+	email: string;
+}
+
+export interface KycSubmitResponse {
+	success: boolean;
+	message: string;
+	data: {
+		lead_id: string;
+		af?: string; // "yes" | "coupon" | "no"
+		[key: string]: any;
+	};
 }
 
 /**

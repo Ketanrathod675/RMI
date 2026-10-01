@@ -22,6 +22,34 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+const parseContactValue = (val: unknown, fallback: string): string => {
+	if (typeof val === "string" && val.trim().length > 0) {
+		return val.trim();
+	}
+	if (typeof val === "number") {
+		return String(val);
+	}
+	if (val && typeof val === "object") {
+		const obj = val as Record<string, unknown>;
+		if (typeof obj.value === "string" && obj.value.trim().length > 0) {
+			return obj.value.trim();
+		}
+		if (typeof obj.content === "string" && obj.content.trim().length > 0) {
+			return obj.content.trim();
+		}
+		if (typeof obj.phone === "string" && obj.phone.trim().length > 0) {
+			return obj.phone.trim();
+		}
+		if (typeof obj.whatsapp === "string" && obj.whatsapp.trim().length > 0) {
+			return obj.whatsapp.trim();
+		}
+		if (typeof obj.email === "string" && obj.email.trim().length > 0) {
+			return obj.email.trim();
+		}
+	}
+	return fallback;
+};
+
 const DEFAULT_CATEGORIES = [
 	{ id: "all", label: "All Questions" },
 	{ id: "general", label: "General" },
@@ -81,9 +109,9 @@ export default function HelpAndSupport() {
 		queryKey: ["customer-care"],
 		queryFn: getCustomerCare,
 	});
-	const supportPhone = customerCare?.phone || "+911234567890";
-	const supportWhatsApp = customerCare?.whatsapp || "+919029003135";
-	const supportEmail = customerCare?.email || "care@rapidmoney.in";
+	const supportPhone = parseContactValue(customerCare?.phone, "+911234567890");
+	const supportWhatsApp = parseContactValue(customerCare?.whatsapp, "+919029003135");
+	const supportEmail = parseContactValue(customerCare?.email, "care@rapidmoney.in");
 
 	// Handle hardware back press on Android
 	useFocusEffect(
@@ -115,21 +143,24 @@ export default function HelpAndSupport() {
 	};
 
 	const handleCallPress = () => {
-		Linking.openURL(`tel:${supportPhone}`).catch((err) =>
+		const cleanPhone = String(supportPhone).trim();
+		Linking.openURL(`tel:${cleanPhone}`).catch((err) =>
 			console.error("Failed to dial:", err)
 		);
 	};
 
 	const handleWhatsAppPress = () => {
+		const cleanPhone = String(supportWhatsApp).replace(/[^0-9]/g, "");
 		Linking.openURL(
-			`https://wa.me/${supportWhatsApp.replace(/[^0-9]/g, "")}?text=` +
+			`https://wa.me/${cleanPhone}?text=` +
 			encodeURIComponent("Hi! Can we have a chat.")
 		).catch((err) => console.error("Failed to open WhatsApp:", err));
 	};
 
 	const handleEmailPress = () => {
+		const cleanEmail = String(supportEmail).trim();
 		Linking.openURL(
-			`mailto:${supportEmail}?subject=` +
+			`mailto:${cleanEmail}?subject=` +
 			encodeURIComponent("RapidMoney App Support")
 		).catch((err) => console.error("Failed to open Email:", err));
 	};
@@ -192,7 +223,7 @@ export default function HelpAndSupport() {
 								onPress={handleCallPress}
 								style={styles.phonePill}>
 								<MaterialIcons name="call" size={Math.round(W * 0.042)} color="#65A30D" />
-								<Text style={styles.phoneNumberText}>{supportPhone}</Text>
+								<Text style={styles.phoneNumberText}>{String(supportPhone)}</Text>
 							</TouchableOpacity>
 
 							<Text style={styles.availableTitle}>We're available from:</Text>
@@ -255,7 +286,12 @@ export default function HelpAndSupport() {
 						style={styles.actionCard}>
 						<View style={styles.actionCardLeft}>
 							<MaterialCommunityIcons name="whatsapp" size={24} color="#25D366" />
-							<Text style={styles.actionCardText}>Chat with us</Text>
+							<View style={styles.actionCardTextContainer}>
+								<Text style={styles.actionCardText}>Chat with us</Text>
+								{supportWhatsApp ? (
+									<Text style={styles.actionCardSubtext}>{supportWhatsApp}</Text>
+								) : null}
+							</View>
 						</View>
 						<MaterialIcons name="chevron-right" size={22} color="#14201A" />
 					</TouchableOpacity>
@@ -267,7 +303,12 @@ export default function HelpAndSupport() {
 						style={styles.actionCard}>
 						<View style={styles.actionCardLeft}>
 							<MaterialCommunityIcons name="email-outline" size={24} color="#76C800" />
-							<Text style={styles.actionCardText}>Write an email to us</Text>
+							<View style={styles.actionCardTextContainer}>
+								<Text style={styles.actionCardText}>Write an email to us</Text>
+								{supportEmail ? (
+									<Text style={styles.actionCardSubtext}>{supportEmail}</Text>
+								) : null}
+							</View>
 						</View>
 						<MaterialIcons name="chevron-right" size={22} color="#14201A" />
 					</TouchableOpacity>
@@ -539,12 +580,23 @@ const styles = StyleSheet.create({
 	actionCardLeft: {
 		flexDirection: "row",
 		alignItems: "center",
+		flex: 1,
+	},
+	actionCardTextContainer: {
+		marginLeft: 12,
+		flex: 1,
 	},
 	actionCardText: {
 		fontSize: 14.5,
 		fontWeight: "700",
 		color: "#14201A",
-		marginLeft: 12,
+		fontFamily: Platform.select({ ios: "System", android: "sans-serif" }),
+	},
+	actionCardSubtext: {
+		fontSize: 12.5,
+		fontWeight: "500",
+		color: "#64748B",
+		marginTop: 2,
 		fontFamily: Platform.select({ ios: "System", android: "sans-serif" }),
 	},
 	faqSection: {
