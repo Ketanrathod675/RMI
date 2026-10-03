@@ -18,7 +18,7 @@ const getPublicEnv = (key: keyof typeof publicEnvironment, fallback?: string): s
 
 const defaultApiUrl =
 	Platform.OS === "android"
-		? "http://172.16.16.124:8000/api/v1"
+		? "http://172.16.16.122:8000/api/v1"
 		: "http://localhost:8000/api/v1";
 
 const apiBaseUrl = getPublicEnv("API_URL", defaultApiUrl);

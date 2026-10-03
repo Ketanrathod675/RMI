@@ -22,7 +22,7 @@ import {
 	triggerPostKycAllocationAdapter,
 	verifyCoupon,
 } from "@/utils/api";
-import { STORAGE_KEYS } from "@/utils/storage";
+import { getStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { getUserIdFromToken } from "@/utils/encode_decode";
 import SecureStorage from "@/utils/secure-storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -136,6 +136,7 @@ export default function AssessmentFeeScreen() {
 	const [isCouponVerifying, setIsCouponVerifying] = useState(false);
 	const [appliedDiscount, setAppliedDiscount] = useState<number>(0);
 	const [appliedCouponCode, setAppliedCouponCode] = useState<string>("");
+	const [appliedFinalAmount, setAppliedFinalAmount] = useState<number | null>(null);
 
 	// Assessment fee amount state (loaded from router params or storage, defaults to 826 from backend)
 	const [rawFeeAmount, setRawFeeAmount] = useState<number>(() => {
@@ -206,10 +207,13 @@ export default function AssessmentFeeScreen() {
 		setCouponError("");
 		setIsCouponVerifying(true);
 		try {
-			const res = await verifyCoupon(trimmedCode);
+			const leadId = (params.lead_id as string) || (await getStorageItem(STORAGE_KEYS["@lead-id"])) || undefined;
+			const res = await verifyCoupon(trimmedCode, leadId);
 			if (res.success && res.data) {
 				setAppliedDiscount(res.data.discount || 0);
 				setAppliedCouponCode(res.data.coupon_code);
+				if (typeof res.data.original_amount === "number") setRawFeeAmount(res.data.original_amount);
+				setAppliedFinalAmount(typeof res.data.final_amount === "number" ? res.data.final_amount : null);
 				Toast.show({
 					type: "success",
 					text1: t("couponApplied" as any, "Coupon Applied"),
@@ -226,6 +230,14 @@ export default function AssessmentFeeScreen() {
 		} finally {
 			setIsCouponVerifying(false);
 		}
+	};
+
+	const handleRemoveCoupon = () => {
+		setAppliedCouponCode("");
+		setAppliedDiscount(0);
+		setAppliedFinalAmount(null);
+		setCouponCode("");
+		setCouponError("");
 	};
 
 	// Offer countdown timer effect
@@ -374,7 +386,8 @@ export default function AssessmentFeeScreen() {
 						((lenderOffersData.assessment_fee.gst ?? 0) * lenderOffersData.assessment_fee.amount) / 100
 			  )
 			: 826);
-	const processingFeeAmount = Math.max(0, initialFeeAmount - appliedDiscount);
+	const processingFeeAmount =
+		appliedFinalAmount ?? Math.max(0, initialFeeAmount - appliedDiscount);
 	const originalPrice =
 		lenderOffersData?.assessment_fee?.original_amount ||
 		Math.round(initialFeeAmount * 1.5) ||
@@ -586,6 +599,7 @@ export default function AssessmentFeeScreen() {
 				startVerifyLeadFlow();
 			}, 3000);
 		},
+		onCouponRejected: handleRemoveCoupon,
 	});
 
 	// Sync payment polling stage with loader
@@ -695,9 +709,16 @@ export default function AssessmentFeeScreen() {
 									<Text style={styles.couponErrorText}>{couponError}</Text>
 								) : null}
 								{appliedCouponCode ? (
-									<Text style={styles.couponSuccessText}>
-										Coupon applied! ₹{appliedDiscount} discount
-									</Text>
+									<View style={styles.couponSuccessRow}>
+										<Text style={styles.couponSuccessText}>
+											Coupon applied! ₹{appliedDiscount} discount
+										</Text>
+										<TouchableOpacity
+											onPress={handleRemoveCoupon}
+											hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+											<Text style={styles.couponRemoveText}>Remove</Text>
+										</TouchableOpacity>
+									</View>
 								) : null}
 							</View>
 						)}
@@ -948,11 +969,22 @@ const styles = StyleSheet.create({
 		fontSize: font(1.4),
 		fontWeight: "500",
 	},
-	couponSuccessText: {
+	couponSuccessRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
 		marginTop: height(0.6),
+	},
+	couponSuccessText: {
 		color: "#2E7D32",
 		fontSize: font(1.4),
 		fontWeight: "600",
+	},
+	couponRemoveText: {
+		color: "#E53935",
+		fontSize: font(1.4),
+		fontWeight: "600",
+		textDecorationLine: "underline",
 	},
 });
 

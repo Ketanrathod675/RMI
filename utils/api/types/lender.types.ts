@@ -84,6 +84,7 @@ export interface BREEvaluationResponse {
  */
 export interface CouponVerifyPayload {
 	coupon_code: string;
+	lead_id?: string;
 }
 
 export interface CouponVerifyResponse {
@@ -92,6 +93,8 @@ export interface CouponVerifyResponse {
 	data: {
 		coupon_code: string;
 		discount: number;
+		original_amount?: number;
+		final_amount?: number;
 	};
 }
 

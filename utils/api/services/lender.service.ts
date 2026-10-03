@@ -139,10 +139,14 @@ export const runCreditEvaluationAdapter = async (params: {
  */
 export const verifyCoupon = async (
 	couponCode: string,
+	leadId?: string,
 ): Promise<CouponVerifyResponse> => {
 	const response = await axios.post<CouponVerifyResponse>(
 		URLS.coupons.verify,
-		{ coupon_code: couponCode.trim().toUpperCase() },
+		{
+			coupon_code: couponCode.trim().toUpperCase(),
+			...(leadId ? { lead_id: leadId } : {}),
+		},
 	);
 	return response.data;
 };

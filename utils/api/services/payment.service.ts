@@ -21,6 +21,7 @@ export const initiateAssessmentFee = async (
 			firstname: payload.firstname,
 			email: payload.email,
 			coupon_code: payload.coupon_code ? payload.coupon_code.trim().toUpperCase() : null,
+			client_type: payload.client_type ?? "app",
 		},
 	);
 	return response.data;

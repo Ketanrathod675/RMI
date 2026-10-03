@@ -9,6 +9,7 @@ export interface InitiateAssessmentFeePayload {
 	firstname: string;
 	email: string;
 	coupon_code?: string | null;
+	client_type?: "app" | "web";
 }
 
 export interface InitiateAssessmentFeeData {
@@ -17,6 +18,9 @@ export interface InitiateAssessmentFeeData {
 	txnid: string;
 	amount: number;
 	status?: "WAIVED" | string;
+	original_amount?: number;
+	discount_amount?: number;
+	coupon_code?: string | null;
 }
 
 export type InitiateAssessmentFeeResponse =

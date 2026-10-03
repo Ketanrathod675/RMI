@@ -24,6 +24,8 @@ import { useEffect, useRef, useState } from "react";
 import { DeviceEventEmitter, Platform, ToastAndroid } from "react-native";
 import Toast from "react-native-toast-message";
 
+const PAYMENT_RETURN_SCHEME = "rapid-money://";
+
 export type InitiatePaymentResponse = {
 	status: string;
 	message: string;
@@ -55,6 +57,7 @@ interface UseAssessmentFeePaymentOptions {
 	leadId?: string;
 	couponCode?: string;
 	onPaymentSuccess: (txnId: string) => void;
+	onCouponRejected?: () => void;
 }
 
 export const useAssessmentFeePayment = ({
@@ -62,6 +65,7 @@ export const useAssessmentFeePayment = ({
 	leadId,
 	couponCode,
 	onPaymentSuccess,
+	onCouponRejected,
 }: UseAssessmentFeePaymentOptions) => {
 	const { t } = useTranslation();
 	const router = useRouter();
@@ -180,7 +184,7 @@ export const useAssessmentFeePayment = ({
 			clearInterval(paymentPollIntervalRef.current);
 		}
 
-		console.log(`🚀 [Payment] Starting Easebuzz status polling for: ${txnId}`);
+		Logger.debug(`🚀 [Payment] Starting Easebuzz status polling for: ${txnId}`);
 		setIsPaymentPolling(true);
 		setDelayVisible(true);
 
@@ -265,7 +269,7 @@ export const useAssessmentFeePayment = ({
 						""
 					).toLowerCase();
 					if (step && step !== "assessment_fee" && step !== "assessment_fee_payment") {
-						console.log("✅ [Payment] User dashboard confirms workflow advanced to:", step);
+						Logger.debug("✅ [Payment] User dashboard confirms workflow advanced to:", step);
 						if (paymentPollIntervalRef.current) {
 							clearInterval(paymentPollIntervalRef.current);
 						}
@@ -310,7 +314,7 @@ export const useAssessmentFeePayment = ({
 				}
 				const isResolved = await checkStatus();
 				if (!isResolved) {
-					console.log("⏱️ [Payment] Polling timed out after 2 min. Navigating to dashboard...");
+					Logger.debug("⏱️ [Payment] Polling timed out after 2 min. Navigating to dashboard...");
 					setIsPaymentPolling(false);
 					setDelayVisible(false);
 
@@ -330,6 +334,35 @@ export const useAssessmentFeePayment = ({
 		}, 5000);
 	};
 
+	// Starts verification exactly once per transaction, only after the user has left the gateway.
+	const beginPostPaymentVerification = (txnId: string) => {
+		if (processedTransactionRef.current === txnId) return;
+		processedTransactionRef.current = txnId;
+
+		const startTime = Date.now();
+		setStorageItem(STORAGE_KEYS["@payment-timer-start"], startTime.toString()).catch(() => {});
+		setPaymentStatus({ paymentPending: true, paymentTimer: 120, timerStartTime: startTime });
+		DeviceEventEmitter.emit("HIDE_GLOBAL_LOADER");
+		startPaymentPolling(txnId);
+	};
+
+	// Recover if the app was killed or backgrounded in the gateway
+	useEffect(() => {
+		(async () => {
+			const pendingTxn = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
+			if (!pendingTxn) return;
+			try {
+				const res = await checkPaymentStatus(pendingTxn);
+				const s = res?.data?.status?.toUpperCase();
+				if (s === "COMPLETED") beginPostPaymentVerification(pendingTxn); // resolves on its first check
+				else if (s === "FAILED") await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
+				// PENDING: leave it, the user can retry or come back later
+			} catch (err) {
+				Logger.warn("Pending payment check failed", err);
+			}
+		})();
+	}, []);
+
 	// Handle deep-link returns
 	useEffect(() => {
 		const handleDeepLink = async () => {
@@ -347,19 +380,8 @@ export const useAssessmentFeePayment = ({
 				return;
 			}
 
-			if (
-				queryParams?.txnid &&
-				processedTransactionRef.current === queryParams.txnid
-			) {
-				return;
-			}
-
-			if (!queryParams?.txnid) return;
-
 			if (queryParams?.status && queryParams?.txnid === transactionId) {
-				processedTransactionRef.current = queryParams.txnid as string;
-				DeviceEventEmitter.emit("HIDE_GLOBAL_LOADER");
-				startPaymentPolling(transactionId);
+				beginPostPaymentVerification(transactionId);
 			}
 		};
 
@@ -369,6 +391,8 @@ export const useAssessmentFeePayment = ({
 	// Payment Initiation Mutation
 	const { mutate: initiatePayment, isPending } = useNetworkAwareMutation({
 		mutationFn: async () => {
+			processedTransactionRef.current = null;
+
 			let targetLeadId = leadId;
 			if (!targetLeadId) {
 				targetLeadId = (await getStorageItem(STORAGE_KEYS["@lead-id"])) || undefined;
@@ -451,6 +475,11 @@ export const useAssessmentFeePayment = ({
 				return;
 			}
 
+			if (typeof data.amount === "number" && Math.abs(data.amount - processingFeeAmount) >= 1) {
+				Logger.warn("Payable amount differs from displayed amount", { shown: processingFeeAmount, charged: data.amount });
+				Toast.show({ type: "info", text1: `Amount updated to ₹${data.amount}` });
+			}
+
 			const paymentUrl = data.payment_url || data.payment_link;
 			if (!paymentUrl) {
 				Toast.show({
@@ -471,36 +500,20 @@ export const useAssessmentFeePayment = ({
 
 			dispatch(setTransactionId(txnid));
 			await setStorageItem(STORAGE_KEYS["@transaction-id"], txnid);
-
 			setIsPaymentInitiated(true);
-			const startTime = Date.now();
-			await setStorageItem(STORAGE_KEYS["@payment-timer-start"], startTime.toString());
 
-			setPaymentStatus({
-				paymentPending: true,
-				paymentTimer: 120,
-				timerStartTime: startTime,
-			});
-
-			DeviceEventEmitter.emit("SHOW_GLOBAL_LOADER");
-
-			// Start polling immediately in the background so whenever Easebuzz finishes, status is caught
-			startPaymentPolling(txnid);
-
+			// No timer and no polling here. The user is inside the gateway and may take several minutes.
 			setTimeout(async () => {
 				try {
-					const redirectScheme = "rapid-money://";
-					const result = await WebBrowser.openAuthSessionAsync(url, redirectScheme);
-					console.log("💳 [WebBrowser] Auth session completed:", result);
-					// Immediately verify status when returning from gateway without waiting for next poll tick
-					if (checkStatusRef.current) {
-						await checkStatusRef.current(txnid);
-					}
+					const result = await WebBrowser.openAuthSessionAsync(url, PAYMENT_RETURN_SCHEME);
+					Logger.debug("Payment browser session closed", result);
+					// success, cancel or dismiss: the user is back in the app, so verify now.
+					// (On Android the result is often "dismiss" even after a good redirect, so do not branch on result.type.)
+					beginPostPaymentVerification(txnid);
 				} catch (err) {
-					console.warn("Failed to open via WebBrowser, using Linking.openURL", err);
-					await Linking.openURL(url).catch((openErr) => {
-						console.error("Failed to open payment URL", openErr);
-					});
+					Logger.warn("openAuthSessionAsync failed, falling back to Linking.openURL", err);
+					// The deep-link effect below picks up the return from the external browser.
+					await Linking.openURL(url).catch((openErr) => Logger.error("Failed to open payment URL", openErr));
 				}
 			}, 300);
 		},
@@ -509,6 +522,10 @@ export const useAssessmentFeePayment = ({
 			Logger.error("Payment initiation failed", error);
 
 			const rawDetail = (err as any)?.response?.data?.detail;
+			if (rawDetail && /coupon/i.test(String(rawDetail))) {
+				onCouponRejected?.();
+			}
+
 			const displayMessage =
 				typeof rawDetail === "string"
 					? rawDetail
@@ -525,11 +542,11 @@ export const useAssessmentFeePayment = ({
 	// Dev simulation helper
 	const simulateDeepLinkReturn = (status: "success" | "failure", txnId?: string) => {
 		if (__DEV__ && txnId) {
-			console.log(`🛠️ [DEV MOCK] Simulating deep link return: ${status} for txnid: ${txnId}`);
+			Logger.debug(`🛠️ [DEV MOCK] Simulating deep link return: ${status} for txnid: ${txnId}`);
 			DeviceEventEmitter.emit("HIDE_GLOBAL_LOADER");
 
 			if (status === "success") {
-				startPaymentPolling(txnId);
+				beginPostPaymentVerification(txnId);
 			} else {
 				Toast.show({
 					type: "error",
