@@ -241,6 +241,9 @@ export type UploadDocumentResponseType = {
 	uploaded_at?: string;
 };
 
+/**
+ * @deprecated LEGACY — replaced by uploadSelfie from identity.service
+ */
 export const uploadDocument = async (data: UploadDocumentRequestType) => {
 	const formData = new FormData();
 
@@ -355,6 +358,9 @@ export type AddressVerificationResponseType = {
 	is_repeat_user?: boolean;
 };
 
+/**
+ * @deprecated LEGACY — replaced by submitAddress from identity.service
+ */
 export const verifyAddress = async (data: AddressVerificationRequestType) => {
 	try {
 		const response = await axios.post<Partial<AddressVerificationResponseType>>(
@@ -390,6 +396,9 @@ export type UploadKycDocumentResponseType = {
 	status?: string;
 };
 
+/**
+ * @deprecated LEGACY — replaced by uploadAddressProof from identity.service
+ */
 export const uploadKycDocument = async (data: UploadKycDocumentRequestType) => {
 	try {
 		const formData = new FormData();
@@ -844,6 +853,9 @@ export type GetMyCkycResponseType = {
     success: boolean;
 };
 
+/**
+ * @deprecated LEGACY — replaced by getCkycStatus from identity.service
+ */
 export const getMyCkyc = async () => {
     try {
         console.log("🚀 Calling GET /kyc/get-my-ckyc");

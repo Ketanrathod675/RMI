@@ -30,7 +30,12 @@ const Input = forwardRef<TextInput, InputProps>(
 				)}
 				<TextInput
 					ref={ref}
-					style={[styles.input, style, disabled && styles.disabledInput]}
+					style={[
+						styles.input,
+						style,
+						disabled && styles.disabledInput,
+						Boolean(error) && styles.errorInput,
+					]}
 					placeholderTextColor={dark + "99"}
 					editable={!disabled}
 					selectTextOnFocus={!disabled}
@@ -63,6 +68,10 @@ const styles = StyleSheet.create({
 		color: dark,
 		borderWidth: 1,
 		borderColor: "#E5E5E5",
+	},
+	errorInput: {
+		borderColor: "#d32f2f",
+		borderWidth: 1.5,
 	},
 	error: {
 		color: "#d32f2f",

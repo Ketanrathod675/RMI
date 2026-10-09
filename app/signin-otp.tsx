@@ -9,6 +9,8 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { setAuthApplicantFrom } from "@/store";
 import { setUserType, trackSignup } from "@/utils/analytics";
 import { errorHandler, login, verifyOtp } from "@/utils/api";
+import { getUserDashboardData } from "@/utils/api/services/user.service";
+import { getBreFixRoute, resolveWorkflowRoute } from "@/utils/api/types/user.types";
 import { setBranchIdentity } from "@/utils/branch";
 import { font, height, width } from "@/utils/dimensions";
 import { encode, getUserIdFromToken } from "@/utils/encode_decode";
@@ -112,8 +114,6 @@ export default function SigninSignupOtp() {
 				user_id: data?.user_id,
 				next_action: data?.next_action,
 				is_mpin_set: data?.user?.is_mpin_set,
-				access_token: data?.access_token,
-				refresh_token: data?.refresh_token,
 			});
 
 			// Store the OTP verification response data (including user_id)
@@ -218,6 +218,42 @@ export default function SigninSignupOtp() {
 				if (isNewUser) {
 					router.replace("/request-permissions");
 					return;
+				}
+
+				// Returning user: determine destination based on current_workflow from /auth/me
+				try {
+					const dashboard = await getUserDashboardData();
+					const wf = dashboard?.workflow_progress;
+					if (wf?.overall_status === "rejected") {
+						if (wf?.bre_status === "rejected") {
+							const fixRoute = getBreFixRoute(wf?.bre_failed_rule);
+							if (fixRoute) {
+								router.replace(fixRoute as any);
+								return;
+							}
+							router.replace("/(tabs)");
+							return;
+						}
+						router.replace("/no-approved-amount");
+						return;
+					}
+					if (wf?.overall_status === "completed") {
+						router.replace("/(tabs)");
+						return;
+					}
+					const targetStep = wf?.current_step;
+					const targetRoute = resolveWorkflowRoute(
+						targetStep,
+						wf?.overall_status,
+						wf?.bre_status,
+						wf?.bre_failed_rule,
+					);
+					if (targetRoute && targetRoute !== "/(tabs)") {
+						router.replace(targetRoute as any);
+						return;
+					}
+				} catch (wfErr) {
+					console.warn("⚠️ [signin-otp] Error checking workflow for returning user:", wfErr);
 				}
 
 				router.replace("/(tabs)");

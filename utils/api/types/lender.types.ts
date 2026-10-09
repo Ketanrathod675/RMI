@@ -27,57 +27,6 @@ export interface LenderAllocationResult {
 	excluded_lender_ids: string[];
 }
 
-/**
- * POST /credit-evaluation/evaluate
- * Request payload
- */
-export interface BREEvaluationRequest {
-	user_id: string;
-	application_id?: string;
-	product_id?: string;
-	lender_id?: string;
-	loan_amount?: number;
-	tenure_days?: number;
-	simulation_mode?: false;
-}
-
-/**
- * Step detail in BRE Evaluation
- */
-export interface BRERuleResult {
-	step: number;
-	rule_id: string; // "age" | "pin_code" | "email" | "pan_card" | "bureau"
-	rule_name: string;
-	status: "PASS" | "FAIL" | "PENDING" | "SKIP" | "ERROR" | string;
-	risk_level?: "LOW" | "MEDIUM" | "HIGH" | string;
-	criteria?: string;
-	actual_value?: string;
-	expected_value?: string;
-	error_message?: string;
-	execution_time_ms?: number;
-}
-
-/**
- * Raw response from POST /credit-evaluation/evaluate
- */
-export interface BREEvaluationResponse {
-	id?: string;
-	user_id?: string;
-	application_id?: string | null;
-	product_id?: string | null;
-	lender_id?: string | null;
-	final_decision: "APPROVED" | "REJECTED" | "REVIEW" | string;
-	decision_reason: string;
-	failed_rule?: "age" | "pin_code" | "email" | "pan_card" | "bureau" | string | null;
-	overall_risk_score?: number;
-	risk_level?: "LOW" | "MEDIUM" | "HIGH" | string;
-	total_rules_evaluated?: number;
-	rules_passed?: number;
-	rules_failed?: number;
-	simulation_mode?: boolean;
-	rule_details?: BRERuleResult[];
-	created_at?: string;
-}
 
 /**
  * POST /coupons/verify

@@ -7,10 +7,11 @@ import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
-import { axios, errorHandler, URLS } from "@/utils/api";
-import { getMyCkyc, uploadDocument } from "@/utils/api/kyc";
+import { getCkycStatus, sendCkycOtp, uploadSelfie } from "@/utils/api";
 import { updateUserSelfie } from "@/utils/selfie";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
+import Toast from "react-native-toast-message";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Feather, Ionicons } from "@expo/vector-icons";
 import {
@@ -18,12 +19,12 @@ import {
 	Alert,
 	BackHandler,
 	Image,
-	SafeAreaView,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { font, height, width } from "@/utils/dimensions";
 
 export default function CKYCInstructions() {
@@ -40,7 +41,9 @@ export default function CKYCInstructions() {
 	const [isProceedingToCkyc, setIsProceedingToCkyc] = useState(false);
 	const [isLoadingCkyc, setIsLoadingCkyc] = useState(true);
 	const [isFaceMatching, setIsFaceMatching] = useState(false);
+	const [retakeCount, setRetakeCount] = useState(0);
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+	const queryClient = useQueryClient();
 
 	const isMounted = useRef(true);
 	useEffect(() => {
@@ -61,42 +64,27 @@ export default function CKYCInstructions() {
 	useEffect(() => {
 		const checkCkycOnMount = async () => {
 			try {
-				const response = await getMyCkyc();
+				const response = await getCkycStatus();
 				if (__DEV__) {
-					console.log("📥 [CKYC] Mount check completed. next_step:", response?.next_step, "reapplication:", response?.reapplication);
+					console.log("📥 [CKYC] Mount check completed. next_action:", response?.data?.next_action);
 				}
 
-				if (response?.next_step === "digilocker" && startSelfie !== "true") {
+				const nextAction = response?.data?.next_action;
+
+				if (nextAction === "digilocker" && startSelfie !== "true") {
 					if (__DEV__) {
-						console.log("👉 [CKYC] next_step is digilocker, navigating to /aadhaar-kyc");
+						console.log("👉 [CKYC] next_action is digilocker, navigating to /digilocker-kyc");
 					}
-					router.replace({
-						pathname: "/aadhaar-kyc",
-						params: { nextStep: "digilocker" },
-					} as any);
+					router.replace("/digilocker-kyc" as any);
 					return;
 				}
 
-				if (response?.reapplication) {
-					const nextStep = response.next_step;
-					if (nextStep === "selfie_match") {
-						// Avoid infinite loop if we are already in selfie mode
-						if (startSelfie !== "true") {
-							router.replace({
-								pathname: "/ckyc-instructions",
-								params: { startSelfie: "true" },
-							} as any);
-							return;
-						}
-					} else if (nextStep) {
-						let route = `/${nextStep.replace(/_/g, "-")}`;
-						if (nextStep === "pan_verification") route = "/verify-pan";
-						else if (nextStep === "email_verification") route = "/verify-email";
-
-						router.replace(route as any);
-						return;
+				if (nextAction === "selfie_match") {
+					if (startSelfie !== "true") {
+						setStep(0);
 					}
 				}
+				// if nextAction === "ckyc", stay on step 1 (setStep(1) default)
 			} catch (error) {
 				console.error("❌ [CKYC] Failed to verify CKYC status on mount:", error);
 			}
@@ -116,16 +104,68 @@ export default function CKYCInstructions() {
 		}
 	}, [startSelfie]);
 
-	// Subsystem 3: Upload selfie and run face match verification
-	const { mutate: handleUploadDocument, isPending } = useNetworkAwareMutation({
-		mutationFn: uploadDocument,
+	const handleLivenessFailed = useCallback(() => {
+		if (retakeCount >= 4) {
+			Alert.alert(
+				t("retakeLimitReached", "Retake Limit Reached"),
+				t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
+			);
+			return;
+		}
+		setRetakeCount((prev) => prev + 1);
+		Alert.alert(
+			t("livenessCheckFailed", "Liveness Check Failed"),
+			t("livenessFailedPleaseRetake", "Liveness check failed, please retake in good light"),
+			[
+				{
+					text: t("retakePhoto", "Retake Photo"),
+					onPress: () => {
+						setPickedImage(null);
+						setShowCamera(true);
+					},
+				},
+			]
+		);
+	}, [retakeCount, t]);
+
+	const handleFaceMatchFailed = useCallback(() => {
+		if (retakeCount >= 4) {
+			Alert.alert(
+				t("retakeLimitReached", "Retake Limit Reached"),
+				t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
+			);
+			return;
+		}
+		setRetakeCount((prev) => prev + 1);
+		Alert.alert(
+			t("faceVerificationFailed", "Face Verification Failed"),
+			t(
+				"selfieDoesNotMatchAadhaar",
+				"Your selfie does not match with your Aadhaar photo. Please retake the photo ensuring good lighting and clear visibility."
+			),
+			[
+				{
+					text: t("retakePhoto", "Retake Photo"),
+					onPress: () => {
+						setPickedImage(null);
+						setShowCamera(true);
+					},
+				},
+			]
+		);
+	}, [retakeCount, t]);
+
+	// Subsystem 3: Upload selfie and verify liveness & face match
+	const { mutate: handleUploadSelfie, isPending } = useNetworkAwareMutation({
+		mutationFn: async (imageUri: string) => {
+			return uploadSelfie({ uri: imageUri, name: "selfie.jpg", type: "image/jpeg" });
+		},
 		onSuccess: async (data) => {
-			if (data.status === "uploaded") {
+			if (data.success) {
 				if (__DEV__) {
-					console.log("✅ [CKYC] Selfie uploaded successfully");
+					console.log("✅ [CKYC] Selfie uploaded and face match verified successfully");
 				}
 
-				// Save selfie to local storage for immediate access in profile
 				if (pickedImage) {
 					try {
 						await updateUserSelfie(pickedImage);
@@ -134,118 +174,48 @@ export default function CKYCInstructions() {
 					}
 				}
 
-				// Call face match API after successful selfie upload
-				setIsFaceMatching(true);
-				try {
-					if (__DEV__) {
-						console.log("🔍 [CKYC] Calling face match verification API...");
-					}
-					const faceMatchResponse = await axios.post("kychub-face-match/verify-selfie-with-aadhaar", {});
-					const isIdentical =
-						faceMatchResponse.data?.is_identical === "true" ||
-						faceMatchResponse.data?.is_identical === true;
+				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 
-					if (!isIdentical) {
-						if (__DEV__) {
-							console.log("❌ [CKYC] Face match failed — not identical");
-						}
-						setIsFaceMatching(false);
-						Alert.alert(
-							t("faceVerificationFailed", "Face Verification Failed"),
-							t(
-								"selfieDoesNotMatchAadhaar",
-								"Your selfie does not match with your Aadhaar photo. Please retake the photo ensuring good lighting and clear visibility."
-							),
-							[
-								{
-									text: t("retakePhoto", "Retake Photo"),
-									onPress: () => {
-										setPickedImage(null);
-										setShowCamera(true);
-									},
-								},
-							]
-						);
-						return;
-					}
-
-					if (__DEV__) {
-						console.log("✅ [CKYC] Face match successful!");
-					}
-
-					// Optional lender approval check
-					try {
-						await axios.post(URLS.lender_approval.check_approval, {});
-					} catch (checkApprovalError) {
-						// Non-blocking for UI progression
-					}
-
-					setIsFaceMatching(false);
-
-					// If coming from DigiLocker, navigate to address screen
-					if (fromDigilocker === "true" && startSelfie === "true") {
-						router.replace({
-							pathname: "/aadhaar-kyc",
-							params: { startFromAddress: "true" },
-						} as any);
-						return;
-					}
-
-					// Normal CKYC flow
-					Alert.alert(
-						t("faceMatchedSuccessfully", "Face Matched Successfully"),
-						t("yourIdentityHasBeenVerified", "Your identity has been verified successfully."),
-						[
-							{
-								text: t("ok", "OK"),
-								onPress: () => {
-									if (startSelfie === "true") {
-										const params: any = { startFromAddress: "true" };
-										if (permAddressData) params.permAddressData = String(permAddressData);
-										if (corrAddressData) params.corrAddressData = String(corrAddressData);
-										router.replace({ pathname: "/aadhaar-kyc", params } as any);
-									} else {
-										setStep(1); // Show CKYC info screen
-									}
-								},
+				Alert.alert(
+					t("faceMatchedSuccessfully", "Face Matched Successfully"),
+					t("yourIdentityHasBeenVerified", "Your identity has been verified successfully."),
+					[
+						{
+							text: t("ok", "OK"),
+							onPress: () => {
+								const params: any = { startFromAddress: "true" };
+								if (permAddressData) params.permAddressData = String(permAddressData);
+								if (corrAddressData) params.corrAddressData = String(corrAddressData);
+								router.replace({ pathname: "/aadhaar-kyc", params } as any);
 							},
-						]
-					);
-				} catch (faceMatchError: any) {
-					console.error("❌ [CKYC] Face Match Error:", faceMatchError);
-					setIsFaceMatching(false);
-					Alert.alert(
-						t("verificationError", "Verification Error"),
-						t("unableToVerifyFacePleaseTryAgain", "Unable to verify your face at this moment. Please try again."),
-						[
-							{
-								text: t("retakePhoto", "Retake Photo"),
-								onPress: () => {
-									setPickedImage(null);
-									setShowCamera(true);
-								},
-							},
-						]
-					);
-					return;
-				}
-
+						},
+					]
+				);
 				return;
 			}
 
-			Alert.alert(
-				t("alert", "Alert"),
-				`${t("uploadFailed", "Upload Failed")}: ${data.message || t("pleaseRetryPayment", "Please try again")}`
-			);
+			if (data.data?.liveness_passed === false) {
+				handleLivenessFailed();
+				return;
+			}
+
+			if (data.data?.face_match_passed === false) {
+				handleFaceMatchFailed();
+				return;
+			}
+
+			Toast.show({
+				type: "error",
+				text1: t("alert", "Alert"),
+				text2: data.message || t("uploadFailed", "Upload Failed"),
+			});
 		},
-		onError: (err, variables, ctx) => {
-			const { error } = errorHandler(err, variables, ctx);
-			console.error("❌ [CKYC] Upload failed:", error);
-			Alert.alert(t("alert", "Alert"), t("uploadFailed", "Upload Failed"), [
-				{
-					style: "cancel",
-				},
-			]);
+		onError: (err: any) => {
+			Toast.show({
+				type: "error",
+				text1: t("alert", "Alert"),
+				text2: err?.detail || err?.message || t("uploadFailed", "Upload Failed"),
+			});
 		},
 	});
 
@@ -352,11 +322,7 @@ export default function CKYCInstructions() {
 
 	const handleOkay = () => {
 		if (pickedImage) {
-			handleUploadDocument({
-				fileUri: pickedImage,
-				documentType: "selfie",
-				description: "Upload selfie image file",
-			});
+			handleUploadSelfie(pickedImage);
 		} else {
 			Alert.alert(t("alert", "Alert"), t("noImageSelected", "No image selected"));
 		}
@@ -371,29 +337,43 @@ export default function CKYCInstructions() {
 			if (__DEV__) {
 				console.log("📤 [CKYC] Sending CKYC OTP request...");
 			}
-			const response = await axios.post("onefin/ckyc/send-otp", {});
+			const response = await sendCkycOtp();
 
 			if (!isMounted.current) return;
 
-			if (response.status === 200 && response?.data?.success !== false) {
-				if (isMounted.current) {
-					router.replace("/ckyc-otp" as any);
-				}
+			if (response.success) {
+				const sessionId = response.data?.session_id;
+				router.replace({
+					pathname: "/ckyc-otp" as any,
+					params: sessionId ? { sessionId } : undefined,
+				});
 			} else {
-				if (__DEV__) {
-					console.warn("⚠️ [CKYC] send-otp not successful, falling back to /aadhaar-kyc");
-				}
-				if (isMounted.current) {
-					router.replace("/aadhaar-kyc" as any);
+				const msg = response.message || "";
+				const switchToDigilocker =
+					Boolean((response.data as any)?.switch_to_digilocker) ||
+					msg.toLowerCase().includes("digilocker");
+
+				if (switchToDigilocker) {
+					router.replace("/digilocker-kyc" as any);
+				} else {
+					Toast.show({
+						type: "error",
+						text1: t("alert", "Alert"),
+						text2: msg || t("pleaseRetryPayment", "Please try again"),
+					});
 				}
 			}
-		} catch (error) {
+		} catch (error: any) {
 			if (!isMounted.current) return;
-			if (__DEV__) {
-				console.warn("⚠️ [CKYC] send-otp failed, falling back to /aadhaar-kyc");
-			}
-			if (isMounted.current) {
-				router.replace("/aadhaar-kyc" as any);
+			const msg = error?.detail || error?.message || "";
+			if (msg.toLowerCase().includes("digilocker")) {
+				router.replace("/digilocker-kyc" as any);
+			} else {
+				Toast.show({
+					type: "error",
+					text1: t("alert", "Alert"),
+					text2: msg || t("pleaseRetryPayment", "Please try again"),
+				});
 			}
 		} finally {
 			if (isMounted.current) {

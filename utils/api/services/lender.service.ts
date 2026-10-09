@@ -1,8 +1,6 @@
 import { axios } from "../core/client";
 import { URLS } from "../core/endpoints";
 import type {
-	BREEvaluationRequest,
-	BREEvaluationResponse,
 	CouponVerifyResponse,
 	LenderAllocationResult,
 	LenderItem,
@@ -19,10 +17,10 @@ import type {
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export const allocateLenderForUser = async (
-	userId: string,
+	userId: string = "me",
 ): Promise<NormalizedResponse<LenderAllocationResult>> => {
 	const response = await axios.post<LenderAllocationResult>(
-		URLS.lender_allocations.allocate_for_user(userId),
+		URLS.lender_allocations.allocate_for_user("me"),
 	);
 
 	// Raw object returned by FastAPI backend; normalise into standard shape
@@ -35,24 +33,18 @@ export const allocateLenderForUser = async (
 };
 
 /**
- * ADAPTER: Post-KYC Lender Allocation Trigger
- * ASK BACKEND:
- * (a) The endpoint currently has no auth required and expects user_id in the URL path.
- *     It should require Bearer token and use the authenticated user.
- * (b) The old `PATCH /users/basic-details` triggered `allocate_lender_by_age`,
- *     but `/kyc/submit` does NOT. Who triggers allocation now, and when?
- * One-line switch: toggle `shouldClientTriggerAllocation` below.
+ * ADAPTER: Post-KYC Lender Allocation Trigger (uses authenticated user "me")
  */
 export const shouldClientTriggerAllocation = true;
 
 export const triggerPostKycAllocationAdapter = async (
-	userId: string,
+	userId?: string,
 ): Promise<LenderAllocationResult | null> => {
-	if (!shouldClientTriggerAllocation || !userId) {
+	if (!shouldClientTriggerAllocation) {
 		return null;
 	}
 	try {
-		const res = await allocateLenderForUser(userId);
+		const res = await allocateLenderForUser("me");
 		return res.data ?? null;
 	} catch (error) {
 		if (__DEV__) {
@@ -62,74 +54,6 @@ export const triggerPostKycAllocationAdapter = async (
 	}
 };
 
-/**
- * ─────────────────────────────────────────────────────────────────────────────
- * CREDIT EVALUATION (BRE)
- * POST /credit-evaluation/evaluate
- * Backend returns raw BREEvaluationResponse.
- * Normalised into NormalizedResponse<BREEvaluationResponse>.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-export const evaluateCredit = async (
-	payload: BREEvaluationRequest,
-): Promise<NormalizedResponse<BREEvaluationResponse>> => {
-	// Guard: Never send simulation_mode: true or custom_bureau_report from app
-	const cleanPayload: BREEvaluationRequest = {
-		user_id: payload.user_id,
-		application_id: payload.application_id,
-		product_id: payload.product_id,
-		lender_id: payload.lender_id,
-		loan_amount: payload.loan_amount,
-		tenure_days: payload.tenure_days,
-		simulation_mode: false,
-	};
-
-	const response = await axios.post<BREEvaluationResponse>(
-		URLS.credit_evaluation.evaluate,
-		cleanPayload,
-	);
-
-	const rawData = response.data;
-	return {
-		success: rawData?.final_decision === "APPROVED",
-		message: rawData?.decision_reason || "Credit evaluated successfully",
-		data: rawData,
-	};
-};
-
-/**
- * ADAPTER: Credit Evaluation (BRE) Trigger
- * ASK BACKEND:
- * Exact position in the flow (after assessment fee vs before professional-details),
- * and whether the server will call BRE itself so the client only reads the result.
- * One-line switch: toggle `shouldClientCallBRE` below.
- */
-export const shouldClientCallBRE = true;
-
-export const runCreditEvaluationAdapter = async (params: {
-	userId: string;
-	applicationId?: string;
-	productId?: string;
-	lenderId?: string;
-}): Promise<BREEvaluationResponse | null> => {
-	if (!shouldClientCallBRE || !params.userId) {
-		return null;
-	}
-	try {
-		const res = await evaluateCredit({
-			user_id: params.userId,
-			application_id: params.applicationId,
-			product_id: params.productId,
-			lender_id: params.lenderId,
-		});
-		return res.data;
-	} catch (error) {
-		if (__DEV__) {
-			console.warn("⚠️ [Credit Evaluation Adapter] BRE evaluation error:", error);
-		}
-		throw error;
-	}
-};
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────

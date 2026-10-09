@@ -32,6 +32,7 @@ interface DateInputProps {
 	iconColor?: string;
 	iconSize?: number;
 	mode?: "date" | "time" | "datetime";
+	error?: boolean;
 }
 
 export const DateInput: React.FC<DateInputProps> = ({
@@ -41,6 +42,7 @@ export const DateInput: React.FC<DateInputProps> = ({
 	label,
 	disabled = false,
 	required = false,
+	error = false,
 	minimumDate,
 	maximumDate,
 	dateFormat = "DD-MM-YYYY",
@@ -214,6 +216,7 @@ export const DateInput: React.FC<DateInputProps> = ({
 					styles.inputContainer,
 					inputStyle,
 					disabled && styles.disabledInput,
+					error && styles.inputContainerError,
 				]}>
 				<TextInput
 					style={[
@@ -288,6 +291,9 @@ const styles = StyleSheet.create({
 	disabledInput: {
 		backgroundColor: "#F5F5F5",
 		borderColor: "#EAEAEA",
+	},
+	inputContainerError: {
+		borderColor: "#d32f2f",
 	},
 	inputText: {
 		fontSize: font(1.8),

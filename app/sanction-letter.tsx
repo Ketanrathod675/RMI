@@ -25,7 +25,6 @@ import {
     Animated,
     BackHandler,
     Modal,
-    SafeAreaView,
     ScrollView,
     StyleSheet,
     Text,
@@ -34,6 +33,7 @@ import {
     UIManager,
     View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as WebBrowser from "expo-web-browser";
 import PdfRendererView from "react-native-pdf-renderer";
 import Toast from "react-native-toast-message";

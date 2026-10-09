@@ -8,47 +8,72 @@ import {
 	getUserDashboardData,
 	getUserProfile,
 	initiateAssessmentFee,
-	URLS,
-	type InitiateAssessmentFeeResponse,
-	type PaymentStatusResponse,
 } from "@/utils/api";
 import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useQueryClient } from "@tanstack/react-query";
-import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
-import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import { DeviceEventEmitter, Platform, ToastAndroid } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState, DeviceEventEmitter, Platform, ToastAndroid } from "react-native";
 import Toast from "react-native-toast-message";
 
 const PAYMENT_RETURN_SCHEME = "rapid-money://";
+const POLL_INTERVAL_MS = 4000;
+
+/**
+ * How long we keep asking the server, depending on HOW the user came back.
+ * - deeplink_success : gateway told us "success", our server may just be a bit slow -> wait longest
+ * - deeplink_failure : gateway told us it failed -> one quick confirmation
+ * - browser_closed   : user pressed back / closed the tab / network error page -> short check
+ * - manual           : user tapped "Check again"
+ */
+export type VerifySource =
+	| "deeplink_success"
+	| "deeplink_failure"
+	| "browser_closed"
+	| "manual";
+
+const WINDOW_MS: Record<VerifySource, number> = {
+	deeplink_success: 90_000,
+	deeplink_failure: 8_000,
+	browser_closed: 20_000,
+	manual: 30_000,
+};
+
+export type PaymentOutcome =
+	| null
+	| {
+		// cancelled   : user left the gateway without paying
+		// failed      : gateway reported failure
+		// expired     : the attempt timed out on the server
+		// unconfirmed : we could not confirm either way (money might have been debited)
+		type: "cancelled" | "failed" | "expired" | "unconfirmed";
+		txnId: string;
+	};
+
+type Classified = "SUCCESS" | "FAILED" | "CANCELLED" | "EXPIRED" | "PENDING" | "ERROR";
+
+const classify = (res: any): { kind: Classified; notStarted: boolean } => {
+	const raw = String(res?.data?.status ?? "").toUpperCase();
+	const notStarted = res?.data?.reason === "not_started";
+	if (["COMPLETED", "SUCCESS", "WAIVED"].includes(raw)) return { kind: "SUCCESS", notStarted };
+	if (["FAILED", "FAILURE", "REJECTED", "DROPPED", "BOUNCED"].includes(raw))
+		return { kind: "FAILED", notStarted };
+	if (["CANCELLED", "CANCELED", "USERCANCELLED"].includes(raw))
+		return { kind: "CANCELLED", notStarted };
+	if (raw === "EXPIRED") return { kind: "EXPIRED", notStarted };
+	return { kind: "PENDING", notStarted };
+};
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export type InitiatePaymentResponse = {
 	status: string;
 	message: string;
-	payment_data: {
-		order_id: string;
-		cf_order_id: string;
-		payment_session_id: string;
-		order_status: string;
-		order_token: string;
-		payment_link: string;
-		amount: number;
-		currency: string;
-		expires_at: string;
-		created_at: string;
-		transaction_id: string;
-	};
-	payment_methods: {
-		payment_methods: any[];
-		currency: string;
-		supported_countries: string[];
-		min_amount: number;
-		max_amount: number;
-	};
+	payment_data: Record<string, any>;
+	payment_methods: Record<string, any>;
 	next_step: string;
 };
 
@@ -68,7 +93,6 @@ export const useAssessmentFeePayment = ({
 	onCouponRejected,
 }: UseAssessmentFeePaymentOptions) => {
 	const { t } = useTranslation();
-	const router = useRouter();
 	const dispatch = useDispatch();
 	const queryClient = useQueryClient();
 
@@ -76,374 +100,261 @@ export const useAssessmentFeePayment = ({
 	const [isPaymentPolling, setIsPaymentPolling] = useState(false);
 	const [isPaymentCompleted, setIsPaymentCompleted] = useState(false);
 	const [delayVisible, setDelayVisible] = useState(false);
-
+	const [paymentOutcome, setPaymentOutcome] = useState<PaymentOutcome>(null);
 	const [paymentStatus, setPaymentStatus] = useState({
 		paymentPending: false,
 		paymentTimer: 0,
 		timerStartTime: 0,
 	});
 
-	const processedTransactionRef = useRef<string | null>(null);
-	const paymentPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-	const checkStatusRef = useRef<((id: string) => Promise<boolean>) | null>(null);
+	// One verification loop at a time. Bumping runIdRef cancels any loop already running.
+	const runIdRef = useRef(0);
+	const activeRef = useRef<{ txnId: string; source: VerifySource } | null>(null);
+	const gatewayOpenRef = useRef(false);
+	const windowSecRef = useRef(0);
+	const mountedRef = useRef(true);
+	const onSuccessRef = useRef(onPaymentSuccess);
+	onSuccessRef.current = onPaymentSuccess;
 	const urlHook = Linking.useLinkingURL();
 
 	const clearTimer = async () => {
-		const timerId = await getStorageItem(STORAGE_KEYS["@assessment-timer-id"]);
-		if (timerId) {
-			clearInterval(parseInt(timerId, 10));
-		}
 		await removeStorageItem(STORAGE_KEYS["@assessment-timer-id"]);
 	};
 
-	// Clean up intervals on unmount
+	const clearStoredPayment = useCallback(async () => {
+		dispatch(clearTransactionId());
+		await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
+		await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
+	}, [dispatch]);
+
 	useEffect(() => {
+		mountedRef.current = true;
 		return () => {
-			clearTimer();
-			if (paymentPollIntervalRef.current) {
-				clearInterval(paymentPollIntervalRef.current);
-			}
+			mountedRef.current = false;
+			runIdRef.current += 1; // stop any running loop
 		};
 	}, []);
 
-	// Restore payment timer on mount
+	// Countdown shown on the button. Display only: it never touches storage or navigation.
 	useEffect(() => {
-		const restoreTimerState = async () => {
-			const storedStartTime = await getStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-			if (storedStartTime) {
-				const startTime = parseInt(storedStartTime, 10);
-				const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-				const totalDuration = 120; // 2 minutes matching polling timeout
-				const remainingTime = totalDuration - elapsedSeconds;
+		if (!paymentStatus.paymentPending || paymentStatus.timerStartTime <= 0) return;
+		const id = setInterval(() => {
+			const elapsed = Math.floor((Date.now() - paymentStatus.timerStartTime) / 1000);
+			const remaining = Math.max(0, windowSecRef.current - elapsed);
+			setPaymentStatus((prev) => ({ ...prev, paymentTimer: remaining }));
+		}, 1000);
+		return () => clearInterval(id);
+	}, [paymentStatus.paymentPending, paymentStatus.timerStartTime]);
 
-				if (remainingTime > 0) {
-					setPaymentStatus({
-						paymentPending: true,
-						paymentTimer: remainingTime,
-						timerStartTime: startTime,
-					});
+	const resetPendingUi = () => {
+		setIsPaymentPolling(false);
+		setDelayVisible(false);
+		setIsPaymentInitiated(false);
+		setPaymentStatus({ paymentPending: false, paymentTimer: 0, timerStartTime: 0 });
+	};
 
-					const transactionId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
-					if (transactionId) {
-						startPaymentPolling(transactionId);
-					}
-				} else {
-					await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-					setPaymentStatus({
-						paymentPending: false,
-						paymentTimer: 0,
-						timerStartTime: 0,
-					});
-				}
-			}
-		};
+	/** One server check. Never throws. */
+	const checkOnce = async (txnId: string): Promise<{ kind: Classified; notStarted: boolean; res?: any }> => {
+		try {
+			const res = await checkPaymentStatus(txnId);
+			Logger.debug("Payment status response", res);
+			return { ...classify(res), res };
+		} catch (err) {
+			Logger.warn("Payment status check failed (will retry)", err);
+			return { kind: "ERROR", notStarted: false };
+		}
+	};
 
-		restoreTimerState();
-	}, []);
+	/** Safety net: did the workflow already move past the fee step on the server? */
+	const workflowAdvanced = async (): Promise<boolean> => {
+		try {
+			const dash: any = await getUserDashboardData();
+			const step = String(
+				dash?.current_step || dash?.workflow_progress?.current_step || dash?.current_step_info?.step || "",
+			).toLowerCase();
+			return !!step && step !== "assessment_fee" && step !== "assessment_fee_payment" && step !== "basic_details";
+		} catch {
+			return false;
+		}
+	};
 
-	// Timer countdown effect
-	useEffect(() => {
-		let interval: ReturnType<typeof setInterval> | null = null;
-		if (paymentStatus.paymentPending && paymentStatus.timerStartTime > 0) {
-			interval = setInterval(() => {
-				const elapsedSeconds = Math.floor(
-					(Date.now() - paymentStatus.timerStartTime) / 1000,
-				);
-				const totalDuration = 120;
-				const remainingTime = totalDuration - elapsedSeconds;
+	const finishSuccess = async (txnId: string, res?: any) => {
+		const canonicalTxnId = res?.data?.txnid || txnId;
+		await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], canonicalTxnId);
+		await clearStoredPayment();
+		gatewayOpenRef.current = false;
+		activeRef.current = null;
+		resetPendingUi();
+		setIsPaymentCompleted(true);
+		const paymentRef = res?.data?.payment_id || res?.data?.easepayid || canonicalTxnId;
+		trackAssessmentFeePaid(processingFeeAmount, paymentRef).catch(() => { });
+		queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+		onSuccessRef.current(canonicalTxnId);
+	};
 
-				if (remainingTime <= 0) {
-					removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-					dispatch(clearTransactionId());
-					removeStorageItem(STORAGE_KEYS["@transaction-id"]);
+	const finishWithOutcome = async (
+		type: NonNullable<PaymentOutcome>["type"],
+		txnId: string,
+	) => {
+		// "unconfirmed" keeps the txn id so we can re-check later (money may have left the account).
+		if (type !== "unconfirmed") await clearStoredPayment();
+		gatewayOpenRef.current = false;
+		activeRef.current = null;
+		resetPendingUi();
+		// Give the full-screen loader a moment to close before presenting another modal (iOS drops stacked modals).
+		setTimeout(() => {
+			if (mountedRef.current) setPaymentOutcome({ type, txnId });
+		}, 450);
+	};
 
-					setPaymentStatus({
-						paymentPending: false,
-						paymentTimer: 0,
-						timerStartTime: 0,
-					});
-
-					if (interval) clearInterval(interval);
-				} else {
-					setPaymentStatus((prev) => ({
-						...prev,
-						paymentTimer: remainingTime,
-					}));
-				}
-			}, 1000);
+	/**
+	 * Verify a transaction with the server until it resolves to success / failure / cancelled,
+	 * or the window for this "source" runs out. Always ends in exactly one terminal state.
+	 */
+	const verifyPayment = async (txnId: string, source: VerifySource) => {
+		const current = activeRef.current;
+		if (current && current.txnId === txnId) {
+			// Already verifying this txn. Only restart if we just learned something stronger.
+			if (!(source === "deeplink_success" && current.source !== "deeplink_success") && source !== "manual") return;
 		}
 
-		return () => {
-			if (interval) clearInterval(interval);
-		};
-	}, [paymentStatus.paymentPending, paymentStatus.timerStartTime, dispatch]);
+		const runId = ++runIdRef.current;
+		activeRef.current = { txnId, source };
+		gatewayOpenRef.current = false;
 
-	// Easebuzz Status Polling logic
-	const startPaymentPolling = (txnId: string) => {
-		if (paymentPollIntervalRef.current) {
-			clearInterval(paymentPollIntervalRef.current);
-		}
+		const windowMs = WINDOW_MS[source];
+		const startedAt = Date.now();
+		windowSecRef.current = Math.ceil(windowMs / 1000);
 
-		Logger.debug(`🚀 [Payment] Starting Easebuzz status polling for: ${txnId}`);
+		setPaymentOutcome(null);
 		setIsPaymentPolling(true);
 		setDelayVisible(true);
-
-		const pollStartTime = Date.now();
-
-		const checkStatus = async (): Promise<boolean> => {
-			try {
-				const res = await checkPaymentStatus(txnId);
-				Logger.debug("Payment status polling response", res);
-
-				const statusVal =
-					res?.data?.status?.toUpperCase() ||
-					(res?.success && (res?.data as any)?.status !== "PENDING" ? "COMPLETED" : "PENDING");
-
-				if (statusVal === "COMPLETED" || statusVal === "SUCCESS") {
-					if (paymentPollIntervalRef.current) {
-						clearInterval(paymentPollIntervalRef.current);
-					}
-					setIsPaymentPolling(false);
-					setDelayVisible(false);
-
-					// Clear stored session state
-					dispatch(clearTransactionId());
-					await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
-					await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-					setIsPaymentInitiated(false);
-					setPaymentStatus({
-						paymentPending: false,
-						paymentTimer: 0,
-						timerStartTime: 0,
-					});
-
-					setIsPaymentCompleted(true);
-					const paymentRef = res?.data?.payment_id || res?.data?.easepayid || txnId;
-					trackAssessmentFeePaid(processingFeeAmount, paymentRef).catch(() => {});
-					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-
-					onPaymentSuccess(paymentRef);
-					return true;
-				}
-
-				if (
-					statusVal === "FAILED" ||
-					statusVal === "FAILURE" ||
-					statusVal === "REJECTED" ||
-					statusVal === "USERCANCELLED"
-				) {
-					if (paymentPollIntervalRef.current) {
-						clearInterval(paymentPollIntervalRef.current);
-					}
-					setIsPaymentPolling(false);
-					setDelayVisible(false);
-
-					dispatch(clearTransactionId());
-					await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
-					await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-					setIsPaymentInitiated(false);
-					setPaymentStatus({
-						paymentPending: false,
-						paymentTimer: 0,
-						timerStartTime: 0,
-					});
-
-					setTimeout(() => {
-						Toast.show({
-							type: "error",
-							text1: t("transactionFailed"),
-							text2: t("pleaseRetryPayment"),
-							visibilityTime: 6000,
-						});
-					}, 500);
-					return true;
-				}
-			} catch (err) {
-				Logger.warn("Primary payment status check error, verifying dashboard workflow fallback", err);
-				try {
-					const dash = await getUserDashboardData();
-					const step = String(
-						(dash as any)?.current_step ||
-						dash?.workflow_progress?.current_step ||
-						dash?.current_step_info?.step ||
-						""
-					).toLowerCase();
-					if (step && step !== "assessment_fee" && step !== "assessment_fee_payment") {
-						Logger.debug("✅ [Payment] User dashboard confirms workflow advanced to:", step);
-						if (paymentPollIntervalRef.current) {
-							clearInterval(paymentPollIntervalRef.current);
-						}
-						setIsPaymentPolling(false);
-						setDelayVisible(false);
-
-						dispatch(clearTransactionId());
-						await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
-						await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-						setIsPaymentInitiated(false);
-						setPaymentStatus({
-							paymentPending: false,
-							paymentTimer: 0,
-							timerStartTime: 0,
-						});
-
-						setIsPaymentCompleted(true);
-						trackAssessmentFeePaid(processingFeeAmount, txnId).catch(() => {});
-						queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-						onPaymentSuccess(txnId);
-						return true;
-					}
-				} catch (dashErr) {
-					Logger.error("Dashboard fallback check also failed", dashErr);
-				}
-			}
-			return false;
-		};
-
-		checkStatusRef.current = checkStatus;
-
-		// Run immediately
-		checkStatus();
-
-		// Poll every 5 seconds
-		paymentPollIntervalRef.current = setInterval(async () => {
-			const elapsed = Date.now() - pollStartTime;
-			if (elapsed >= 120000) {
-				// 2 minutes timeout
-				if (paymentPollIntervalRef.current) {
-					clearInterval(paymentPollIntervalRef.current);
-				}
-				const isResolved = await checkStatus();
-				if (!isResolved) {
-					Logger.debug("⏱️ [Payment] Polling timed out after 2 min. Navigating to dashboard...");
-					setIsPaymentPolling(false);
-					setDelayVisible(false);
-
-					// Deliberately keep @transaction-id in storage for dashboard resumption
-					setIsPaymentInitiated(false);
-					setPaymentStatus({
-						paymentPending: false,
-						paymentTimer: 0,
-						timerStartTime: 0,
-					});
-
-					router.replace("/(tabs)");
-				}
-			} else {
-				await checkStatus();
-			}
-		}, 5000);
-	};
-
-	// Starts verification exactly once per transaction, only after the user has left the gateway.
-	const beginPostPaymentVerification = (txnId: string) => {
-		if (processedTransactionRef.current === txnId) return;
-		processedTransactionRef.current = txnId;
-
-		const startTime = Date.now();
-		setStorageItem(STORAGE_KEYS["@payment-timer-start"], startTime.toString()).catch(() => {});
-		setPaymentStatus({ paymentPending: true, paymentTimer: 120, timerStartTime: startTime });
+		setPaymentStatus({ paymentPending: true, paymentTimer: windowSecRef.current, timerStartTime: startedAt });
+		setStorageItem(STORAGE_KEYS["@payment-timer-start"], String(startedAt)).catch(() => { });
 		DeviceEventEmitter.emit("HIDE_GLOBAL_LOADER");
-		startPaymentPolling(txnId);
+
+		const isStale = () => runIdRef.current !== runId || !mountedRef.current;
+		let notStartedHits = 0;
+
+		while (!isStale()) {
+			const r = await checkOnce(txnId);
+			if (isStale()) return;
+
+			if (r.kind === "SUCCESS") return finishSuccess(txnId, r.res);
+			if (r.kind === "FAILED") return finishWithOutcome("failed", txnId);
+			if (r.kind === "CANCELLED") return finishWithOutcome("cancelled", txnId);
+			if (r.kind === "EXPIRED") return finishWithOutcome("expired", txnId);
+
+			if (r.kind === "ERROR" && (await workflowAdvanced())) return finishSuccess(txnId);
+
+			// The user left the gateway and the server has no payment attempt at all -> they backed out.
+			if (source === "browser_closed" && r.kind === "PENDING" && r.notStarted) {
+				notStartedHits += 1;
+				if (notStartedHits >= 2) return finishWithOutcome("cancelled", txnId);
+			}
+
+			if (Date.now() - startedAt >= windowMs) break;
+			await sleep(POLL_INTERVAL_MS);
+		}
+		if (isStale()) return;
+
+		// Window over, still no answer.
+		if (await workflowAdvanced()) return finishSuccess(txnId);
+
+		if (source === "deeplink_failure") return finishWithOutcome("failed", txnId);
+		// Could not confirm: never auto-navigate away and never silently drop the txn.
+		return finishWithOutcome("unconfirmed", txnId);
 	};
 
-	// Recover if the app was killed or backgrounded in the gateway
+	// ---- Recover a payment that was in flight when the app was killed / backgrounded ----
 	useEffect(() => {
 		(async () => {
 			const pendingTxn = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
 			if (!pendingTxn) return;
-			try {
-				const res = await checkPaymentStatus(pendingTxn);
-				const s = res?.data?.status?.toUpperCase();
-				if (s === "COMPLETED") beginPostPaymentVerification(pendingTxn); // resolves on its first check
-				else if (s === "FAILED") await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
-				// PENDING: leave it, the user can retry or come back later
-			} catch (err) {
-				Logger.warn("Pending payment check failed", err);
-			}
+			await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
+			const r = await checkOnce(pendingTxn);
+			if (r.kind === "SUCCESS") return finishSuccess(pendingTxn, r.res);
+			if (["FAILED", "CANCELLED", "EXPIRED"].includes(r.kind)) await clearStoredPayment();
+			// PENDING / ERROR: leave it; the user will either pay again (server guards double payment) or recheck.
 		})();
 	}, []);
 
-	// Handle deep-link returns
+	// ---- Deep link return (rapid-money://assessment-fee-success?txnid=..&status=..) ----
 	useEffect(() => {
-		const handleDeepLink = async () => {
+		(async () => {
 			if (!urlHook) return;
-
-			const transactionId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
-			if (!transactionId) return;
-
 			const { hostname, queryParams } = Linking.parse(urlHook);
-
-			if (
-				!hostname?.includes("assessment-fee") &&
-				!hostname?.includes("assessment-fee-success")
-			) {
-				return;
-			}
-
-			if (queryParams?.status && queryParams?.txnid === transactionId) {
-				beginPostPaymentVerification(transactionId);
-			}
-		};
-
-		handleDeepLink();
+			if (!hostname?.includes("assessment-fee")) return;
+			const txnId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
+			if (!txnId || queryParams?.txnid !== txnId) return;
+			const ok = String(queryParams?.status).toLowerCase() === "success";
+			verifyPayment(txnId, ok ? "deeplink_success" : "deeplink_failure");
+		})();
 	}, [urlHook]);
 
-	// Payment Initiation Mutation
+	// ---- User came back to the app (app switcher / back) while the gateway was open ----
+	useEffect(() => {
+		const sub = AppState.addEventListener("change", async (state) => {
+			if (state !== "active" || !gatewayOpenRef.current || activeRef.current) return;
+			const txnId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
+			if (txnId) verifyPayment(txnId, "browser_closed");
+		});
+		return () => sub.remove();
+	}, []);
+
+	// ---- Start payment ----
 	const { mutate: initiatePayment, isPending } = useNetworkAwareMutation({
 		mutationFn: async () => {
-			processedTransactionRef.current = null;
-
+			setPaymentOutcome(null);
 			let targetLeadId = leadId;
+			if (!targetLeadId) targetLeadId = (await getStorageItem(STORAGE_KEYS["@lead-id"])) || undefined;
 			if (!targetLeadId) {
-				targetLeadId = (await getStorageItem(STORAGE_KEYS["@lead-id"])) || undefined;
+				try {
+					const profile = await getUserProfile();
+					const meData = (profile as any)?.data || profile;
+					const wf = meData?.current_workflow;
+					const kycResp = wf?.profile_response;
+					const recoveredLeadId = wf?.lead_id || kycResp?.lead_id;
+					if (recoveredLeadId) {
+						targetLeadId = String(recoveredLeadId);
+						await setStorageItem(STORAGE_KEYS["@lead-id"], targetLeadId);
+					}
+					const fee = kycResp?.af_amount || kycResp?.assessment_fee;
+					if (fee) {
+						await setStorageItem(STORAGE_KEYS["@assessment-fee-amount"], String(fee));
+						await setStorageItem(STORAGE_KEYS["@assessment-fee"], String(fee));
+					}
+					if (kycResp?.af) {
+						await setStorageItem(STORAGE_KEYS["@af-flag"], String(kycResp.af));
+					}
+				} catch (recoverErr) {
+					console.warn("⚠️ [useAssessmentFeePayment] Failed to recover leadId from /auth/me:", recoverErr);
+				}
 			}
+			if (!targetLeadId) throw new Error("Lead ID is missing. Please submit your basic details again.");
 
-			if (!targetLeadId) {
-				throw new Error("Lead ID is missing. Please submit your basic details again.");
-			}
-
-			// Resolve user contact info required by backend Easebuzz schema
 			let resolvedPhone = "";
 			let resolvedName = "Applicant";
 			let resolvedEmail = "applicant@rapidmoney.in";
-
 			try {
 				const rawPhone = await getStorageItem(STORAGE_KEYS["@phone-number"]);
 				if (rawPhone) {
 					try {
-						const decoded = decode(rawPhone);
-						resolvedPhone = decoded.replace(/\D/g, "").slice(-10);
+						resolvedPhone = decode(rawPhone).replace(/\D/g, "").slice(-10);
 					} catch {
 						resolvedPhone = rawPhone.replace(/\D/g, "").slice(-10);
 					}
 				}
-			} catch {}
-
+			} catch { }
 			try {
 				const profile = await getUserProfile();
-				const pDetails = profile?.personal_details;
-				if (pDetails?.full_name) {
-					resolvedName = pDetails.full_name.split(" ")[0].trim() || "Applicant";
-				}
-				if (profile?.email) {
-					resolvedEmail = profile.email.trim();
-				}
-				if (!resolvedPhone && (profile as any)?.phone_number) {
+				const full = profile?.personal_details?.full_name;
+				if (full) resolvedName = full.split(" ")[0].trim() || "Applicant";
+				if (profile?.email) resolvedEmail = profile.email.trim();
+				if (!resolvedPhone && (profile as any)?.phone_number)
 					resolvedPhone = String((profile as any).phone_number).replace(/\D/g, "").slice(-10);
-				}
-			} catch {}
-
-			if (!resolvedPhone || resolvedPhone.length < 10) {
-				resolvedPhone = "9999999999";
-			}
-
-			Logger.debug("Initiating assessment fee payment", {
-				lead_id: targetLeadId,
-				phone_no: resolvedPhone,
-				firstname: resolvedName,
-				email: resolvedEmail,
-				coupon_code: couponCode,
-			});
+			} catch { }
+			if (!resolvedPhone || resolvedPhone.length < 10) resolvedPhone = "9999999999";
 
 			return await initiateAssessmentFee({
 				lead_id: targetLeadId,
@@ -454,106 +365,97 @@ export const useAssessmentFeePayment = ({
 			});
 		},
 		onSuccess: async (res) => {
-			Logger.debug("Assessment fee payment initiated", res);
-
 			const data = (res as any)?.data ?? res;
 			if (!data) {
-				Toast.show({
-					type: "error",
-					text1: t("unableToInitiatePayment"),
-					text2: t("pleaseRetryPayment"),
-				});
+				Toast.show({ type: "error", text1: t("unableToInitiatePayment"), text2: t("pleaseRetryPayment") });
 				return;
 			}
 
-			// If fee is waived (100% coupon or 0 fee)
 			if (data.status === "WAIVED" || data.amount === 0) {
 				await clearTimer();
 				setIsPaymentInitiated(false);
 				setIsPaymentCompleted(true);
-				onPaymentSuccess(data.txnid || "WAIVED");
+				const waivedTxn = data.txnid || "WAIVED";
+				await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], waivedTxn);
+				onSuccessRef.current(waivedTxn);
 				return;
 			}
 
 			if (typeof data.amount === "number" && Math.abs(data.amount - processingFeeAmount) >= 1) {
-				Logger.warn("Payable amount differs from displayed amount", { shown: processingFeeAmount, charged: data.amount });
 				Toast.show({ type: "info", text1: `Amount updated to ₹${data.amount}` });
 			}
 
-			const paymentUrl = data.payment_url || data.payment_link;
-			if (!paymentUrl) {
-				Toast.show({
-					type: "error",
-					text1: t("unableToInitiatePayment"),
-					text2: t("pleaseRetryPayment"),
-				});
+			const url = data.payment_url || data.payment_link;
+			const txnid = data.txnid || data.transaction_id || data.order_id;
+			if (!url || !txnid) {
+				Toast.show({ type: "error", text1: t("unableToInitiatePayment"), text2: t("pleaseRetryPayment") });
 				return;
 			}
 
 			await clearTimer();
-			const url = paymentUrl;
-			const txnid = data.txnid || data.transaction_id || data.order_id;
-
 			if (Platform.OS === "android") {
-				ToastAndroid.show(t("redirectingToYourBrowser") || "Opening Easebuzz Payment Gateway...", ToastAndroid.SHORT);
+				ToastAndroid.show(t("redirectingToYourBrowser") || "Opening payment gateway...", ToastAndroid.SHORT);
 			}
 
 			dispatch(setTransactionId(txnid));
 			await setStorageItem(STORAGE_KEYS["@transaction-id"], txnid);
+			await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], txnid);
 			setIsPaymentInitiated(true);
+			gatewayOpenRef.current = true;
 
-			// No timer and no polling here. The user is inside the gateway and may take several minutes.
+			// No loader, no polling while the user is inside the gateway (they may take minutes).
 			setTimeout(async () => {
 				try {
-					const result = await WebBrowser.openAuthSessionAsync(url, PAYMENT_RETURN_SCHEME);
-					Logger.debug("Payment browser session closed", result);
-					// success, cancel or dismiss: the user is back in the app, so verify now.
-					// (On Android the result is often "dismiss" even after a good redirect, so do not branch on result.type.)
-					beginPostPaymentVerification(txnid);
+					const result: any = await WebBrowser.openAuthSessionAsync(url, PAYMENT_RETURN_SCHEME);
+					Logger.debug("Payment browser session closed", result?.type);
+
+					if (result?.type === "success" && result?.url) {
+						const { queryParams } = Linking.parse(result.url);
+						const ok = String(queryParams?.status).toLowerCase() === "success";
+						verifyPayment(txnid, ok ? "deeplink_success" : "deeplink_failure");
+					} else {
+						// cancel / dismiss / locked. On Android "dismiss" also happens after a good payment,
+						// so we never trust the result type: the server is the source of truth.
+						verifyPayment(txnid, "browser_closed");
+					}
 				} catch (err) {
 					Logger.warn("openAuthSessionAsync failed, falling back to Linking.openURL", err);
-					// The deep-link effect below picks up the return from the external browser.
-					await Linking.openURL(url).catch((openErr) => Logger.error("Failed to open payment URL", openErr));
+					await Linking.openURL(url).catch((e) => Logger.error("Failed to open payment URL", e));
+					// Return is picked up by the deep-link effect or the AppState listener.
 				}
 			}, 300);
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-			Logger.error("Payment initiation failed", error);
-
 			const rawDetail = (err as any)?.response?.data?.detail;
-			if (rawDetail && /coupon/i.test(String(rawDetail))) {
-				onCouponRejected?.();
+
+			// Backend says a previous attempt for this lead was actually paid -> verify it instead of paying twice.
+			if (rawDetail && typeof rawDetail === "object" && rawDetail.code === "PAYMENT_ALREADY_PAID" && rawDetail.txnid) {
+				setStorageItem(STORAGE_KEYS["@transaction-id"], rawDetail.txnid).catch(() => { });
+				verifyPayment(rawDetail.txnid, "manual");
+				return;
 			}
 
-			const displayMessage =
-				typeof rawDetail === "string"
-					? rawDetail
-					: error?.message ?? t("pleaseRetryPayment");
-
-			Toast.show({
-				type: "error",
-				text1: t("errorInitiatingPayment"),
-				text2: displayMessage,
-			});
+			if (rawDetail && /coupon/i.test(String(rawDetail))) onCouponRejected?.();
+			const displayMessage = typeof rawDetail === "string" ? rawDetail : error?.message ?? t("pleaseRetryPayment");
+			Toast.show({ type: "error", text1: t("errorInitiatingPayment"), text2: displayMessage });
 		},
 	});
 
-	// Dev simulation helper
+	/** "Check again" from the unconfirmed dialog. */
+	const recheckPayment = async () => {
+		const txnId = paymentOutcome?.txnId || (await getStorageItem(STORAGE_KEYS["@transaction-id"]));
+		if (txnId) verifyPayment(txnId, "manual");
+	};
+
+	/** Close the result dialog. "unconfirmed" keeps the stored txn so it can still be re-checked. */
+	const dismissPaymentOutcome = () => setPaymentOutcome(null);
+
+	/** Dev only */
 	const simulateDeepLinkReturn = (status: "success" | "failure", txnId?: string) => {
 		if (__DEV__ && txnId) {
-			Logger.debug(`🛠️ [DEV MOCK] Simulating deep link return: ${status} for txnid: ${txnId}`);
 			DeviceEventEmitter.emit("HIDE_GLOBAL_LOADER");
-
-			if (status === "success") {
-				beginPostPaymentVerification(txnId);
-			} else {
-				Toast.show({
-					type: "error",
-					text1: t("transactionFailed"),
-					text2: t("pleaseRetryPayment"),
-				});
-			}
+			verifyPayment(txnId, status === "success" ? "deeplink_success" : "deeplink_failure");
 		}
 	};
 
@@ -566,7 +468,9 @@ export const useAssessmentFeePayment = ({
 		delayVisible,
 		setDelayVisible,
 		paymentStatus,
-		startPaymentPolling,
+		paymentOutcome,
+		recheckPayment,
+		dismissPaymentOutcome,
 		simulateDeepLinkReturn,
 		clearTimer,
 	};

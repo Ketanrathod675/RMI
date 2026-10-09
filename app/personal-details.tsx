@@ -168,16 +168,36 @@ export default function PersonalDetails() {
 			}
 
 			// Format gender
-			const genderValue = userProfile.personal_details?.gender;
+			const genderValue =
+				userProfile.personal_details?.gender ||
+				(userProfile as any)?.profile?.gender;
 			const formattedGender = genderValue
 				? genderValue.charAt(0).toUpperCase() + genderValue.slice(1).toLowerCase()
 				: "";
 
 			// Format date of birth
 			let formattedDate = "";
-			if (userProfile.personal_details?.date_of_birth) {
-				const date = new Date(userProfile.personal_details.date_of_birth);
-				formattedDate = `${String(date.getDate()).padStart(2, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getFullYear()}`;
+			const rawDob =
+				userProfile.personal_details?.date_of_birth ||
+				(userProfile as any)?.profile?.dob;
+			if (rawDob) {
+				try {
+					if (String(rawDob).includes("-")) {
+						const parts = String(rawDob).split("-");
+						if (parts[0].length === 4) {
+							// YYYY-MM-DD -> DD-MM-YYYY
+							formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+						} else {
+							// DD-MM-YYYY
+							formattedDate = String(rawDob);
+						}
+					} else {
+						const date = new Date(rawDob);
+						formattedDate = `${String(date.getDate()).padStart(2, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${date.getFullYear()}`;
+					}
+				} catch {
+					formattedDate = String(rawDob);
+				}
 			}
 
 			// 1. Current / Communication Address
@@ -198,15 +218,17 @@ export default function PersonalDetails() {
 			}
 
 			// 2. Permanent / KYC Address
-			const kycAddress = userProfile.address?.kyc_address_shown;
+			const kycObj = (userProfile as any)?.profile || {};
+			const kycAddress = userProfile.address?.kyc_address_shown || kycObj;
 			let formattedKycAddress = "";
 
 			if (kycAddress) {
+				const pin = kycAddress.pin_code || kycAddress.pincode;
 				const parts = [
 					kycAddress.address,
 					kycAddress.city,
 					kycAddress.state,
-					kycAddress.pin_code,
+					pin ? `Pincode: ${pin}` : "",
 				].filter(Boolean);
 
 				formattedKycAddress = parts.join(", ");
@@ -222,10 +244,17 @@ export default function PersonalDetails() {
 				formattedCommunicationAddress || formattedKycAddress || "";
 
 			setDisplayData({
-				fullName: userProfile.personal_details?.full_name || "",
+				fullName:
+					userProfile.personal_details?.full_name ||
+					(userProfile as any)?.profile?.full_name ||
+					(userProfile as any)?.full_name ||
+					"",
 				countryCode: extractedCountryCode,
 				phoneNumber: phoneWithoutCountryCode,
-				email: userProfile.email || "",
+				email:
+					userProfile.email ||
+					(userProfile as any)?.profile?.email ||
+					"",
 				gender: formattedGender,
 				dateOfBirth: formattedDate,
 				permanentAddress: finalPermanentAddress,
@@ -369,7 +398,8 @@ export default function PersonalDetails() {
 					<View style={styles.kycContent}>
 						<TranslatedText style={styles.kycText} translationKey="kyc" />
 						<View style={styles.kycStatus}>
-							{userProfile?.personal_details?.is_pan_verified ? (
+							{userProfile?.personal_details?.is_pan_verified ||
+							(userProfile as any)?.profile?.is_pan_verified ? (
 								<>
 									<MaterialIcons name="check-circle" size={16} color="#5A8F0A" />
 									<TranslatedText

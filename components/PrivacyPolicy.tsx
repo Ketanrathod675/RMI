@@ -5,13 +5,13 @@ import React, { type Dispatch, type FC, type SetStateAction, useCallback } from 
 import {
 	Linking,
 	Modal,
-	SafeAreaView,
 	ScrollView,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 interface PrivacyPolicyProps {
 	showModal: boolean;

@@ -1,17 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
 	Alert,
 	Dimensions,
 	Modal,
-	Platform,
-	SafeAreaView,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
-import Constants, { ExecutionEnvironment } from "expo-constants";
-import Toast from "react-native-toast-message";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraType, CameraView, useCameraPermissions } from "expo-camera";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
@@ -24,38 +21,11 @@ export interface OvalCameraCaptureProps {
 	countdownFrom?: number;
 }
 
-// Check if running inside Expo Go store client (where native modules like VisionCamera don't exist)
-const isExpoGo =
-	Constants.appOwnership === "expo" ||
-	Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-
-let LivenessCameraModal: React.ComponentType<any> | null = null;
-let nativeLivenessLoadError: Error | null = null;
-
-if (!isExpoGo) {
-	try {
-		const livenessModule = require("@rick427/react-native-liveness");
-		LivenessCameraModal = livenessModule.LivenessCameraModal;
-	} catch (err: any) {
-		nativeLivenessLoadError = err;
-		if (__DEV__) {
-			console.warn("⚠️ [@rick427/react-native-liveness] Native module load failed:", err?.message);
-		}
-	}
-}
-
-/**
- * Fallback Camera component for Expo Go testing where native VisionCamera / ML Kit is unavailable.
- */
-function ExpoGoCameraFallback({
-	visible,
+export default function OvalCameraCapture({
+	visible = true,
 	onCapture,
 	onCancel,
-}: {
-	visible: boolean;
-	onCapture: (uri: string) => void;
-	onCancel: () => void;
-}) {
+}: OvalCameraCaptureProps) {
 	const [facing, setFacing] = useState<CameraType>("front");
 	const [permission, requestPermission] = useCameraPermissions();
 	const [cameraReady, setCameraReady] = useState(false);
@@ -65,6 +35,10 @@ function ExpoGoCameraFallback({
 	const ovalHeight = ovalWidth * 1.15;
 	const ovalX = (screenWidth - ovalWidth) / 2;
 	const ovalY = (screenHeight - ovalHeight) / 2 - 40;
+
+	if (!visible) {
+		return null;
+	}
 
 	const takePicture = async () => {
 		if (cameraRef.current) {
@@ -78,7 +52,7 @@ function ExpoGoCameraFallback({
 					onCapture(photo.uri);
 				}
 			} catch (error) {
-				console.error("Error taking photo in fallback camera:", error);
+				console.error("Error taking photo:", error);
 				Alert.alert("Camera Error", "Failed to capture photo. Please try again.");
 			}
 		}
@@ -86,31 +60,28 @@ function ExpoGoCameraFallback({
 
 	return (
 		<Modal visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onCancel}>
-			<SafeAreaView style={styles.fallbackContainer}>
-				{/* Top dev notice banner */}
-				<View style={styles.devBanner}>
-					<Text style={styles.devBannerTitle}>⚡ Expo Go Preview Mode</Text>
-					<Text style={styles.devBannerSub}>
-						Run `npx expo run:android` for native blink &amp; head-turn liveness verification.
-					</Text>
-				</View>
-
+			<SafeAreaView style={styles.container}>
 				{!permission?.granted ? (
 					<View style={styles.permissionContainer}>
 						<Text style={styles.permissionText}>Camera permission required for selfie capture.</Text>
 						<TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
 							<Text style={styles.permissionButtonText}>Grant Permission</Text>
 						</TouchableOpacity>
-						<TouchableOpacity style={[styles.permissionButton, { marginTop: 12, backgroundColor: "#666" }]} onPress={onCancel}>
+						<TouchableOpacity
+							style={[styles.permissionButton, { marginTop: 12, backgroundColor: "#666" }]}
+							onPress={onCancel}>
 							<Text style={styles.permissionButtonText}>Cancel</Text>
 						</TouchableOpacity>
 					</View>
 				) : (
-					<CameraView
-						ref={cameraRef}
-						style={styles.camera}
-						facing={facing}
-						onCameraReady={() => setCameraReady(true)}>
+					<View style={styles.cameraContainer}>
+						<CameraView
+							ref={cameraRef}
+							style={StyleSheet.absoluteFill}
+							facing={facing}
+							onCameraReady={() => setCameraReady(true)}
+						/>
+
 						{/* Oval overlay */}
 						{cameraReady && (
 							<View style={styles.overlay} pointerEvents="none">
@@ -152,94 +123,22 @@ function ExpoGoCameraFallback({
 								<Text style={styles.flipButtonText}>↻</Text>
 							</TouchableOpacity>
 						</View>
-					</CameraView>
+					</View>
 				)}
 			</SafeAreaView>
 		</Modal>
 	);
 }
 
-export default function OvalCameraCapture({
-	visible = true,
-	onCapture,
-	onCancel,
-	onLivenessConfirmed,
-	countdownFrom = 3,
-}: OvalCameraCaptureProps) {
-	if (!visible) {
-		return null;
-	}
-
-	// In Expo Go or if native Vision Camera module failed to load, use the fallback camera
-	if (isExpoGo || !LivenessCameraModal) {
-		return (
-			<ExpoGoCameraFallback
-				visible={visible}
-				onCapture={onCapture}
-				onCancel={onCancel}
-			/>
-		);
-	}
-
-	const handleCapture = (result: any) => {
-		if (__DEV__) {
-			console.log("📸 [Liveness] Verified and captured photo:", result?.photo?.path);
-		}
-		const rawPath = result?.photo?.path || "";
-		const formattedUri = rawPath.startsWith("file://") ? rawPath : `file://${rawPath}`;
-		onCapture(formattedUri);
-	};
-
-	const handleError = (error: Error) => {
-		console.error("Liveness camera error:", error);
-		Toast.show({
-			type: "error",
-			text1: "Liveness Verification Error",
-			text2: error?.message || "Failed to complete liveness check. Please try again.",
-		});
-		onCancel();
-	};
-
-	return (
-		<LivenessCameraModal
-			visible={visible}
-			onClose={onCancel}
-			onCapture={handleCapture}
-			onLivenessConfirmed={onLivenessConfirmed}
-			onError={handleError}
-			countdownFrom={countdownFrom}
-			fontFamily={Platform.select({ ios: "System", android: "sans-serif" })}
-		/>
-	);
-}
-
 const styles = StyleSheet.create({
-	fallbackContainer: {
+	container: {
 		flex: 1,
 		backgroundColor: "#000",
 	},
-	camera: {
+	cameraContainer: {
 		flex: 1,
-		width: "100%",
-		height: "100%",
-	},
-	devBanner: {
-		backgroundColor: "#1F2937",
-		paddingVertical: 10,
-		paddingHorizontal: 16,
-		alignItems: "center",
-		zIndex: 20,
-	},
-	devBannerTitle: {
-		color: "#FBBF24",
-		fontSize: 13,
-		fontWeight: "700",
-	},
-	devBannerSub: {
-		color: "#D1D5DB",
-		fontSize: 11,
-		textAlign: "center",
-		marginTop: 2,
+		position: "relative",
+		overflow: "hidden",
 	},
 	permissionContainer: {
 		flex: 1,

@@ -201,7 +201,9 @@ export default function HelpAndSupport() {
 			<ScrollView
 				style={styles.scrollView}
 				contentContainerStyle={styles.scrollContent}
-				showsVerticalScrollIndicator={false}>
+				showsVerticalScrollIndicator={false}
+				keyboardShouldPersistTaps="handled"
+				keyboardDismissMode="on-drag">
 				{/* Support Mascot Banner Area */}
 				<View style={[styles.bannerWrapper, { height: bannerHeadroom + bannerCardHeight }]}>
 					{/* Light Blue Curved Card */}

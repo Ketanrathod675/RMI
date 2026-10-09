@@ -9,7 +9,6 @@ export default function ForgotMpinLayout() {
 	const [otpVerified, setOtpVerified] = useState(false);
 	const { t } = useTranslation();
 
-	console.log("otp verified", otpVerified);
 
 	return (
 		<ForgotMpinContext.Provider

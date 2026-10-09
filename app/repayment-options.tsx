@@ -14,13 +14,13 @@ import {
 	ActivityIndicator,
 	DeviceEventEmitter,
 	Platform,
-	SafeAreaView,
 	ScrollView,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 interface RepaymentOption {
 	type: string;

@@ -4,11 +4,13 @@ import { dark, primary, white } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
-import { axios } from "@/utils/api";
+import { sendCkycOtp, validateCkycOtp } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { router, Stack } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useQueryClient } from "@tanstack/react-query";
+import Toast from "react-native-toast-message";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -24,8 +26,11 @@ import {
 export default function CKYCOTP() {
 	const { t } = useTranslation();
 	const { runStep } = useJourneyLoader();
+	const queryClient = useQueryClient();
 	useJourneyTracker("/ckyc-otp");
 
+	const params = useLocalSearchParams<{ sessionId?: string }>();
+	const [sessionId, setSessionId] = useState<string | undefined>(params.sessionId);
 	const [otp, setOtp] = useState(["", "", "", "", "", ""]);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [attemptCount, setAttemptCount] = useState(0);
@@ -108,13 +113,21 @@ export default function CKYCOTP() {
 			if (__DEV__) {
 				console.log("📤 [CKYC] Resending CKYC OTP...");
 			}
-			await axios.post("onefin/ckyc/resend-otp");
+			const res = await sendCkycOtp();
+			if (res.success && res.data?.session_id) {
+				setSessionId(res.data.session_id);
+			}
 			startResendTimer();
-		} catch (e) {
+		} catch (e: any) {
 			if (__DEV__) {
 				console.warn("⚠️ [CKYC] Resend OTP failed, allowing retry");
 			}
 			setCanResend(true);
+			Toast.show({
+				type: "error",
+				text1: t("alert", "Alert"),
+				text2: e?.detail || e?.message || t("failedToSendOTP", "Failed to send OTP"),
+			});
 		}
 	};
 
@@ -143,82 +156,50 @@ export default function CKYCOTP() {
 				console.log("📤 [CKYC] Validating 6-digit OTP...");
 			}
 			await runStep("ekyc_ckyc", async () => {
-				const response = await axios.post("onefin/ckyc/validate-otp", { otp: otpString });
+				const response = await validateCkycOtp({
+					otp: otpString,
+					session_id: sessionId,
+				});
 
-				if (__DEV__) {
-					console.log("✅ [CKYC] OTP validated successfully (status: 200)");
+				if (response.success) {
+					if (__DEV__) {
+						console.log("✅ [CKYC] OTP validated successfully");
+					}
+					setAttemptCount(0);
+					setErrorMessage(null);
+					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+
+					router.replace({
+						pathname: "/ckyc-instructions",
+						params: { startSelfie: "true" },
+					});
+					return;
 				}
 
-				// After OTP success, reset attempt count and proceed
-				setAttemptCount(0);
-				setErrorMessage(null);
+				// If validate-otp returned HTTP 200 with success: false
+				const data = response.data;
+				if (data?.switch_to_digilocker) {
+					router.replace("/digilocker-kyc" as any);
+					return;
+				}
 
-				// Extract address parts and hand off to ckyc-instructions
-				const addrPerm = JSON.stringify(
-					response.data?.ckyc_data?.permanent_address_parts || {}
-				);
-				const addrCorr = JSON.stringify(
-					response.data?.ckyc_data?.correspondence_address_parts || {}
-				);
+				const newAttemptCount = data?.ckyc_attempts ?? (attemptCount + 1);
+				setAttemptCount(newAttemptCount);
 
-				router.replace({
-					pathname: "/ckyc-instructions",
-					params: { startSelfie: "true", permAddressData: addrPerm, corrAddressData: addrCorr },
-				});
+				setErrorMessage(
+					response.message ||
+						t("invalidOtpEnteredPleaseTryAgain", "Invalid OTP entered. Please try again.")
+				);
+				setOtp(["", "", "", "", "", ""]);
+				inputRefs.current[0]?.focus();
 			});
 		} catch (error: any) {
-			// Increment attempt count
-			const newAttemptCount = attemptCount + 1;
-			setAttemptCount(newAttemptCount);
-
-			// Check if this is the last attempt (3rd attempt)
-			const isLastAttempt = newAttemptCount >= 3;
-
-			// Extract remaining attempts from API response (if available)
-			let remainingAttempts = 3 - newAttemptCount;
-
-			try {
-				const errorData = error?.response?.data;
-				const rawErrorMsg = errorData?.error?.message || errorData?.message || "";
-				const remainingMatch = rawErrorMsg.match(/Remaining attempts: (\d+)/i);
-				if (remainingMatch) {
-					remainingAttempts = parseInt(remainingMatch[1], 10);
-				}
-			} catch (e) {
-				// Ignore JSON parse errors
-			}
-
-			if (__DEV__) {
-				console.log(
-					`❌ [CKYC] OTP validation failed. Attempt ${newAttemptCount}/3. Remaining: ${remainingAttempts}`
-				);
-			}
-
-			// If last attempt failed, silently fallback directly to /aadhaar-kyc without showing error
-			if (isLastAttempt || remainingAttempts <= 0) {
-				if (__DEV__) {
-					console.log(
-						"❌ [CKYC] CKYC verification failed after 3 attempts — silently falling back to Aadhaar KYC (/aadhaar-kyc)"
-					);
-				}
-				setErrorMessage(null);
-				setOtp(["", "", "", "", "", ""]);
-				router.replace("/aadhaar-kyc" as any);
-				return;
-			}
-
-			// Professional error message (not showing raw API error)
-			const professionalErrorMsg = t(
-				"invalidOtpEnteredPleaseTryAgain",
-				"Invalid OTP entered. Please try again."
-			);
-
-			// Show error message with remaining attempts count (for attempts 1 and 2)
-			setErrorMessage(professionalErrorMsg);
-
-			// Clear OTP fields after failed attempt and focus first input
-			setOtp(["", "", "", "", "", ""]);
-			inputRefs.current[0]?.focus();
+			console.error("❌ [CKYC] OTP validation transport/server error:", error);
+			Toast.show({
+				type: "error",
+				text1: t("alert", "Alert"),
+				text2: error?.detail || error?.message || t("somethingWentWrong", "Something went wrong"),
+			});
 		} finally {
 			setTimeout(() => setIsSubmitting(false), 300);
 		}

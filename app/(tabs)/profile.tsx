@@ -391,7 +391,11 @@ export default function Profile() {
 	);
 
 	return (
-		<ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+		<ScrollView
+			style={styles.container}
+			showsVerticalScrollIndicator={false}
+			keyboardShouldPersistTaps="handled"
+			keyboardDismissMode="on-drag">
 			<StatusBar style="dark" />
 			{/* User Profile Card */}
 			<View style={styles.profileCardWrapper}>
@@ -411,15 +415,19 @@ export default function Profile() {
 					{/* User Info */}
 					<View style={styles.userInfo}>
 						<Text style={styles.userName} numberOfLines={1}>
-							{userProfile?.personal_details?.full_name ?? t("user")}
+							{userProfile?.personal_details?.full_name ||
+								(userProfile as any)?.profile?.full_name ||
+								(userProfile as any)?.full_name ||
+								dashboardData?.user_summary?.name ||
+								t("user")}
 						</Text>
 						<View style={styles.phoneRow}>
 							<MaterialIcons name="call" size={14} color="#16A34A" />
 							<Text style={styles.userPhone}>
-								{userProfile?.phone_number
-									? userProfile.phone_number.startsWith("+91")
-										? userProfile.phone_number
-										: `+91 - ${userProfile.phone_number}`
+								{userProfile?.phone_number || dashboardData?.user_summary?.phone_number
+									? (userProfile?.phone_number || dashboardData?.user_summary?.phone_number)?.startsWith("+91")
+										? (userProfile?.phone_number || dashboardData?.user_summary?.phone_number)
+										: `+91 - ${userProfile?.phone_number || dashboardData?.user_summary?.phone_number}`
 									: ""}
 							</Text>
 						</View>
@@ -610,6 +618,7 @@ export default function Profile() {
 											value={feedback}
 											onChangeText={setFeedback}
 											textAlignVertical="top"
+											autoCapitalize="sentences"
 											editable={!isSubmittingFeedback}
 										/>
 

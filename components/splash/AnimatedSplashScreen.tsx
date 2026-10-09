@@ -1,7 +1,7 @@
 import { Images } from "@/constants/images";
 import { height, width } from "@/utils/dimensions";
 import { Image } from "expo-image";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { StyleSheet, View } from "react-native";
 import Animated, {
 	Easing,
@@ -31,51 +31,59 @@ export const AnimatedSplashScreen = ({
 	const textTranslateX = useSharedValue(width(6));
 	const containerOpacity = useSharedValue(1);
 
+	const hasStartedRef = useRef(false);
+	const hasExitedRef = useRef(false);
+
 	useEffect(() => {
+		if (hasStartedRef.current) return;
+		hasStartedRef.current = true;
+
 		// Hand off native splash immediately
 		onNativeSplashHandoff();
 
-		// Phase 1 (0ms - 650ms): Logo gentle scale settling in exact center
+		// Phase 1 (0ms - 550ms): Logo gentle scale settling in exact center
 		logoScale.value = withTiming(1.0, {
-			duration: 650,
+			duration: 550,
 			easing: Easing.bezier(0.25, 0.1, 0.25, 1),
 		});
 
-		// Phase 2 (400ms - 1050ms): Unified lockup moves to center as title reveals
-		// Since lockup moves as a single unit, spacing between 'R' and wordmark is permanently locked
+		// Phase 2 (250ms - 800ms): Unified lockup moves to center as title reveals
 		lockupTranslateX.value = withDelay(
-			400,
+			250,
 			withTiming(0, {
-				duration: 650,
+				duration: 550,
 				easing: Easing.bezier(0.16, 1, 0.3, 1),
 			})
 		);
 
 		textOpacity.value = withDelay(
-			420,
+			280,
 			withTiming(1, {
-				duration: 550,
+				duration: 450,
 				easing: Easing.out(Easing.quad),
 			})
 		);
 
 		textTranslateX.value = withDelay(
-			400,
+			250,
 			withTiming(0, {
-				duration: 650,
+				duration: 550,
 				easing: Easing.bezier(0.16, 1, 0.3, 1),
 			})
 		);
-	}, [logoScale, lockupTranslateX, textOpacity, textTranslateX, onNativeSplashHandoff]);
+	}, []);
 
-	// Phase 3 & 4: Steady brand viewing hold (~1.3s) then soft dissolve (450ms)
+	// Steady viewing hold (~500ms after isReady) then crisp dissolve (350ms)
 	useEffect(() => {
-		if (isReady) {
+		if (isReady && !hasExitedRef.current) {
 			const exitTimer = setTimeout(() => {
+				if (hasExitedRef.current) return;
+				hasExitedRef.current = true;
+
 				containerOpacity.value = withTiming(
 					0,
 					{
-						duration: 450,
+						duration: 350,
 						easing: Easing.inOut(Easing.quad),
 					},
 					(finished) => {
@@ -84,11 +92,11 @@ export const AnimatedSplashScreen = ({
 						}
 					}
 				);
-			}, 2400);
+			}, 500);
 
 			return () => clearTimeout(exitTimer);
 		}
-	}, [isReady, containerOpacity, onAnimationComplete]);
+	}, [isReady]);
 
 	// Animated styles
 	const lockupAnimatedStyle = useAnimatedStyle(() => ({

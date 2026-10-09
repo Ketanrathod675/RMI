@@ -60,8 +60,8 @@ export default function VerifyPhone() {
 			const response = await axios.post(URLS.auth.forgot_mpin, data);
 			return response?.data;
 		},
-		onSuccess: (data) => {
-			console.log("Resend OTP success:", data);
+		onSuccess: () => {
+			console.log("Resend OTP success");
 			setCountdown(60);
 			Toast.show({
 				type: "success",
@@ -88,8 +88,8 @@ export default function VerifyPhone() {
 			const response = await axios.post(URLS.auth.verify_mpin_reset_otp, data);
 			return response?.data;
 		},
-		onSuccess: (data) => {
-			console.log("verify mpin reset otp", data);
+		onSuccess: () => {
+			console.log("verify mpin reset otp success");
 
 			setOtpVerified(true);
 			Toast.show({

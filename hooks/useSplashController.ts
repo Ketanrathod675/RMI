@@ -9,7 +9,6 @@ import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { InteractionManager } from "react-native";
 
 export type SplashStatus = "initializing" | "ready" | "animating_out" | "completed";
 
@@ -35,6 +34,7 @@ export function useSplashController(): SplashControllerState {
 	const startTimeRef = useRef<number>(Date.now());
 	const hasHandedOffRef = useRef(false);
 	const hasRunStartupRef = useRef(false);
+	const hasNavigatedRef = useRef(false);
 
 	// Seamless native splash handoff
 	const onNativeSplashHandoff = useCallback(async () => {
@@ -110,6 +110,15 @@ export function useSplashController(): SplashControllerState {
 					targetRoute = "/(tabs)";
 				} else if (authResult) {
 					targetRoute = "/(tabs)";
+					// Pre-hydrate dashboard data & storage in background so dashboard has instant data
+					try {
+						const { getUserDashboardData } = await import("@/utils/api/services/user.service");
+						getUserDashboardData().catch((wfErr) => {
+							console.warn("⚠️ [useSplashController] Pre-fetch dashboard error:", wfErr);
+						});
+					} catch {
+						// Safe fallback
+					}
 				} else {
 					targetRoute = "/login";
 				}
@@ -125,13 +134,27 @@ export function useSplashController(): SplashControllerState {
 				setResolvedTarget(targetRoute);
 				setStatus("ready");
 
-				// Pre-navigate directly behind the opaque splash screen so destination screen is fully mounted and ready
-				router.replace(targetRoute as any);
+				// Pre-navigate directly behind the opaque splash screen once navigation is mounted
+				setTimeout(() => {
+					try {
+						router.replace(targetRoute as any);
+						hasNavigatedRef.current = true;
+					} catch {
+						// Safe fallback if navigation is still mounting
+					}
+				}, 50);
 			} catch (error) {
 				if (!isMounted) return;
 				setResolvedTarget("/login");
 				setStatus("ready");
-				router.replace("/login");
+				setTimeout(() => {
+					try {
+						router.replace("/login");
+						hasNavigatedRef.current = true;
+					} catch {
+						// Safe fallback
+					}
+				}, 50);
 			}
 		}
 
@@ -149,8 +172,18 @@ export function useSplashController(): SplashControllerState {
 		setStatus("completed");
 		dispatch(setStartupCompleted(true));
 
+		// Only navigate if pre-navigation behind the splash hasn't already executed
+		if (!hasNavigatedRef.current) {
+			hasNavigatedRef.current = true;
+			try {
+				router.replace(resolvedTarget as any);
+			} catch (navErr) {
+				console.warn("⚠️ [Splash] Navigation handoff error:", navErr);
+			}
+		}
+
 		// Run deferred, non-blocking telemetry and background tasks post-splash
-		InteractionManager.runAfterInteractions(() => {
+		requestAnimationFrame(() => {
 			if (__DEV__) {
 				console.log("⚡ [Splash] Startup completed seamlessly. Target:", resolvedTarget);
 			}

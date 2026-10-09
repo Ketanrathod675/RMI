@@ -1,904 +1,597 @@
-import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
+import FiveSecDelay from "@/components/FiveSecDelay";
+import RejectionModal from "@/components/RejectionModal";
+import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
-import { dark, dark_primary, primary, white } from "@/constants/Colors";
-import { Images } from "@/constants/images";
-import { useAuth } from "@/hooks/useAuth";
-import { useJourneyTracker } from "@/hooks/useJourneyTracker";
-import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
+import { dark_primary, primary, white } from "@/constants/Colors";
+import {
+	isEmailFixable,
+	isPanFixable,
+	pollAssessmentChecks,
+	useAssessmentChecksController,
+} from "@/hooks/useAssessmentChecks";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
-	getUserDashboardData,
-	StepHref,
-	type SendEmailOtpRequestType,
-	type VerifyEmailOtpRequestType,
+	getHandshakeStatus,
+	getUserProfile,
+	retryAssessmentChecks,
+	type AssessmentChecks,
 } from "@/utils/api";
-// TODO: migrate off legacy API
-import { getMyDetails } from "@/utils/api/kyc";
-// TODO: migrate off legacy API (send_email_otp / verify_email_otp not yet on RMI_Backend)
-const sendEmailOtp = async (_data: SendEmailOtpRequestType): Promise<{ expires_in?: number; message?: string }> => ({ expires_in: 60, message: "" });
-const verifyEmailOtp = async (_data: VerifyEmailOtpRequestType): Promise<{ message?: string }> => ({ message: "" });
-import { font, height, width } from "@/utils/dimensions";
-import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { height, width } from "@/utils/dimensions";
+import { resolveLeadId } from "@/utils/leadId";
+import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
 import {
 	ActivityIndicator,
 	BackHandler,
-	Image,
-	KeyboardAvoidingView,
-	Platform,
-	ScrollView,
+	Keyboard,
 	StyleSheet,
 	Text,
 	TextInput,
 	TouchableOpacity,
 	View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 
-const EMAIL_REGEX = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-/**
- * Checks if the backend error corresponds to email deduplication
- * (i.e. this email is already registered/linked to another account).
- */
-export const isEmailDeduplicationError = (err: any): boolean => {
-	const data = err?.response?.data;
-	const msg = (
-		data?.message ||
-		data?.detail ||
-		data?.error ||
-		(typeof data === "string" ? data : "") ||
-		err?.message ||
-		""
-	).toLowerCase();
-	const code = (data?.code || "").toLowerCase();
-
-	return (
-		code.includes("duplicate") ||
-		code.includes("email_exists") ||
-		code.includes("already_exists") ||
-		msg.includes("already exists") ||
-		msg.includes("already registered") ||
-		msg.includes("already linked") ||
-		msg.includes("already used") ||
-		msg.includes("already associated") ||
-		msg.includes("duplicate")
-	);
-};
-
-export default function VerifyEmailScreen() {
+export default function VerifyEmail() {
 	const router = useRouter();
-	const insets = useSafeAreaInsets();
-	const params = useLocalSearchParams<{ email?: string }>();
+	const params = useLocalSearchParams();
 	const { t } = useTranslation();
-	const { userId } = useAuth();
+	const { signal, cancel } = useAssessmentChecksController();
 
-	// Journey tracking
-	useJourneyTracker("/verify-email");
+	const [email, setEmail] = useState("");
+	const [emailError, setEmailError] = useState("");
+	const [serverError, setServerError] = useState("");
+	const [remainingAttempts, setRemainingAttempts] = useState<number>(2);
+	const [isVerifying, setIsVerifying] = useState(false);
+	const [isLoadingDetails, setIsLoadingDetails] = useState(true);
 
-	// Screen state
-	const [step, setStep] = useState<"email" | "otp">("email");
-	const [email, setEmail] = useState<string>(params.email ? String(params.email).trim() : "");
-	const [emailError, setEmailError] = useState<string>("");
-	const [dedupError, setDedupError] = useState<string>("");
-	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
-	const navigation = useNavigation();
+	// Still checking panel state (on network error / timeout)
+	const [isStillChecking, setIsStillChecking] = useState(false);
+	const [lastCheckError, setLastCheckError] = useState<"error" | "timeout" | null>(null);
 
-	// OTP state
-	const [otp, setOtp] = useState<string[]>(["", "", "", ""]);
-	const [otpError, setOtpError] = useState<string>("");
-	const [resendTimer, setResendTimer] = useState<number>(0);
-	const [isCheckingInitialStatus, setIsCheckingInitialStatus] = useState<boolean>(true);
-	const [isAdvancing, setIsAdvancing] = useState<boolean>(false);
+	// Rejection modal states
+	const [delayVisible, setDelayVisible] = useState(false);
+	const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
+	const [rejectionCountdown, setRejectionCountdown] = useState(15);
 
-	const otpInputRefs = useRef<(TextInput | null)[]>([]);
-	const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const handleBack = useCallback(() => {
+		cancel();
+		router.replace("/(tabs)");
+	}, [cancel, router]);
 
-	// Resend countdown timer
+	// Hardware back button handling
 	useEffect(() => {
-		if (resendTimer > 0) {
-			timerIntervalRef.current = setInterval(() => {
-				setResendTimer((prev) => {
-					if (prev <= 1) {
-						if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-						return 0;
-					}
-					return prev - 1;
-				});
-			}, 1000);
-		}
+		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
+			handleBack();
+			return true;
+		});
+		return () => backHandler.remove();
+	}, [handleBack]);
 
-		return () => {
-			if (timerIntervalRef.current) {
-				clearInterval(timerIntervalRef.current);
-			}
-		};
-	}, [resendTimer]);
-
-	// Navigate dynamically to the next step from dashboard data
-	const advanceToNextStep = useCallback(async () => {
-		setIsAdvancing(true);
-		try {
-			const dashboardData = await getUserDashboardData();
-			const currentStep = dashboardData?.workflow_progress?.current_step;
-
-			if (__DEV__) {
-				console.log("📊 [VerifyEmail] Advancing via dashboard current_step:", currentStep);
-			}
-
-			if (currentStep && StepHref[currentStep as keyof typeof StepHref]) {
-				const nextPath = StepHref[currentStep as keyof typeof StepHref];
-				// Avoid loop/regression if current_step still points to pan_verification / verify-email or earlier steps
-				if (nextPath !== "/verify-email" && nextPath !== "/loan-application") {
-					router.replace(nextPath as any);
-					return;
-				}
-			}
-		} catch (error) {
-			console.warn("⚠️ [VerifyEmail] Error fetching dashboard on email verification success:", error);
-		}
-
-		// Standard progression fallback
-		router.replace("/professional-details" as any);
-	}, [router]);
-
-	// Check if user already has an email or is already verified on mount
+	// Handle initial mount check
 	useEffect(() => {
 		let isMounted = true;
 
-		async function checkEmailStatus() {
+		const init = async () => {
 			try {
-				const details = await getMyDetails();
+				let initialEmail = (params.email as string) || "";
+				try {
+					const profile = await getUserProfile();
+					const meData = (profile as any)?.data || profile;
+					const profileEmail = meData?.email || meData?.profile?.email;
+					if (profileEmail && !initialEmail) {
+						initialEmail = String(profileEmail);
+					}
+				} catch {
+					// Fallback
+				}
+
+				if (isMounted && initialEmail) {
+					setEmail(initialEmail);
+				}
+
+				// Check initial handshake status without arguments
+				const checks = await getHandshakeStatus();
 				if (!isMounted) return;
 
-				const kyc = details?.kyc_record;
-				const existingEmail = kyc?.email || details?.email || params.email;
-
-				if (existingEmail && !email) {
-					setEmail(String(existingEmail).trim());
-				}
-
-				// If already verified, advance directly without blocking
-				const alreadyVerified =
-					kyc?.is_email_verified === true || details?.email_verified === true;
-				if (alreadyVerified) {
-					if (__DEV__) {
-						console.log("ℹ️ [VerifyEmail] Email already marked verified in backend. Advancing...");
-					}
-					await advanceToNextStep();
+				if (checks.status === "approved") {
+					router.replace({
+						pathname: "/professional-details" as any,
+						params: { disableBack: "true" },
+					});
 					return;
 				}
-			} catch (err) {
-				if (__DEV__) {
-					console.log("ℹ️ [VerifyEmail] Could not load prior kyc details:", err);
+
+				if (checks.status === "rejected") {
+					if (isPanFixable(checks)) {
+						router.replace("/verify-pan" as any);
+						return;
+					}
+					if (isEmailFixable(checks)) {
+						setRemainingAttempts(checks.remaining_email_updates);
+						setIsLoadingDetails(false);
+						return;
+					}
+					// Final rejection
+					setIsLoadingDetails(false);
+					setDelayVisible(true);
+					return;
 				}
-			} finally {
+
+				if (checks.status === "pending" || checks.status === "error") {
+					router.replace({
+						pathname: "/new-assessment-fee" as any,
+						params: { resumeChecks: "true" },
+					});
+					return;
+				}
+
+				setIsLoadingDetails(false);
+			} catch (err) {
 				if (isMounted) {
-					setIsCheckingInitialStatus(false);
+					setIsLoadingDetails(false);
 				}
 			}
-		}
+		};
 
-		checkEmailStatus();
+		init();
 
 		return () => {
 			isMounted = false;
 		};
-	}, [advanceToNextStep, email, params.email]);
+	}, [params.email, router]);
 
-	// Handle hardware back press and navigation events
-	useFocusEffect(
-		useCallback(() => {
-			const unsubscribe = navigation.addListener("beforeRemove", (e) => {
-				if (["GO_BACK", "POP"].includes(e.data.action.type)) {
-					if (step === "otp") {
-						e.preventDefault();
-						setStep("email");
-						setOtp(["", "", "", ""]);
-						setOtpError("");
-					} else {
-						e.preventDefault();
-						setIsExitModalVisible(true);
-					}
-				}
-			});
-
-			const onBackPress = () => {
-				if (step === "otp") {
-					// Step back to email editing
-					setStep("email");
-					setOtp(["", "", "", ""]);
-					setOtpError("");
-					return true;
-				}
-				setIsExitModalVisible(true);
-				return true;
-			};
-
-			const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
-			return () => {
-				unsubscribe();
-				sub.remove();
-			};
-		}, [step, navigation])
-	);
-
-	// Mutation: Send Email OTP
-	const { mutate: sendOtpMutation, isPending: isSendingOtp } = useNetworkAwareMutation({
-		mutationFn: sendEmailOtp,
-		onSuccess: (data) => {
-			if (__DEV__) {
-				console.log("📧 [VerifyEmail] sendEmailOtp success:", data);
-			}
-			setDedupError("");
-			setEmailError("");
-			setOtpError("");
-			setResendTimer(data?.expires_in ? Math.min(data.expires_in, 60) : 60);
-			setStep("otp");
-
-			Toast.show({
-				type: "success",
-				text1: t("otpSent", "OTP Sent"),
-				text2: data?.message || t("otpSentToEmail", "4-digit OTP sent to your email address"),
-				visibilityTime: 3000,
-			});
-		},
-		onError: (err: any) => {
-			if (__DEV__) {
-				console.error("❌ [VerifyEmail] sendEmailOtp error:", err?.response?.data || err);
-			}
-
-			// Distinct handling for email deduplication failure case
-			if (isEmailDeduplicationError(err)) {
-				const errorMsg =
-					err?.response?.data?.message ||
-					t(
-						"emailAlreadyLinked",
-						"This email is already linked to another account. Please use a different email address."
-					);
-				setDedupError(errorMsg);
-				setEmailError(errorMsg);
-
-				Toast.show({
-					type: "error",
-					text1: t("error", "Email Already Registered"),
-					text2: errorMsg,
-					visibilityTime: 5000,
+	// Handle Outcome branching from AssessmentChecks
+	const handleAssessmentOutcome = useCallback(
+		(checks: AssessmentChecks) => {
+			if (checks.status === "approved") {
+				router.replace({
+					pathname: "/professional-details" as any,
+					params: { disableBack: "true" },
 				});
 				return;
 			}
 
-			// Format or user not found errors
-			const status = err?.response?.status;
-			const backendMsg = err?.response?.data?.message || err?.response?.data?.detail;
-
-			if (status === 404) {
-				setEmailError(backendMsg || "User account not found. Please log in again.");
-			} else if (status === 400) {
-				setEmailError(backendMsg || t("invalidEmail", "Please enter a valid email address"));
-			} else {
-				setEmailError(backendMsg || t("failedToSendOTP", "Failed to send OTP. Please try again."));
+			if (checks.status === "rejected") {
+				if (isPanFixable(checks)) {
+					router.replace("/verify-pan" as any);
+					return;
+				}
+				if (isEmailFixable(checks)) {
+					setRemainingAttempts(checks.remaining_email_updates);
+					setServerError(t("emailVerificationFailed"));
+					return;
+				}
+				// Final rejection (not fixable)
+				setDelayVisible(true);
+				return;
 			}
 
-			Toast.show({
-				type: "error",
-				text1: t("failedToSendOTP", "Failed to send OTP"),
-				text2: backendMsg || t("pleaseTryAgain", "Please try again"),
-				visibilityTime: 4000,
-			});
+			// error or pending
+			setLastCheckError("error");
+			setIsStillChecking(true);
 		},
-	});
+		[router, t],
+	);
 
-	// Mutation: Verify Email OTP
-	const { mutate: verifyOtpMutation, isPending: isVerifyingOtp } = useNetworkAwareMutation({
-		mutationFn: verifyEmailOtp,
-		onSuccess: async (data) => {
-			if (__DEV__) {
-				console.log("✅ [VerifyEmail] verifyEmailOtp success:", data);
-			}
-			setOtpError("");
+	const handleVerify = async () => {
+		Keyboard.dismiss();
+		const cleanEmail = email.trim().toLowerCase();
 
-			Toast.show({
-				type: "success",
-				text1: t("emailVerified", "Email Verified"),
-				text2: data?.message || t("yourEmailHasBeenVerified", "Your email has been verified successfully"),
-				visibilityTime: 2500,
-			});
+		if (!cleanEmail) {
+			setEmailError(t("enterValidEmail") || "Please enter a valid email address");
+			return;
+		}
 
-			// Advance using dashboard fetch
-			await advanceToNextStep();
-		},
-		onError: (err: any) => {
-			if (__DEV__) {
-				console.error("❌ [VerifyEmail] verifyEmailOtp error:", err?.response?.data || err);
-			}
+		if (!EMAIL_REGEX.test(cleanEmail)) {
+			setEmailError(t("enterValidEmail") || "Please enter a valid email address");
+			return;
+		}
 
-			// Surface whatever specific message comes back from the service
-			const backendMsg =
-				err?.response?.data?.message ||
-				err?.response?.data?.detail ||
-				err?.message ||
-				t("invalidOTP", "Invalid or expired OTP");
-
-			setOtpError(backendMsg);
-
-			Toast.show({
-				type: "error",
-				text1: t("invalidOTP", "Invalid OTP"),
-				text2: backendMsg,
-				visibilityTime: 4000,
-			});
-		},
-	});
-
-	const handleSendOtp = () => {
-		const trimmed = email.trim();
-		setDedupError("");
 		setEmailError("");
+		setServerError("");
+		setIsStillChecking(false);
+		setIsVerifying(true);
 
-		if (!trimmed) {
-			setEmailError(t("enterValidEmail", "Please enter a valid email address"));
-			return;
-		}
-
-		if (!EMAIL_REGEX.test(trimmed)) {
-			setEmailError(t("invalidEmail", "Please enter a valid email address"));
-			return;
-		}
-
-		const payload: SendEmailOtpRequestType = {
-			email: trimmed,
-			...(userId ? { user_id: userId } : {}),
-		};
-
-		sendOtpMutation(payload);
-	};
-
-	const handleVerifyOtp = () => {
-		const enteredOtp = otp.join("").trim();
-		setOtpError("");
-
-		if (enteredOtp.length !== 4) {
-			setOtpError(t("pleaseEnter4DigitOTP", "Please enter 4-digit OTP"));
-			return;
-		}
-
-		const payload: VerifyEmailOtpRequestType = {
-			email: email.trim(),
-			otp: enteredOtp,
-			...(userId ? { user_id: userId } : {}),
-		};
-
-		verifyOtpMutation(payload);
-	};
-
-	const handleOtpChange = (value: string, index: number) => {
-		setOtpError("");
-		const newOtp = [...otp];
-		const cleaned = value.replace(/[^0-9]/g, "");
-
-		if (cleaned.length > 1) {
-			// Handle paste into box
-			const digits = cleaned.slice(0, 4).split("");
-			for (let i = 0; i < 4; i++) {
-				newOtp[i] = digits[i] || "";
+		try {
+			const leadId = await resolveLeadId(params.lead_id as string);
+			if (!leadId) {
+				Toast.show({
+					type: "error",
+					text1: t("detailsNotFound") || "Lead details not found",
+					text2: t("pleaseTryAgain") || "Please try again from dashboard",
+				});
+				setIsVerifying(false);
+				return;
 			}
-			setOtp(newOtp);
-			const nextFocus = Math.min(digits.length, 3);
-			otpInputRefs.current[nextFocus]?.focus();
-			return;
-		}
 
-		newOtp[index] = cleaned;
-		setOtp(newOtp);
+			try {
+				await retryAssessmentChecks({
+					lead_id: leadId,
+					updated_email: cleanEmail,
+				});
+			} catch (retryErr: any) {
+				const status = retryErr?.status ?? retryErr?.response?.status;
+				const detail =
+					retryErr?.detail ??
+					retryErr?.response?.data?.detail ??
+					retryErr?.message ??
+					"Update failed";
+				const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
 
-		if (cleaned && index < 3) {
-			otpInputRefs.current[index + 1]?.focus();
+				if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
+					const checks = await getHandshakeStatus();
+					handleAssessmentOutcome(checks);
+					setIsVerifying(false);
+					return;
+				}
+
+				Toast.show({
+					type: "error",
+					text1: detailStr,
+				});
+				setIsVerifying(false);
+				return;
+			}
+
+			// Poll handshake status until terminal state
+			try {
+				const checks = await pollAssessmentChecks({
+					signal,
+					timeoutMs: 60000,
+					intervalMs: 2000,
+				});
+				handleAssessmentOutcome(checks);
+			} catch (pollErr: any) {
+				if (pollErr?.aborted) return;
+				setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
+				setIsStillChecking(true);
+			}
+		} finally {
+			setIsVerifying(false);
 		}
 	};
 
-	const handleBackspace = (digit: string, index: number) => {
-		setOtpError("");
-		if (!digit && index > 0) {
-			otpInputRefs.current[index - 1]?.focus();
+	const handleRetryChecking = async () => {
+		setIsStillChecking(false);
+		setIsVerifying(true);
+		setServerError("");
+
+		try {
+			const leadId = await resolveLeadId(params.lead_id as string);
+			if (lastCheckError === "error" && leadId) {
+				try {
+					await retryAssessmentChecks({ lead_id: leadId });
+				} catch {
+					// Continue to poll
+				}
+			}
+
+			const checks = await pollAssessmentChecks({
+				signal,
+				timeoutMs: 60000,
+				intervalMs: 2000,
+			});
+			handleAssessmentOutcome(checks);
+		} catch (err: any) {
+			if (err?.aborted) return;
+			setLastCheckError(err?.isTimeout ? "timeout" : "error");
+			setIsStillChecking(true);
+		} finally {
+			setIsVerifying(false);
 		}
 	};
-
-	if (isCheckingInitialStatus) {
-		return (
-			<View style={[styles.container, styles.center]}>
-				<ActivityIndicator size="large" color={dark_primary} />
-				<Text style={styles.loadingStatusText}>
-					{t("loadingDetails", "Fetching details...")}
-				</Text>
-			</View>
-		);
-	}
 
 	return (
-		<View style={styles.container}>
-			{/* Top Header Bar */}
-			<View style={[styles.header, { paddingTop: insets.top + height(1.5) }]}>
-				<TouchableOpacity
-					onPress={() => {
-						if (step === "otp") {
-							setStep("email");
-							setOtp(["", "", "", ""]);
-							setOtpError("");
-						} else {
-							setIsExitModalVisible(true);
-						}
-					}}
-					style={styles.backButton}
-					hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-					<IconSymbol name="arrow-back" size={24} color={dark} />
-				</TouchableOpacity>
-				<Text style={styles.headerTitle}>
-					{t("verifyEmailAddress", "Verify Email Address")}
-				</Text>
-			</View>
-
-			<KeyboardAvoidingView
-				style={styles.flexOne}
-				behavior={Platform.OS === "ios" ? "padding" : "height"}>
-				<ScrollView
-					style={styles.scrollContainer}
-					contentContainerStyle={styles.scrollContent}
-					keyboardShouldPersistTaps="handled"
-					showsVerticalScrollIndicator={false}>
-					{/* Brand Shield Illustration */}
-					<View style={styles.graphicRow}>
-						<Image
-							source={Images.PHONE_OTP}
-							style={styles.graphicImage}
-							resizeMode="contain"
-						/>
+		<View style={styles.root}>
+			{/* Custom Header */}
+			{!isLoadingDetails && (
+				<SafeAreaView edges={["top"]} style={styles.headerSafeArea}>
+					<View style={styles.header}>
+						<TouchableOpacity
+							onPress={handleBack}
+							style={styles.backButton}
+							hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+						>
+							<Ionicons name="arrow-back" size={24} color="#fff" />
+						</TouchableOpacity>
+						<TranslatedText style={styles.headerTitle} translationKey="verifyEmailAddress" />
 					</View>
+				</SafeAreaView>
+			)}
 
+			<SafeAreaView edges={["bottom", "left", "right"]} style={styles.container}>
+				{!isLoadingDetails && (
 					<View style={styles.content}>
-						{step === "email" ? (
-							<>
-								{/* Step 1: Email Entry */}
-								<Text style={styles.title}>
-									{t("verifyEmailAddress", "Verify Email Address")}
+						<TranslatedText style={styles.description} translationKey="weNeedValidEmail" />
+
+						<View style={styles.inputContainer}>
+							<TranslatedText style={styles.label} translationKey="emailAddress" />
+							<TextInput
+								style={[
+									styles.input,
+									emailError || serverError ? styles.inputError : null,
+								]}
+								value={email}
+								onChangeText={(text) => {
+									const cleaned = text.replace(/\s/g, "");
+									setEmail(cleaned);
+									if (emailError) setEmailError("");
+									if (serverError) setServerError("");
+								}}
+								placeholder="johndoe@example.com"
+								placeholderTextColor="#9CA3AF"
+								autoCapitalize="none"
+								keyboardType="email-address"
+								editable={!isVerifying}
+							/>
+							{emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
+							{serverError ? <Text style={styles.errorText}>{serverError}</Text> : null}
+							{remainingAttempts > 0 && !emailError && !serverError ? (
+								<Text style={styles.attemptsText}>
+									{remainingAttempts}{" "}
+									{remainingAttempts === 1
+										? t("attemptLeft", "attempt left")
+										: t("attemptsLeft", "attempts left")}
 								</Text>
-								<Text style={styles.subtitle}>
+							) : null}
+						</View>
+
+						{/* Still checking panel on error/timeout */}
+						{isStillChecking && (
+							<View style={styles.stillCheckingCard}>
+								<Text style={styles.stillCheckingTitle}>
+									{t("stillCheckingDetailsTitle", "We're still checking your details")}
+								</Text>
+								<Text style={styles.stillCheckingDesc}>
 									{t(
-										"weNeedValidEmail",
-										"We need a valid email address to send you important loan documents."
+										"stillCheckingDetailsDesc",
+										"Verification is taking longer than expected. You can try again or check your dashboard.",
 									)}
 								</Text>
-
-								{/* Distinct Deduplication Failure Banner */}
-								{dedupError ? (
-									<View style={styles.dedupBanner}>
-										<MaterialIcons
-											name="error"
-											size={20}
-											color="#B91C1C"
-										/>
-										<View style={styles.dedupTextWrap}>
-											<Text style={styles.dedupTitle}>
-												Email Already Registered
-											</Text>
-											<Text style={styles.dedupMessage}>{dedupError}</Text>
-										</View>
-									</View>
-								) : null}
-
-								<View style={styles.inputSection}>
-									<Text style={styles.inputLabel}>
-										{t("emailAddress", "Email Address")}
-									</Text>
-									<View
-										style={[
-											styles.inputWrapper,
-											(emailError || dedupError) ? styles.inputErrorBorder : null,
-										]}>
-										<MaterialIcons
-											name="mail"
-											size={18}
-											color={emailError ? "#DC2626" : "#6B7280"}
-										/>
-										<TextInput
-											style={styles.textInput}
-											value={email}
-											onChangeText={(text) => {
-												setEmail(text);
-												setEmailError("");
-												setDedupError("");
-											}}
-											placeholder={t("enterEmailAddress", "Enter email address")}
-											placeholderTextColor="#9CA3AF"
-											keyboardType="email-address"
-											autoCapitalize="none"
-											autoCorrect={false}
-											editable={!isSendingOtp}
-										/>
-										{email.length > 0 && !isSendingOtp && (
-											<TouchableOpacity
-												onPress={() => {
-													setEmail("");
-													setEmailError("");
-													setDedupError("");
-												}}
-												hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-												<IconSymbol
-													name="close"
-													size={18}
-													color="#9CA3AF"
-												/>
-											</TouchableOpacity>
-										)}
-									</View>
-
-									{emailError ? (
-										<Text style={styles.errorHelperText}>{emailError}</Text>
-									) : null}
-								</View>
-
-								{/* Send OTP CTA */}
-								<TouchableOpacity
-									style={[
-										styles.primaryButton,
-										{ opacity: !email.trim() || isSendingOtp ? 0.7 : 1 },
-									]}
-									onPress={handleSendOtp}
-									disabled={!email.trim() || isSendingOtp}
-									activeOpacity={0.85}>
-									{isSendingOtp ? (
-										<ActivityIndicator size="small" color={dark} />
-									) : (
-										<Text style={styles.primaryButtonText}>
-											{t("sendOtp", "Send OTP")}
-										</Text>
-									)}
-								</TouchableOpacity>
-							</>
-						) : (
-							<>
-								{/* Step 2: 4-Box OTP Verification */}
-								<Text style={styles.title}>
-									{t("enterEmailOtp", "Enter Email OTP")}
-								</Text>
-
-								<View style={styles.emailDisplayRow}>
-									<Text style={styles.emailDisplayText} numberOfLines={1}>
-										Sent to: <Text style={styles.emailHighlight}>{email}</Text>
-									</Text>
+								<View style={styles.stillCheckingActions}>
 									<TouchableOpacity
-										onPress={() => {
-											setStep("email");
-											setOtp(["", "", "", ""]);
-											setOtpError("");
-										}}
-										hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-										<Text style={styles.editEmailLink}>
-											{t("changeEmail", "Edit")}
+										style={styles.retryButton}
+										onPress={handleRetryChecking}
+										disabled={isVerifying}
+									>
+										<Text style={styles.retryButtonText}>
+											{t("tryAgain", "Try Again")}
+										</Text>
+									</TouchableOpacity>
+									<TouchableOpacity
+										style={styles.dashboardButton}
+										onPress={handleBack}
+									>
+										<Text style={styles.dashboardButtonText}>
+											{t("goToDashboard", "Go to Dashboard")}
 										</Text>
 									</TouchableOpacity>
 								</View>
+							</View>
+						)}
 
-								{/* 4-Digit OTP Boxes */}
-								<View style={styles.otpContainer}>
-									{otp.map((digit, index) => (
-										<TextInput
-											key={index}
-											ref={(ref) => {
-												otpInputRefs.current[index] = ref;
-											}}
-											style={[
-												styles.otpBox,
-												digit ? styles.otpBoxFilled : null,
-												otpError ? styles.otpBoxError : null,
-											]}
-											value={digit}
-											onChangeText={(val) => handleOtpChange(val, index)}
-											onKeyPress={({ nativeEvent }) => {
-												if (nativeEvent.key === "Backspace") {
-													handleBackspace(digit, index);
-												}
-											}}
-											keyboardType="numeric"
-											maxLength={1}
-											selectTextOnFocus
-											editable={!isVerifyingOtp && !isAdvancing}
+						{!isStillChecking && (
+							<TouchableOpacity
+								style={[styles.button, isVerifying && styles.buttonDisabled]}
+								onPress={handleVerify}
+								disabled={isVerifying}
+								activeOpacity={0.85}
+							>
+								{isVerifying ? (
+									<ActivityIndicator color="white" />
+								) : (
+									<View style={styles.buttonInner}>
+										<TranslatedText
+											style={styles.buttonText}
+											translationKey="verifyAndProceed"
 										/>
-									))}
-								</View>
-
-								{otpError ? (
-									<Text style={styles.otpErrorText}>{otpError}</Text>
-								) : null}
-
-								{/* Resend OTP Row */}
-								<View style={styles.resendContainer}>
-									{resendTimer > 0 ? (
-										<Text style={styles.resendTimerText}>
-											Resend OTP in <Text style={styles.boldTimer}>{resendTimer}s</Text>
-										</Text>
-									) : (
-										<TouchableOpacity
-											onPress={handleSendOtp}
-											disabled={isSendingOtp}
-											activeOpacity={0.8}>
-											{isSendingOtp ? (
-												<ActivityIndicator size="small" color={dark_primary} />
-											) : (
-												<Text style={styles.resendActiveLink}>
-													{t("resendOTP", "Resend OTP")}
-												</Text>
-											)}
-										</TouchableOpacity>
-									)}
-								</View>
-
-								{/* Verify & Continue CTA */}
-								<TouchableOpacity
-									style={[
-										styles.primaryButton,
-										{
-											opacity:
-												!otp.every((d) => d) || isVerifyingOtp || isAdvancing
-													? 0.7
-													: 1,
-										},
-									]}
-									onPress={handleVerifyOtp}
-									disabled={!otp.every((d) => d) || isVerifyingOtp || isAdvancing}
-									activeOpacity={0.85}>
-									{isVerifyingOtp || isAdvancing ? (
-										<ActivityIndicator size="small" color={dark} />
-									) : (
-										<Text style={styles.primaryButtonText}>
-											{t("verifyAndProceed", "Verify & Proceed")}
-										</Text>
-									)}
-								</TouchableOpacity>
-							</>
+										<IconSymbol name="arrow.right" size={20} color="white" />
+									</View>
+								)}
+							</TouchableOpacity>
 						)}
 					</View>
-				</ScrollView>
-			</KeyboardAvoidingView>
+				)}
+			</SafeAreaView>
 
-			<ExitIntentModal
-				visible={isExitModalVisible}
-				onClose={() => setIsExitModalVisible(false)}
-				onConfirmExit={() => {
-					setIsExitModalVisible(false);
+			<FiveSecDelay
+				visible={delayVisible}
+				onComplete={() => {
+					setDelayVisible(false);
+					setRejectionModalVisible(true);
+				}}
+			/>
+
+			<RejectionModal
+				visible={rejectionModalVisible}
+				countdown={rejectionCountdown}
+				setCountdown={setRejectionCountdown}
+				onClose={() => {
+					setRejectionModalVisible(false);
 					router.replace("/(tabs)");
 				}}
 			/>
+
+			{/* Fullscreen Loader while fetching initial details */}
+			{isLoadingDetails && (
+				<View style={styles.loaderOverlay}>
+					<ActivityIndicator size="large" color="#00C853" />
+					<TranslatedText
+						style={styles.loadingText}
+						translationKey="loadingDetails"
+						fallback="Fetching details..."
+					/>
+				</View>
+			)}
 		</View>
 	);
 }
 
 const styles = StyleSheet.create({
-	container: {
+	root: {
 		flex: 1,
 		backgroundColor: white,
 	},
-	flexOne: {
-		flex: 1,
-	},
-	center: {
-		justifyContent: "center",
-		alignItems: "center",
-	},
-	loadingStatusText: {
-		marginTop: 12,
-		fontSize: font(1.6),
-		color: "#6B7280",
+	headerSafeArea: {
+		backgroundColor: "#000",
 	},
 	header: {
 		flexDirection: "row",
 		alignItems: "center",
-		paddingHorizontal: width(5),
-		paddingBottom: height(1.5),
-		backgroundColor: white,
-		borderBottomWidth: 1,
-		borderBottomColor: "#F3F4F6",
+		paddingHorizontal: 16,
+		paddingVertical: 14,
+		backgroundColor: "#000",
 	},
 	backButton: {
-		marginRight: width(3),
+		marginRight: 16,
 	},
 	headerTitle: {
-		fontSize: font(2.2),
-		fontWeight: "700",
-		color: dark,
+		color: "#fff",
+		fontSize: 18,
+		fontWeight: "bold",
 	},
-	scrollContainer: {
+	container: {
 		flex: 1,
-	},
-	scrollContent: {
-		flexGrow: 1,
-		paddingTop: height(2),
-		paddingBottom: height(4),
-	},
-	graphicRow: {
-		alignItems: "center",
-		justifyContent: "center",
-		marginTop: height(1),
-		marginBottom: height(2),
-	},
-	graphicImage: {
-		width: width(36),
-		height: width(36),
-	},
-	content: {
-		paddingHorizontal: width(6),
-	},
-	title: {
-		fontSize: font(2.3),
-		fontWeight: "700",
-		color: dark,
-		marginBottom: 6,
-	},
-	subtitle: {
-		fontSize: font(1.55),
-		color: "#6B7280",
-		lineHeight: 20,
-		marginBottom: height(2),
-	},
-	dedupBanner: {
-		flexDirection: "row",
-		alignItems: "flex-start",
-		backgroundColor: "#FEF2F2",
-		borderWidth: 1,
-		borderColor: "#FCA5A5",
-		borderRadius: 10,
-		padding: 12,
-		marginBottom: height(2),
-		gap: 10,
-	},
-	dedupTextWrap: {
-		flex: 1,
-	},
-	dedupTitle: {
-		fontSize: font(1.5),
-		fontWeight: "700",
-		color: "#991B1B",
-		marginBottom: 2,
-	},
-	dedupMessage: {
-		fontSize: font(1.4),
-		color: "#B91C1C",
-		lineHeight: 18,
-	},
-	inputSection: {
-		marginBottom: height(3),
-	},
-	inputLabel: {
-		fontSize: font(1.6),
-		fontWeight: "600",
-		color: dark,
-		marginBottom: 8,
-	},
-	inputWrapper: {
-		flexDirection: "row",
-		alignItems: "center",
-		backgroundColor: "#F9FAFB",
-		borderWidth: 1,
-		borderColor: "#E5E7EB",
-		borderRadius: 12,
-		paddingHorizontal: width(3.5),
-		height: 52,
-		gap: 10,
-	},
-	inputErrorBorder: {
-		borderColor: "#DC2626",
-		backgroundColor: "#FEF2F2",
-	},
-	textInput: {
-		flex: 1,
-		fontSize: font(1.7),
-		color: dark,
-		paddingVertical: 0,
-	},
-	errorHelperText: {
-		marginTop: 6,
-		fontSize: font(1.35),
-		color: "#DC2626",
-		fontWeight: "500",
-	},
-	emailDisplayRow: {
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "space-between",
-		backgroundColor: "#F9FAFB",
-		paddingHorizontal: 14,
-		paddingVertical: 10,
-		borderRadius: 10,
-		borderWidth: 1,
-		borderColor: "#E5E7EB",
-		marginBottom: height(2.5),
-	},
-	emailDisplayText: {
-		fontSize: font(1.5),
-		color: "#4B5563",
-		flex: 1,
-		marginRight: 8,
-	},
-	emailHighlight: {
-		fontWeight: "700",
-		color: dark,
-	},
-	editEmailLink: {
-		fontSize: font(1.5),
-		fontWeight: "700",
-		color: dark_primary,
-		textDecorationLine: "underline",
-	},
-	otpContainer: {
-		flexDirection: "row",
-		justifyContent: "space-between",
-		marginBottom: height(2),
-		gap: 12,
-	},
-	otpBox: {
-		flex: 1,
-		height: 60,
-		borderWidth: 1.5,
-		borderColor: "#D1D5DB",
-		borderRadius: 12,
-		textAlign: "center",
-		fontSize: font(2.6),
-		fontWeight: "700",
-		color: dark,
-		backgroundColor: "#F9FAFB",
-	},
-	otpBoxFilled: {
-		borderColor: primary,
 		backgroundColor: white,
 	},
-	otpBoxError: {
-		borderColor: "#DC2626",
+	content: {
+		flex: 1,
+		padding: width(5),
+		justifyContent: "flex-start",
+		paddingTop: height(2),
+	},
+	description: {
+		fontSize: 16,
+		color: "#666",
+		marginBottom: height(3),
+		lineHeight: 24,
+	},
+	inputContainer: {
+		marginBottom: height(3),
+	},
+	label: {
+		fontSize: 14,
+		fontWeight: "600",
+		marginBottom: height(1),
+		color: "#333",
+	},
+	input: {
+		borderWidth: 1,
+		borderColor: "#E5E7EB",
+		borderRadius: 10,
+		paddingHorizontal: 14,
+		paddingVertical: 13,
+		fontSize: 16,
+		color: "#000",
+		backgroundColor: "#FAFAFA",
+	},
+	inputError: {
+		borderColor: "#EF4444",
 		backgroundColor: "#FEF2F2",
 	},
-	otpErrorText: {
-		fontSize: font(1.4),
-		color: "#DC2626",
-		textAlign: "center",
-		marginBottom: height(1.5),
+	errorText: {
+		color: "#EF4444",
+		fontSize: 12,
+		marginTop: 6,
 		fontWeight: "500",
 	},
-	resendContainer: {
-		alignItems: "center",
-		justifyContent: "center",
-		marginBottom: height(3),
-		marginTop: height(0.5),
-	},
-	resendTimerText: {
-		fontSize: font(1.5),
+	attemptsText: {
 		color: "#6B7280",
+		fontSize: 12,
+		marginTop: 6,
 	},
-	boldTimer: {
-		fontWeight: "700",
-		color: dark,
+	button: {
+		backgroundColor: "#00C853",
+		paddingVertical: 16,
+		borderRadius: 12,
+		alignItems: "center",
+		marginTop: height(2),
+		shadowColor: "#00C853",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.2,
+		shadowRadius: 6,
+		elevation: 3,
 	},
-	resendActiveLink: {
-		fontSize: font(1.55),
-		fontWeight: "700",
-		color: dark_primary,
-		textDecorationLine: "underline",
+	buttonDisabled: {
+		opacity: 0.7,
 	},
-	primaryButton: {
-		backgroundColor: primary,
-		height: 52,
-		borderRadius: 14,
+	buttonInner: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+	},
+	buttonText: {
+		color: "white",
+		fontWeight: "bold",
+		fontSize: 18,
+	},
+	stillCheckingCard: {
+		backgroundColor: "#F9FAFB",
+		borderRadius: 12,
+		padding: 16,
+		borderWidth: 1,
+		borderColor: "#E5E7EB",
+		marginTop: 10,
+	},
+	stillCheckingTitle: {
+		fontSize: 16,
+		fontWeight: "600",
+		color: "#1F2937",
+		marginBottom: 6,
+	},
+	stillCheckingDesc: {
+		fontSize: 14,
+		color: "#6B7280",
+		lineHeight: 20,
+		marginBottom: 16,
+	},
+	stillCheckingActions: {
+		flexDirection: "row",
+		gap: 12,
+	},
+	retryButton: {
+		flex: 1,
+		backgroundColor: "#00C853",
+		paddingVertical: 12,
+		borderRadius: 8,
+		alignItems: "center",
+	},
+	retryButtonText: {
+		color: "#fff",
+		fontWeight: "600",
+		fontSize: 14,
+	},
+	dashboardButton: {
+		flex: 1,
+		backgroundColor: "#F3F4F6",
+		paddingVertical: 12,
+		borderRadius: 8,
+		alignItems: "center",
+	},
+	dashboardButtonText: {
+		color: "#374151",
+		fontWeight: "600",
+		fontSize: 14,
+	},
+	loaderOverlay: {
+		position: "absolute",
+		top: 0,
+		left: 0,
+		right: 0,
+		bottom: 0,
+		backgroundColor: white,
 		alignItems: "center",
 		justifyContent: "center",
-		shadowColor: "#000",
-		shadowOffset: { width: 0, height: 2 },
-		shadowOpacity: 0.08,
-		shadowRadius: 4,
-		elevation: 2,
+		zIndex: 9999,
 	},
-	primaryButtonText: {
-		fontSize: font(1.8),
-		fontWeight: "700",
-		color: dark,
+	loadingText: {
+		marginTop: 16,
+		fontSize: 14,
+		color: "#6B7280",
 	},
 });

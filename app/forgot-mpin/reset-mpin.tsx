@@ -37,8 +37,6 @@ export default function ResetMpin() {
 	const { t } = useTranslation();
 	const navigation = useNavigation();
 
-	console.log("phone number, otp", phoneNumber, otpVerified);
-
 	useEffect(() => {
 		const activate = async () => {
 			await ScreenCapture.preventScreenCaptureAsync("reset-mpin");
@@ -140,7 +138,7 @@ export default function ResetMpin() {
 			return response?.data;
 		},
 		onSuccess: (data) => {
-			console.log("Reset MPIN API Response:", data);
+			console.log("Reset MPIN successful");
 			Toast.show({
 				type: "success",
 				text1: t("mpinResetSuccessful"),
@@ -268,8 +266,8 @@ export default function ResetMpin() {
 	return (
 		<KeyboardAvoidingView 
 			style={{ flex: 1 }} 
-			behavior={Platform.OS === "ios" ? "padding" : "height"}
-			keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+			behavior={Platform.OS === "ios" ? "padding" : undefined}
+			keyboardVerticalOffset={0}
 		>
 			<ScrollView
 				contentContainerStyle={styles.scrollContainer}

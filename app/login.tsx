@@ -136,19 +136,29 @@ export default function Login() {
 	});
 
 	const handleRequestOtp = () => {
-		if (mobile.length < 10) {
-			setError("Phone number must be 10 digits");
+		if (mobile.length !== 10) {
+			setError("Please enter a valid 10-digit mobile number");
+			Toast.show({
+				type: "error",
+				text1: t("invalidPhoneNumber") || "Invalid phone number",
+				text2: "Please enter a valid 10-digit mobile number",
+			});
 			return;
 		}
 
-		setError("");
 		const validate = validateMobileAndCountryCode(countryCode!, mobile);
 
 		if (!validate.countryCode.success || !validate.phoneNumber.success) {
 			setError("Please enter a valid phone number");
+			Toast.show({
+				type: "error",
+				text1: t("invalidPhoneNumber") || "Invalid phone number",
+				text2: "Please enter a valid 10-digit mobile number starting with 6-9",
+			});
 			return;
 		}
 
+		setError("");
 		changeCountryCode(countryCode);
 		changePhoneNumber(mobile);
 
@@ -160,7 +170,7 @@ export default function Login() {
 	const handleMobileChange = (text: string) => {
 		const numericText = text.replace(/[^0-9]/g, "");
 		setMobile(numericText);
-		if (numericText.length === 10) {
+		if (error) {
 			setError("");
 		}
 	};
@@ -256,7 +266,11 @@ export default function Login() {
 				<Text style={styles.title}>Mobile Number</Text>
 
 				{/* Unified Phone Input Box */}
-				<View style={styles.unifiedInputContainer}>
+				<View
+					style={[
+						styles.unifiedInputContainer,
+						error ? styles.unifiedInputContainerError : null,
+					]}>
 					<TouchableOpacity
 						style={styles.countryPickerTrigger}
 						activeOpacity={0.7}
@@ -277,6 +291,9 @@ export default function Login() {
 						placeholder="Enter 10-digit number"
 						placeholderTextColor="#94A3B8"
 						keyboardType="number-pad"
+						autoCapitalize="none"
+						returnKeyType="done"
+						onSubmitEditing={handleRequestOtp}
 						maxLength={10}
 						value={mobile}
 						onChangeText={handleMobileChange}
@@ -285,7 +302,10 @@ export default function Login() {
 
 					{mobile.length > 0 && (
 						<TouchableOpacity
-							onPress={() => setMobile("")}
+							onPress={() => {
+								setMobile("");
+								setError("");
+							}}
 							style={styles.clearButton}
 							hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
 							<MaterialIcons name="close" size={18} color="#94A3B8" />
@@ -309,10 +329,11 @@ export default function Login() {
 				<TouchableOpacity
 					style={[
 						styles.button,
-						(isPending || mobile.length < 10) && styles.buttonDisabled,
+						mobile.length === 10 && !isPending ? styles.buttonActive : styles.buttonDisabled,
 					]}
 					onPress={handleRequestOtp}
-					disabled={isPending || mobile.length < 10}>
+					disabled={isPending}
+					activeOpacity={0.8}>
 					{isPending ? (
 						<ActivityIndicator size="small" color="#3F6212" />
 					) : (
@@ -513,6 +534,9 @@ const styles = StyleSheet.create({
 		height: 54,
 		width: "100%",
 	},
+	unifiedInputContainerError: {
+		borderColor: "#EF4444",
+	},
 	countryPickerTrigger: {
 		flexDirection: "row",
 		alignItems: "center",
@@ -550,10 +574,11 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 	},
 	error: {
-		color: "#d32f2f",
+		color: "#EF4444",
 		fontSize: font(1.4),
 		marginTop: height(0.6),
 		marginLeft: width(1),
+		fontWeight: "500",
 	},
 	infoRow: {
 		flexDirection: "row",
@@ -582,8 +607,16 @@ const styles = StyleSheet.create({
 		width: "100%",
 		marginTop: height(3.5),
 	},
+	buttonActive: {
+		opacity: 1,
+		shadowColor: "#84CC16",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.3,
+		shadowRadius: 6,
+		elevation: 3,
+	},
 	buttonDisabled: {
-		opacity: 0.95,
+		opacity: 0.5,
 	},
 	buttonContent: {
 		flexDirection: "row",

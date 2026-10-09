@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+	ActivityIndicator,
 	Alert,
 	BackHandler,
 	Modal,
 	Platform,
-	SafeAreaView,
 	ScrollView,
 	Share,
 	StyleSheet,
@@ -13,7 +13,7 @@ import {
 	TouchableOpacity,
 	View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams, useNavigation } from "expo-router";
 import Toast from "react-native-toast-message";
 import * as DocumentPicker from "expo-document-picker";
@@ -28,35 +28,47 @@ import { dark } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
-import { API_URL } from "@/utils/api";
-// TODO: migrate off legacy API
-import { lookupPincode } from "@/utils/api/bank";
 import {
-	uploadKycDocument,
-	verifyAddress,
-	type AddressVerificationRequestType,
-} from "@/utils/api/kyc";
+	getAddressDocumentTypes,
+	getAddressStatus,
+	getPincodeDetails,
+	getUserDashboardData,
+	StepHref,
+	submitAddress,
+	uploadAddressProof,
+	type SubmitAddressPayload,
+} from "@/utils/api";
+import { Select, type SelectOption } from "@/components";
+import { useQueryClient } from "@tanstack/react-query";
 import { font, height, width } from "@/utils/dimensions";
 
-// ============================================================================
-// PHASE 1 TEMPORARY MOCK: Base Permanent Address Stand-in
-// In Phase 2, this will be fetched from DigiLocker / KYC API response.
-// ============================================================================
-const MOCK_DIGILOCKER_ADDRESS = {
-	house: "Flat 402, Green Valley Apartments",
-	street: "Sector 14, MG Road",
-	loc: "Near City Center",
-	dist: "Gurgaon",
-	pc: "122001",
-	state: "Haryana",
+export type AddressType = {
+	house: string;
+	street: string;
+	loc: string;
+	dist: string;
+	pc: string;
+	state: string;
+	country: string;
+	subdist: string;
+	vtc: string;
+	po: string;
+	landmark: string;
+};
+
+const DEFAULT_EMPTY_ADDRESS: AddressType = {
+	house: "",
+	street: "",
+	loc: "",
+	dist: "",
+	pc: "",
+	state: "",
 	country: "India",
 	subdist: "",
 	vtc: "",
 	po: "",
 	landmark: "",
 };
-
-export type AddressType = typeof MOCK_DIGILOCKER_ADDRESS;
 
 export type UploadedFileType = {
 	name: string;
@@ -83,55 +95,107 @@ export default function AadhaarKyc() {
 
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
-	// Step 1: Address verification form (Phase 1 focus)
-	const [address, setAddress] = useState<AddressType | null>(MOCK_DIGILOCKER_ADDRESS);
+	// Step 1: Address verification form
+	const queryClient = useQueryClient();
+	const [address, setAddress] = useState<AddressType | null>(DEFAULT_EMPTY_ADDRESS);
+	const [isAddressLoading, setIsAddressLoading] = useState(true);
+	const [addressLoadError, setAddressLoadError] = useState<string | null>(null);
+	const [documentTypeOptions, setDocumentTypeOptions] = useState<SelectOption[]>([]);
+	const [selectedDocumentType, setSelectedDocumentType] = useState<string>("electricity_bill");
 	const [currentAddress, setCurrentAddress] = useState<"Yes" | "No">("Yes");
 	const [commAddressLine1, setCommAddressLine1] = useState("");
 	const [commAddressLine2, setCommAddressLine2] = useState("");
 	const [commCity, setCommCity] = useState("");
 	const [commPincode, setCommPincode] = useState("");
 	const [commState, setCommState] = useState("");
+	const [commErrors, setCommErrors] = useState({ addressLine1: "", pincode: "" });
+	const commAddressLine1Ref = useRef<TextInput>(null);
+	const commAddressLine2Ref = useRef<TextInput>(null);
+	const commPincodeRef = useRef<TextInput>(null);
 	const [uploadedFiles, setUploadedFiles] = useState<UploadedFileType[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isUploading, setIsUploading] = useState(false);
 	const [previewFile, setPreviewFile] = useState<{ uri: string; name: string; mimeType?: string } | null>(null);
 	const [isKycSuccessModalVisible, setIsKycSuccessModalVisible] = useState(false);
-	const [successRouteParams, setSuccessRouteParams] = useState<{
-		is_repeat_user: string;
-		next_step: string;
-	}>({ is_repeat_user: "false", next_step: "" });
 
-	const handleContinueSuccess = () => {
+	const handleContinueSuccess = async () => {
 		setIsKycSuccessModalVisible(false);
-		router.push({
-			pathname: "/search-loan",
-			params: successRouteParams,
-		});
+		try {
+			await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+			const dash = await getUserDashboardData();
+			const nextStep = dash?.workflow_progress?.current_step || "bank_details";
+			const targetRoute = StepHref[nextStep as keyof typeof StepHref] || "/verify-bank-details";
+			router.replace(targetRoute as any);
+		} catch {
+			router.replace("/verify-bank-details" as any);
+		}
 	};
 
-	// Load CKYC address if provided in params, otherwise keep mock address
-	useEffect(() => {
-		if (params.permAddressData) {
-			try {
-				const parsed = JSON.parse(String(params.permAddressData));
+	const loadAddressData = useCallback(async () => {
+		setIsAddressLoading(true);
+		setAddressLoadError(null);
+		try {
+			const res = await getAddressStatus();
+			if (res.success && res.data) {
+				const d = res.data;
 				setAddress({
-					house: parsed.PERM_LINE1 || parsed.house || MOCK_DIGILOCKER_ADDRESS.house,
-					street: parsed.PERM_LINE2 || parsed.street || MOCK_DIGILOCKER_ADDRESS.street,
-					loc: parsed.loc || parsed.landmark || MOCK_DIGILOCKER_ADDRESS.loc,
-					dist: parsed.PERM_CITY || parsed.dist || MOCK_DIGILOCKER_ADDRESS.dist,
-					pc: parsed.PERM_PIN || parsed.pc || MOCK_DIGILOCKER_ADDRESS.pc,
-					state: parsed.PERM_STATE || parsed.state || MOCK_DIGILOCKER_ADDRESS.state,
-					country: parsed.country || "India",
-					subdist: parsed.subdist || "",
-					vtc: parsed.vtc || "",
-					po: parsed.po || "",
-					landmark: parsed.landmark || "",
+					house: d.kyc_address || "",
+					street: "",
+					loc: "",
+					dist: d.kyc_city || "",
+					pc: d.kyc_pin_code || "",
+					state: d.kyc_state || "",
+					country: "India",
+					subdist: "",
+					vtc: "",
+					po: "",
+					landmark: "",
 				});
-			} catch (e) {
-				console.warn("Could not parse permAddressData param, using mock address");
+
+				let rawTypes = d.supported_document_types;
+				if (!rawTypes || rawTypes.length === 0) {
+					try {
+						const docTypesRes = await getAddressDocumentTypes();
+						rawTypes = docTypesRes.data?.document_types;
+					} catch {
+						// ignore fallback
+					}
+				}
+
+				const formattedOptions: SelectOption[] = (rawTypes && rawTypes.length > 0)
+					? rawTypes.map((item: any) => {
+							if (typeof item === "string") {
+								return {
+									label: item.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+									value: item,
+								};
+							}
+							return { label: item.label || item.value, value: item.value || item.label };
+					  })
+					: [
+							{ label: "Electricity Bill", value: "electricity_bill" },
+							{ label: "Rental Agreement", value: "rental_agreement" },
+							{ label: "Gas Bill", value: "gas_bill" },
+							{ label: "Water Bill", value: "water_bill" },
+					  ];
+
+				setDocumentTypeOptions(formattedOptions);
+				if (formattedOptions.length > 0) {
+					setSelectedDocumentType(String(formattedOptions[0].value));
+				}
+			} else {
+				setAddressLoadError(res.message || "Failed to load KYC address");
 			}
+		} catch (err: any) {
+			setAddressLoadError(err?.detail || err?.message || "Failed to load KYC address");
+		} finally {
+			setIsAddressLoading(false);
 		}
-	}, [params.permAddressData]);
+	}, []);
+
+	useEffect(() => {
+		loadAddressData();
+	}, [loadAddressData]);
 
 	// Back button handling with confirmation modal
 	const handleBack = () => {
@@ -163,12 +227,11 @@ export default function AadhaarKyc() {
 
 	// ─── Pincode Lookup Mutation ─────────────────────────────────────────────
 	const { mutate: lookupPincodeMutation, isPending: isLookingUpPincode } = useNetworkAwareMutation({
-		mutationFn: lookupPincode,
+		mutationFn: async (pin: string) => getPincodeDetails(pin),
 		onSuccess: (data) => {
-			console.log("📍 Pincode lookup completed");
-			if (data?.success && data?.location_details) {
-				const city = data.location_details.city || data.location_details.district || "";
-				const state = data.location_details.state || "";
+			if (data?.found) {
+				const city = data.city || data.district || "";
+				const state = data.state || "";
 
 				setCommCity(city);
 				setCommState(state);
@@ -187,13 +250,12 @@ export default function AadhaarKyc() {
 				Toast.show({
 					type: "error",
 					text1: t("invalidPincode", "Invalid pincode"),
-					text2: t("pleaseCheckAndEnterValidPincode", "Please check and enter a valid pincode"),
+					text2: data?.message || t("pleaseCheckAndEnterValidPincode", "Please check and enter a valid pincode"),
 					visibilityTime: 3000,
 				});
 			}
 		},
 		onError: () => {
-			console.warn("⚠️ Pincode lookup failed");
 			setCommCity("");
 			setCommState("");
 			Toast.show({
@@ -205,63 +267,46 @@ export default function AadhaarKyc() {
 		},
 	});
 
-	// ─── Document Upload Mutation ────────────────────────────────────────────
-	const uploadDocumentMutation = useNetworkAwareMutation({
-		mutationFn: uploadKycDocument,
-		onSuccess: (data, variables) => {
-			console.log("📄 Document upload successful");
-
-			setUploadedFiles((prev) =>
-				prev.map((file) =>
-					file.uri === (variables.file as any).uri
-						? {
-								...file,
-								uploadUrl: data.upload_url,
-								fileUrl: data.file_url,
-								uploading: false,
-						  }
-						: file
-				)
-			);
-
-			Toast.show({
-				type: "success",
-				text1: t("documentUploadedSuccessfully", "Document uploaded successfully"),
-				text2: data.filename,
-			});
-		},
-		onError: (error: any, variables) => {
-			console.error("❌ Document upload failed");
-
-			setUploadedFiles((prev) =>
-				prev.map((file) =>
-					file.uri === (variables.file as any).uri ? { ...file, uploading: false } : file
-				)
-			);
-
-			const errorMessage =
-				error?.response?.data?.message || error?.message || t("pleaseRetryPayment", "Please try again");
-			Toast.show({
-				type: "error",
-				text1: t("documentUploadFailed", "Document upload failed"),
-				text2: errorMessage,
-			});
-		},
-	});
-
 	const handleFileUpload = async (fileUri: string, fileName: string, fileType?: string) => {
 		try {
 			setIsUploading(true);
-			await uploadDocumentMutation.mutateAsync({
-				document_type: "aadhaar kyc",
-				file: {
-					uri: fileUri,
-					name: fileName,
-					type: fileType || "application/pdf",
-				},
+			const res = await uploadAddressProof({
+				uri: fileUri,
+				name: fileName,
+				type: fileType || "application/pdf",
 			});
-		} catch (error) {
-			console.error("File upload error:", error);
+
+			if (res.success && res.data?.file_url) {
+				setUploadedFiles([
+					{
+						name: fileName,
+						uri: fileUri,
+						fileUrl: res.data.file_url,
+						uploadUrl: res.data.file_url,
+						uploading: false,
+						mimeType: fileType,
+					},
+				]);
+				Toast.show({
+					type: "success",
+					text1: t("documentUploadedSuccessfully", "Document uploaded successfully"),
+					text2: fileName,
+				});
+			} else {
+				setUploadedFiles([]);
+				Toast.show({
+					type: "error",
+					text1: t("documentUploadFailed", "Document upload failed"),
+					text2: res.message || t("pleaseRetryPayment", "Please try again"),
+				});
+			}
+		} catch (error: any) {
+			setUploadedFiles([]);
+			Toast.show({
+				type: "error",
+				text1: t("documentUploadFailed", "Document upload failed"),
+				text2: error?.detail || error?.message || t("pleaseRetryPayment", "Please try again"),
+			});
 		} finally {
 			setIsUploading(false);
 		}
@@ -271,9 +316,10 @@ export default function AadhaarKyc() {
 	const isCommunicationAddressComplete = () => {
 		return (
 			commAddressLine1.trim() !== "" &&
-			commPincode.trim() !== "" &&
+			commPincode.trim().length === 6 &&
 			commCity.trim() !== "" &&
 			commState.trim() !== "" &&
+			Boolean(selectedDocumentType) &&
 			uploadedFiles.length > 0 &&
 			uploadedFiles.some((file) => file.fileUrl || file.uploadUrl)
 		);
@@ -281,15 +327,43 @@ export default function AadhaarKyc() {
 
 	// ─── Submit Address Verification ─────────────────────────────────────────
 	const handleAddressVerification = async (isCurrentAddr: boolean) => {
+		if (!isCurrentAddr) {
+			if (!commAddressLine1.trim()) {
+				setCommErrors((prev) => ({ ...prev, addressLine1: t("addressLine1Required" as any, "Address line 1 is required") }));
+				commAddressLine1Ref.current?.focus();
+				return;
+			}
+			if (!commPincode.trim() || commPincode.length !== 6) {
+				setCommErrors((prev) => ({ ...prev, pincode: t("pincodeRequired", "Valid 6-digit pincode is required") }));
+				commPincodeRef.current?.focus();
+				return;
+			}
+			if (!commCity.trim() || !commState.trim()) {
+				Toast.show({
+					type: "error",
+					text1: t("alert", "Alert"),
+					text2: t("enterValidPincodeForCityState" as any, "Please enter a valid pincode to autofill city and state"),
+				});
+				return;
+			}
+			const proofFile = uploadedFiles.find((f) => f.fileUrl || f.uploadUrl);
+			if (!proofFile?.fileUrl && !proofFile?.uploadUrl) {
+				Toast.show({
+					type: "error",
+					text1: t("alert", "Alert"),
+					text2: t("pleaseUploadAddressProof" as any, "Please upload address proof document"),
+				});
+				return;
+			}
+		}
+
 		try {
 			setIsLoading(true);
 
 			const kycAddress = `${address?.house || ""} ${address?.street || ""} ${address?.loc || ""}`.trim();
 
-			// Request shape matching reference handleAddressVerification
-			const requestData: AddressVerificationRequestType = {
+			const payload: SubmitAddressPayload = {
 				is_current_address: isCurrentAddr,
-				kyc_proof_of_address_number: "abc", // Reference-inherited oddity
 				kyc_address: kycAddress,
 				kyc_city: address?.dist || "",
 				kyc_pin_code: address?.pc || "",
@@ -297,59 +371,67 @@ export default function AadhaarKyc() {
 			};
 
 			if (!isCurrentAddr) {
-				const commAddress = `${commAddressLine1} ${commAddressLine2}`.trim();
-				requestData.communication_address = commAddress;
-				requestData.communication_city = commCity;
-				requestData.communication_pin_code = commPincode;
-				requestData.communication_state = commState;
-				requestData.communication_proof_of_address_number = "abc"; // Reference-inherited oddity
-
+				payload.communication_address = `${commAddressLine1} ${commAddressLine2}`.trim();
+				payload.communication_city = commCity;
+				payload.communication_pin_code = commPincode;
+				payload.communication_state = commState;
+				payload.document_type = selectedDocumentType;
 				const uploadedFile = uploadedFiles.find((file) => file.fileUrl || file.uploadUrl);
-				if (uploadedFile?.fileUrl) {
-					requestData.address_proof_url = uploadedFile.fileUrl;
-					requestData.document_type = "electricity_bill"; // Reference-inherited oddity
-				} else if (uploadedFile?.uploadUrl) {
-					requestData.address_proof_url = `${API_URL}${uploadedFile.uploadUrl}`;
-					requestData.document_type = "electricity_bill"; // Reference-inherited oddity
-				} else {
-					requestData.document_type = "electricity_bill"; // Reference-inherited oddity
-				}
+				payload.address_proof_url = uploadedFile?.fileUrl || uploadedFile?.uploadUrl;
 			}
 
-			// Security standard: Short status-only log without PII address values
-			console.log("Submitting address verification - isCurrentAddress:", isCurrentAddr);
+			const response = await submitAddress(payload);
 
-			const response = await verifyAddress(requestData);
-
-			console.log("Address verification status: success");
-
-			if (response) {
-				setSuccessRouteParams({
-					is_repeat_user: response.is_repeat_user ? "true" : "false",
-					next_step: response.next_step || "",
-				});
+			if (response.success) {
+				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 				setIsKycSuccessModalVisible(true);
 			} else {
 				Toast.show({
 					type: "error",
 					text1: t("addressVerificationFailed", "Address verification failed"),
-					text2: t("pleaseRetryPayment", "Please try again"),
+					text2: response.message || t("pleaseRetryPayment", "Please try again"),
 				});
 			}
 		} catch (error: any) {
-			console.error("Address verification error occurred");
-			const errorMessage =
-				error?.response?.data?.message || error?.message || t("pleaseRetryPayment", "Please try again");
-
 			Toast.show({
 				type: "error",
 				text1: t("failedToVerifyAddress", "Failed to verify address"),
-				text2: errorMessage,
+				text2: error?.detail || error?.message || t("pleaseRetryPayment", "Please try again"),
 			});
 		} finally {
 			setIsLoading(false);
 		}
 	};
+
+	if (isAddressLoading) {
+		return (
+			<SafeAreaView style={[styles.bg, { justifyContent: "center", alignItems: "center" }]}>
+				<ActivityIndicator size="large" color={dark} />
+				<Text style={{ marginTop: 12, color: "#666", fontSize: font(1.6) }}>
+					{t("verifyingDetails", "Verifying your details...")}
+				</Text>
+			</SafeAreaView>
+		);
+	}
+
+	if (addressLoadError) {
+		return (
+			<SafeAreaView style={[styles.bg, { justifyContent: "center", alignItems: "center", padding: 24 }]}>
+				<Text style={{ fontSize: font(2), fontWeight: "700", color: dark, marginBottom: 8 }}>
+					{t("alert", "Alert")}
+				</Text>
+				<Text style={{ fontSize: font(1.5), color: "#666", textAlign: "center", marginBottom: 20 }}>
+					{addressLoadError}
+				</Text>
+				<TouchableOpacity
+					style={{ backgroundColor: dark, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 }}
+					onPress={loadAddressData}
+				>
+					<Text style={{ color: "#fff", fontWeight: "700", fontSize: font(1.5) }}>{t("tryAgain", "Try Again")}</Text>
+				</TouchableOpacity>
+			</SafeAreaView>
+		);
+	}
 
 	return (
 		<SafeAreaView style={styles.bg}>
@@ -369,7 +451,10 @@ export default function AadhaarKyc() {
 				<View style={styles.headerRight} />
 			</View>
 
-			<ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+			<ScrollView
+				contentContainerStyle={styles.container}
+				keyboardShouldPersistTaps="handled"
+				keyboardDismissMode="on-drag">
 				<View style={styles.card}>
 					<TranslatedText
 						style={styles.cardTitle}
@@ -386,14 +471,27 @@ export default function AadhaarKyc() {
 							</View>
 						</ScrollView>
 					) : (
-						<TextInput
-							style={styles.input}
-							value={commAddressLine1}
-							onChangeText={setCommAddressLine1}
-							placeholder={t("enterAddressLine1", "Enter address line 1")}
-							placeholderTextColor="#999"
-							editable={!isLoading && !isUploading}
-						/>
+						<>
+							<TextInput
+								ref={commAddressLine1Ref}
+								style={[styles.input, commErrors.addressLine1 ? { borderColor: "#d32f2f" } : null]}
+								value={commAddressLine1}
+								onChangeText={(val) => {
+									setCommAddressLine1(val);
+									if (commErrors.addressLine1) setCommErrors((prev) => ({ ...prev, addressLine1: "" }));
+								}}
+								placeholder={t("enterAddressLine1", "Enter address line 1")}
+								placeholderTextColor="#999"
+								autoCapitalize="words"
+								returnKeyType="next"
+								blurOnSubmit={false}
+								onSubmitEditing={() => commAddressLine2Ref.current?.focus()}
+								editable={!isLoading && !isUploading}
+							/>
+							{commErrors.addressLine1 ? (
+								<Text style={styles.errorText}>{commErrors.addressLine1}</Text>
+							) : null}
+						</>
 					)}
 
 					{/* Address Line 2 */}
@@ -408,11 +506,16 @@ export default function AadhaarKyc() {
 						</ScrollView>
 					) : (
 						<TextInput
+							ref={commAddressLine2Ref}
 							style={styles.input}
 							value={commAddressLine2}
 							onChangeText={setCommAddressLine2}
 							placeholder={t("enterAddressLine2", "Enter address line 2")}
 							placeholderTextColor="#999"
+							autoCapitalize="words"
+							returnKeyType="next"
+							blurOnSubmit={false}
+							onSubmitEditing={() => commPincodeRef.current?.focus()}
 							editable={!isLoading && !isUploading}
 						/>
 					)}
@@ -420,12 +523,14 @@ export default function AadhaarKyc() {
 					{/* Pincode */}
 					<TranslatedText style={styles.label} translationKey="pincode" fallback="Pincode" />
 					<TextInput
-						style={styles.input}
+						ref={commPincodeRef}
+						style={[styles.input, commErrors.pincode ? { borderColor: "#d32f2f" } : null]}
 						value={currentAddress === "No" ? commPincode : address?.pc}
 						onChangeText={(value) => {
 							if (currentAddress === "No") {
 								const numericValue = value.replace(/[^0-9]/g, "");
 								setCommPincode(numericValue);
+								if (commErrors.pincode) setCommErrors((prev) => ({ ...prev, pincode: "" }));
 
 								if (numericValue.length === 6) {
 									lookupPincodeMutation(numericValue);
@@ -442,9 +547,14 @@ export default function AadhaarKyc() {
 						}
 						placeholderTextColor="#999"
 						keyboardType="numeric"
+						autoCapitalize="none"
 						maxLength={6}
+						returnKeyType="done"
 						editable={currentAddress === "No" && !isLoading && !isUploading}
 					/>
+					{commErrors.pincode ? (
+						<Text style={styles.errorText}>{commErrors.pincode}</Text>
+					) : null}
 
 					{/* City & State (Two columns) */}
 					<View style={{ flexDirection: "row", gap: 8 }}>
@@ -477,13 +587,28 @@ export default function AadhaarKyc() {
 					{/* Document Upload Section (Shown ONLY when "No" is selected) */}
 					{currentAddress === "No" && (
 						<>
+							<View style={{ marginBottom: 16 }}>
+								<TranslatedText
+									style={styles.label}
+									translationKey={"documentType" as any}
+									fallback="Document Type"
+								/>
+								<Select
+									title={t("selectDocumentType" as any, "Select Document Type")}
+									placeholder={t("selectDocumentType" as any, "Select Document Type")}
+									options={documentTypeOptions}
+									selectedValue={selectedDocumentType}
+									onSelect={(val) => setSelectedDocumentType(String(val))}
+								/>
+							</View>
+
 							<TranslatedText
 								style={styles.label}
-								translationKey="uploadUtilityBillRentalAgreement"
-								fallback="Upload Utility Bill / Rental Agreement"
+								translationKey={"uploadProofOfAddress" as any}
+								fallback="Upload Proof of Address"
 							/>
 							<Text style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
-								{t("acceptedFormats", "Accepted formats")}: PNG, JPG, PDF
+								{t("acceptedFormats", "Accepted formats")}: PNG, JPG, PDF (Max 10 MB)
 							</Text>
 							<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
 								<TouchableOpacity
@@ -505,6 +630,15 @@ export default function AadhaarKyc() {
 
 											if (!result.canceled && result.assets && result.assets.length > 0) {
 												const file = result.assets[0];
+
+												if (file.size && file.size > 10 * 1024 * 1024) {
+													Toast.show({
+														type: "error",
+														text1: t("alert", "Alert"),
+														text2: "Maximum file size allowed is 10 MB",
+													});
+													return;
+												}
 
 												// Validate file type
 												const validTypes = [
@@ -710,9 +844,7 @@ export default function AadhaarKyc() {
 						disabled={
 							isLoading ||
 							(currentAddress === "No" &&
-								(!isCommunicationAddressComplete() ||
-									isUploading ||
-									uploadDocumentMutation.isPending))
+								(!isCommunicationAddressComplete() || isUploading))
 						}
 						onPress={() => {
 							if (currentAddress === "Yes") {
@@ -890,6 +1022,12 @@ const styles = StyleSheet.create({
 		padding: 12,
 		fontSize: 15,
 		marginBottom: 4,
+	},
+	errorText: {
+		color: "#d32f2f",
+		fontSize: 12,
+		marginBottom: 8,
+		marginLeft: 2,
 	},
 	readOnlyContainer: {
 		justifyContent: "center",

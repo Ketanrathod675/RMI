@@ -244,19 +244,16 @@ export default function RequestPermissions() {
 
 			setIsLoading(false);
 
-			// 1. If user has active loan dashboard
-			if (dashboardType === "loan_dashboard") {
-				if (__DEV__) {
-					console.log("🎯 [FOWS-DIAG][request-permissions] BRANCH 1 HIT: dashboardType === 'loan_dashboard' -> router.replace('/(tabs)')");
-				}
-				router.replace("/(tabs)");
+			const overallStatus = dashboardData?.workflow_progress?.overall_status;
+			if (overallStatus === "rejected") {
+				router.replace("/no-approved-amount");
 				return;
 			}
 
-			// 2. If user is an existing user
-			if (loginResponse?.user_exists) {
+			// 1. If user has active loan dashboard or workflow is completed
+			if (dashboardType === "loan_dashboard" || overallStatus === "completed") {
 				if (__DEV__) {
-					console.log("🎯 [FOWS-DIAG][request-permissions] BRANCH 2 HIT: loginResponse?.user_exists is TRUE -> router.replace('/(tabs)')");
+					console.log("🎯 [FOWS-DIAG][request-permissions] BRANCH 1 HIT: loan_dashboard / completed -> router.replace('/(tabs)')");
 				}
 				router.replace("/(tabs)");
 				return;

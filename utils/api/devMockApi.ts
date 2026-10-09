@@ -10,6 +10,13 @@ let _isMockModeEnabled = false;
 let _isInitialized = false;
 
 // Configurable mock options for testing different user flows in dev
+export type KycOutcomeType =
+	| "success"
+	| "ckyc_otp_fail"
+	| "digilocker_only"
+	| "liveness_fail"
+	| "face_mismatch";
+
 export interface DevMockOptions {
 	permissionGiven: boolean;
 	userExists: boolean;
@@ -19,11 +26,19 @@ export interface DevMockOptions {
 	simulateReapplicationRejection?: boolean;
 	employmentNextAction?: "digilocker" | "ckyc";
 	currentStep?: string;
+	kycOutcome?: KycOutcomeType;
 	ckycOutcome?: "happy_path" | "digilocker_redirect" | "reapplication_selfie" | "reapplication_other";
 	ckycSendOtpSuccess?: boolean;
 	faceMatchSuccess?: boolean;
 	ckycResendOtpSuccess?: boolean;
 	mandateMockOutcome?: "success" | "failure";
+	breOutcome?:
+		| "approved"
+		| "pending_then_approved"
+		| "rejected_bureau"
+		| "rejected_pan_fixable"
+		| "rejected_email_fixable"
+		| "error";
 }
 
 let _mockOptions: DevMockOptions = {
@@ -35,14 +50,22 @@ let _mockOptions: DevMockOptions = {
 	simulateReapplicationRejection: false,
 	employmentNextAction: "digilocker",
 	currentStep: "personal_details",
+	kycOutcome: "success",
 	ckycOutcome: "happy_path",
 	ckycSendOtpSuccess: true,
 	faceMatchSuccess: true,
 	ckycResendOtpSuccess: true,
 	mandateMockOutcome: "success",
+	breOutcome: "pending_then_approved",
 };
 
+let _mockCkycOtpAttempts = 0;
+
 let _easebuzzPollCount = 0;
+let _brePollCount = 0;
+let _remainingPanUpdates = 2;
+let _remainingEmailUpdates = 2;
+let _mockProfessionalDetails: any = null;
 
 type MockListener = (enabled: boolean) => void;
 const _listeners = new Set<MockListener>();
@@ -153,6 +176,11 @@ export function getDevMockOptions(): DevMockOptions {
 
 export function updateDevMockOptions(options: Partial<DevMockOptions>): void {
 	if (!__DEV__) return;
+	if (options.breOutcome !== undefined && options.breOutcome !== _mockOptions.breOutcome) {
+		_brePollCount = 0;
+		_remainingPanUpdates = 2;
+		_remainingEmailUpdates = 2;
+	}
 	_mockOptions = { ..._mockOptions, ...options };
 	try {
 		setStorageItem(DEV_MOCK_OPTIONS_KEY, JSON.stringify(_mockOptions)).catch(() => { });
@@ -318,6 +346,320 @@ export async function handleDevMockRequest(
 		};
 	}
 
+	// ─── NEW IDENTITY APIS (FastAPI) ──────────────────────────────────────────
+
+	// 1. CKYC Status
+	if (url.includes("ckyc/status") && method === "get") {
+		await delay(200);
+		const isDigiOnly = _mockOptions.kycOutcome === "digilocker_only";
+		return {
+			data: {
+				success: true,
+				message: "CKYC status retrieved successfully",
+				data: {
+					status: "pending",
+					next_action: isDigiOnly ? "digilocker" : "ckyc",
+					ckyc_attempts: _mockCkycOtpAttempts,
+					skip_ckyc: false,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 2. CKYC Send OTP
+	if (url.includes("ckyc/send-otp") && method === "post") {
+		await delay(300);
+		return {
+			data: {
+				success: true,
+				message: "OTP sent successfully to registered mobile number",
+				data: {
+					session_id: "CKYC_SES_MOCK",
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 3. CKYC Validate OTP
+	if (url.includes("ckyc/validate-otp") && method === "post") {
+		await delay(350);
+		let otpVal = "";
+		try {
+			const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+			otpVal = body?.otp || "";
+		} catch {
+			otpVal = "";
+		}
+
+		const forceFail = _mockOptions.kycOutcome === "ckyc_otp_fail";
+		const isCorrectOtp = otpVal === "123456" && !forceFail;
+
+		if (isCorrectOtp) {
+			_mockCkycOtpAttempts = 0;
+			_mockOptions.currentStep = "selfie_match";
+			return {
+				data: {
+					success: true,
+					message: "CKYC verification successful",
+					data: {
+						switch_to_digilocker: false,
+						ckyc_attempts: 0,
+						ckyc_number: "98765432101234",
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		} else {
+			_mockCkycOtpAttempts += 1;
+			const shouldSwitchToDigilocker = _mockCkycOtpAttempts >= 3;
+			return {
+				data: {
+					success: false,
+					message: shouldSwitchToDigilocker
+						? "Maximum attempts reached. Please proceed with DigiLocker."
+						: "Invalid OTP entered. Please try again.",
+					data: {
+						switch_to_digilocker: shouldSwitchToDigilocker,
+						ckyc_attempts: _mockCkycOtpAttempts,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+	}
+
+	// 4. DigiLocker Init
+	if (url.includes("ckyc/digilocker/init") && method === "post") {
+		await delay(250);
+		return {
+			data: {
+				success: true,
+				message: "DigiLocker session initialized",
+				data: {
+					txn_id: `MOCK_DIGI_TXN_${Date.now()}`,
+					authorize_url: "about:blank",
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 5. DigiLocker Complete
+	if (url.includes("ckyc/digilocker/complete") && method === "post") {
+		await delay(350);
+		_mockOptions.currentStep = "selfie_match";
+		return {
+			data: {
+				success: true,
+				message: "DigiLocker verification completed successfully",
+				data: {
+					aadhaar_details: {
+						name: "Rahul Sharma",
+						gender: "M",
+						dob: "1994-08-15",
+						address: "Flat 402, Green Valley Apartments, Sector 14, MG Road, Gurgaon, Haryana, 122001",
+					},
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 6. Selfie Status
+	if (url.includes("selfie/status") && method === "get") {
+		await delay(150);
+		return {
+			data: {
+				success: true,
+				message: "Selfie status retrieved",
+				data: {
+					status: "pending",
+					workflow_completed: false,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 7. Selfie Upload & Face Match
+	if (url.includes("selfie/upload-file") && method === "post") {
+		await delay(600);
+		if (_mockOptions.kycOutcome === "liveness_fail") {
+			return {
+				data: {
+					success: false,
+					message: "Liveness verification failed. Please retake in good lighting.",
+					data: {
+						liveness_passed: false,
+						liveness_score: 0.35,
+						face_match_passed: false,
+						face_match_score: 0.0,
+						workflow_completed: false,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (_mockOptions.kycOutcome === "face_mismatch") {
+			return {
+				data: {
+					success: false,
+					message: "Selfie does not match Aadhaar photo.",
+					data: {
+						liveness_passed: true,
+						liveness_score: 0.95,
+						face_match_passed: false,
+						face_match_score: 0.42,
+						workflow_completed: false,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		_mockOptions.currentStep = "address_submission";
+		return {
+			data: {
+				success: true,
+				message: "Selfie uploaded and face verified successfully",
+				data: {
+					selfie_url: "https://mock.rapidmoney.in/selfie.jpg",
+					liveness_passed: true,
+					liveness_score: 0.98,
+					face_match_passed: true,
+					face_match_score: 0.92,
+					workflow_completed: false,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 8. Address Status
+	if (url.includes("address/status") && method === "get") {
+		await delay(200);
+		return {
+			data: {
+				success: true,
+				message: "Address status retrieved",
+				data: {
+					status: "pending",
+					kyc_address: "Flat 402, Green Valley Apartments, Sector 14, MG Road",
+					kyc_city: "Gurgaon",
+					kyc_pin_code: "122001",
+					kyc_state: "Haryana",
+					supported_document_types: [
+						{ label: "Electricity Bill", value: "electricity_bill" },
+						{ label: "Rental Agreement", value: "rental_agreement" },
+						{ label: "Gas Bill", value: "gas_bill" },
+						{ label: "Water Bill", value: "water_bill" },
+					],
+					is_current_address: true,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 9. Address Document Types
+	if (url.includes("address/document-types") && method === "get") {
+		await delay(150);
+		return {
+			data: {
+				success: true,
+				message: "Document types retrieved",
+				data: {
+					document_types: [
+						{ label: "Electricity Bill", value: "electricity_bill" },
+						{ label: "Rental Agreement", value: "rental_agreement" },
+						{ label: "Gas Bill", value: "gas_bill" },
+						{ label: "Water Bill", value: "water_bill" },
+					],
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 10. Address Upload Proof
+	if (url.includes("address/upload-proof") && method === "post") {
+		await delay(500);
+		return {
+			data: {
+				success: true,
+				message: "Address proof uploaded successfully",
+				data: {
+					file_url: "https://mock.rapidmoney.in/address_proof.jpg",
+					filename: "address_proof.jpg",
+					file_size: 102400,
+					content_type: "image/jpeg",
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// 11. Address Submit
+	if (url.includes("address/submit") && method === "post") {
+		await delay(400);
+		_mockOptions.currentStep = "bank_details";
+		return {
+			data: {
+				success: true,
+				message: "Address submitted successfully",
+				data: {
+					is_current_address: true,
+					workflow_completed: false,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
 
 	// Help & Support: mirrors the public backend response envelopes.
 	if (url === "faqs" && method === "get") {
@@ -752,7 +1094,11 @@ export async function handleDevMockRequest(
 
 	// ─── 11. Endpoint: kyc/personal-details & users/basic-details ────────────
 	if (
-		((url.includes("kyc/personal-details") || url.includes("users/basic-details")) && method === "post") ||
+		((url.includes("kyc/personal-details") ||
+			url.includes("users/basic-details") ||
+			url.includes("profile/submit") ||
+			url.includes("kyc/submit")) &&
+			method === "post") ||
 		(url.includes("users/basic-details") && method === "patch")
 	) {
 		await delay(700);
@@ -1006,6 +1352,367 @@ export async function handleDevMockRequest(
 			data: {
 				lead_created: true,
 				message: "Lead verified successfully [MOCK MODE]",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── Endpoint: payment/handshake-status ──────────────────────────────────
+	if (url.includes("payment/handshake-status") && method === "get") {
+		await delay(350);
+		_brePollCount++;
+		const outcome = _mockOptions.breOutcome || "pending_then_approved";
+		console.log(`🛠️ [DEV MOCK API] ⚡ Handshake status check #${_brePollCount}, outcome: ${outcome}`);
+
+		if (outcome === "pending_then_approved") {
+			if (_brePollCount <= 2) {
+				return {
+					data: {
+						status: "pending",
+						failed_rule: null,
+						message: "Eligibility check in progress...",
+						can_update_email: false,
+						can_update_pan: false,
+						remaining_email_updates: _remainingEmailUpdates,
+						remaining_pan_updates: _remainingPanUpdates,
+					},
+					status: 200,
+					statusText: "OK",
+					headers: {},
+					config,
+				};
+			}
+			return {
+				data: {
+					status: "approved",
+					failed_rule: null,
+					handshake_success: true,
+					can_update_email: false,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "approved") {
+			return {
+				data: {
+					status: "approved",
+					failed_rule: null,
+					handshake_success: true,
+					can_update_email: false,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "rejected_bureau") {
+			return {
+				data: {
+					status: "rejected",
+					failed_rule: "bureau",
+					handshake_success: false,
+					can_update_email: false,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "rejected_pan_fixable") {
+			return {
+				data: {
+					status: "rejected",
+					failed_rule: "pan_card",
+					handshake_success: false,
+					can_update_email: false,
+					can_update_pan: _remainingPanUpdates > 0,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "rejected_email_fixable") {
+			return {
+				data: {
+					status: "rejected",
+					failed_rule: "email",
+					handshake_success: false,
+					can_update_email: _remainingEmailUpdates > 0,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		// outcome === "error"
+		return {
+			data: {
+				status: "error",
+				failed_rule: null,
+				handshake_success: false,
+				can_update_email: false,
+				can_update_pan: false,
+				remaining_email_updates: _remainingEmailUpdates,
+				remaining_pan_updates: _remainingPanUpdates,
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── Endpoint: payment/retry-assessment-checks ───────────────────────────
+	if (url.includes("payment/retry-assessment-checks") && method === "post") {
+		await delay(400);
+		const outcome = _mockOptions.breOutcome;
+		console.log(`🛠️ [DEV MOCK API] ⚡ Retry assessment checks, outcome: ${outcome}`);
+
+		if (outcome === "rejected_pan_fixable") {
+			if (_remainingPanUpdates <= 0) {
+				return {
+					data: {
+						detail: "Maximum PAN update limit (2 attempts) has been exceeded.",
+					},
+					status: 400,
+					statusText: "Bad Request",
+					headers: {},
+					config,
+				};
+			}
+			_remainingPanUpdates--;
+			_mockOptions.breOutcome = "approved";
+			return {
+				data: {
+					status: "approved",
+					failed_rule: null,
+					handshake_success: true,
+					can_update_email: false,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "rejected_email_fixable") {
+			if (_remainingEmailUpdates <= 0) {
+				return {
+					data: {
+						detail: "Maximum Email update limit (2 attempts) has been exceeded.",
+					},
+					status: 400,
+					statusText: "Bad Request",
+					headers: {},
+					config,
+				};
+			}
+			_remainingEmailUpdates--;
+			_mockOptions.breOutcome = "approved";
+			return {
+				data: {
+					status: "approved",
+					failed_rule: null,
+					handshake_success: true,
+					can_update_email: false,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		return {
+			data: {
+				status: "approved",
+				failed_rule: null,
+				handshake_success: true,
+				can_update_email: false,
+				can_update_pan: false,
+				remaining_email_updates: _remainingEmailUpdates,
+				remaining_pan_updates: _remainingPanUpdates,
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── Endpoint: professional-details ──────────────────────────────────────
+	if (url.includes("professional-details") && method === "post") {
+		await delay(400);
+		let parsedBody: any = {};
+		try {
+			parsedBody = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data || {};
+		} catch {
+			parsedBody = config.data || {};
+		}
+		_mockProfessionalDetails = {
+			id: "mock_prof_123",
+			user_id: "mock_user_123",
+			employment_type: parsedBody.employmentType || "salaried",
+			residence_status: parsedBody.residenceStatus || "rented",
+			type_of_company: parsedBody.typeOfCompany || null,
+			company_name: parsedBody.companyName || null,
+			designation: parsedBody.designation || null,
+			salary_range: parsedBody.salaryRange || "25001_50000",
+			monthly_income: "37500",
+			mode_of_salary: parsedBody.modeOfSalary || "bank_transfer",
+			nature_of_business: parsedBody.natureOfBusiness || null,
+			type_of_industry: parsedBody.typeOfIndustry || null,
+			kfs_language: parsedBody.kfsLanguage || "en",
+			reason_for_loan: parsedBody.reasonForLoan || "medical_emergency",
+		};
+		updateDevMockOptions({ currentStep: "ekyc_ckyc" });
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking POST professional-details, advanced currentStep to ekyc_ckyc");
+		return {
+			data: {
+				success: true,
+				message: "Professional details submitted successfully.",
+				data: _mockProfessionalDetails,
+				options: {
+					reason_for_loan: [
+						{ value: "medical_emergency", label: "Medical / Emergency" },
+						{ value: "education", label: "Education / Fees" },
+						{ value: "home_repair", label: "Home repair / Renovation" },
+						{ value: "wedding_function", label: "Wedding / Family function" },
+						{ value: "travel", label: "Travel" },
+						{ value: "business_needs", label: "Business needs" },
+						{ value: "debt_repayment", label: "Repay existing loans" },
+						{ value: "vehicle", label: "Vehicle purchase / repair" },
+						{ value: "household", label: "Household expenses / purchases" },
+						{ value: "other", label: "Other" },
+					],
+					languages: ["english", "hindi", "marathi", "gujarati", "bengali", "tamil", "telugu", "kannada", "malayalam"],
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	if (url.includes("professional-details") && method === "get") {
+		await delay(300);
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking GET professional-details");
+		return {
+			data: {
+				success: true,
+				message: _mockProfessionalDetails ? "Professional details fetched successfully." : "No professional details found.",
+				data: _mockProfessionalDetails,
+				options: {
+					reason_for_loan: [
+						{ value: "medical_emergency", label: "Medical / Emergency" },
+						{ value: "education", label: "Education / Fees" },
+						{ value: "home_repair", label: "Home repair / Renovation" },
+						{ value: "wedding_function", label: "Wedding / Family function" },
+						{ value: "travel", label: "Travel" },
+						{ value: "business_needs", label: "Business needs" },
+						{ value: "debt_repayment", label: "Repay existing loans" },
+						{ value: "vehicle", label: "Vehicle purchase / repair" },
+						{ value: "household", label: "Household expenses / purchases" },
+						{ value: "other", label: "Other" },
+					],
+					languages: ["english", "hindi", "marathi", "gujarati", "bengali", "tamil", "telugu", "kannada", "malayalam"],
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── Endpoint: pincode/lookup/* ──────────────────────────────────────────
+	if (url.includes("pincode/lookup") && method === "get") {
+		await delay(300);
+		const pin = url.match(/pincode\/lookup\/(\d+)/)?.[1] || "";
+		console.log(`🛠️ [DEV MOCK API] ⚡ Mocking pincode lookup for: ${pin}`);
+
+		if (pin === "000000") {
+			return {
+				data: {
+					found: false,
+					pin_code: pin,
+					city: null,
+					district: null,
+					state: null,
+					serviceable: false,
+					message: "Pincode not found",
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (pin === "999999") {
+			return {
+				data: {
+					found: true,
+					pin_code: pin,
+					city: "Remote Town",
+					district: "Remote District",
+					state: "Remote State",
+					serviceable: false,
+					message: "Area not serviceable",
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		return {
+			data: {
+				found: true,
+				pin_code: pin,
+				city: "Mumbai",
+				district: "Mumbai City",
+				state: "Maharashtra",
+				serviceable: true,
 			},
 			status: 200,
 			statusText: "OK",
@@ -1278,6 +1985,7 @@ export async function handleDevMockRequest(
 		await delay(350);
 
 		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST lender-approval/check-approval");
+		updateDevMockOptions({ currentStep: "loan_application" });
 
 		return {
 			data: {
@@ -2538,62 +3246,7 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	// ─── 49. Endpoint: credit-evaluation/evaluate ────────────────────────────
-	if (url.includes("credit-evaluation/evaluate") && method === "post") {
-		await delay(450);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST credit-evaluation/evaluate");
 
-		return {
-			data: {
-				id: "bre_eval_mock_001",
-				user_id: "mock-user-uuid-12345",
-				final_decision: "APPROVED",
-				decision_reason: "All primary underwriting criteria passed",
-				failed_rule: null,
-				overall_risk_score: 750,
-				risk_level: "LOW",
-				total_rules_evaluated: 5,
-				rules_passed: 5,
-				rules_failed: 0,
-				rule_details: [
-					{ step: 1, rule_id: "age", rule_name: "Age Eligibility Check", status: "PASS" },
-					{ step: 2, rule_id: "pin_code", rule_name: "Serviceable Pincode", status: "PASS" },
-					{ step: 3, rule_id: "email", rule_name: "Email Domain Deliverability", status: "PASS" },
-					{ step: 4, rule_id: "pan_card", rule_name: "PAN Validation Status", status: "PASS" },
-					{ step: 5, rule_id: "bureau", rule_name: "Bureau Risk Score Check", status: "PASS" },
-				],
-			},
-			status: 200,
-			statusText: "OK",
-			headers: {},
-			config,
-		};
-	}
-
-	// ─── 50. Endpoint: credit-evaluation/user/:userId ────────────────────────
-	if (url.includes("credit-evaluation/user") && method === "get") {
-		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET credit-evaluation/user");
-
-		return {
-			data: {
-				id: "bre_eval_mock_001",
-				user_id: "mock-user-uuid-12345",
-				final_decision: "APPROVED",
-				decision_reason: "All primary underwriting criteria passed",
-				failed_rule: null,
-				overall_risk_score: 750,
-				risk_level: "LOW",
-				total_rules_evaluated: 5,
-				rules_passed: 5,
-				rules_failed: 0,
-			},
-			status: 200,
-			statusText: "OK",
-			headers: {},
-			config,
-		};
-	}
 
 	// ─── 51. Endpoint: coupons/verify ────────────────────────────────────────
 	if (url.includes("coupons/verify") && method === "post") {
@@ -2611,6 +3264,84 @@ export async function handleDevMockRequest(
 				data: {
 					coupon_code: code,
 					discount: 50,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 52. Endpoint: auth/me & users/me ─────────────────────────────────────
+	if ((url.includes("auth/me") || url.includes("users/me")) && method === "get") {
+		await delay(300);
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET auth/me");
+
+		const currentStep = _mockOptions.currentStep || "basic_details";
+		const isProf = currentStep === "professional_details";
+		const isCkyc = currentStep === "ckyc";
+		const overall_percentage = isCkyc ? 60 : isProf ? 40 : currentStep === "basic_details" ? 10 : 0;
+
+		const outcome = _mockOptions.breOutcome || "pending_then_approved";
+		const isBreRejected = outcome.startsWith("rejected");
+		const overall_status = isBreRejected ? "rejected" : "in_progress";
+		const bre_status = isBreRejected
+			? "rejected"
+			: outcome === "approved"
+			? "approved"
+			: outcome === "error"
+			? "error"
+			: "pending";
+		const bre_failed_rule =
+			outcome === "rejected_bureau"
+				? "bureau"
+				: outcome === "rejected_pan_fixable"
+				? "pan_card"
+				: outcome === "rejected_email_fixable"
+				? "email"
+				: null;
+
+		return {
+			data: {
+				status: "success",
+				data: {
+					id: "mock-user-uuid-12345",
+					phone_number: "9876543210",
+					role: "borrower",
+					is_active: true,
+					is_phone_verified: true,
+					created_at: new Date().toISOString(),
+					profile: {
+						full_name: "Applicant",
+						father_name: "Father",
+						pan_number: "ABCDE1234F",
+						dob: "1995-01-01",
+						gender: "male",
+						pincode: "110001",
+						email: "applicant@example.com",
+						is_pan_verified: true,
+						is_email_verified: true,
+						address: "123 Dev Street",
+						aadhaar_number: "XXXXXXXX1234",
+					},
+					current_workflow: {
+						current_step: _mockOptions.currentStep || "basic_details",
+						next_step: "",
+						overall_percentage,
+						overall_status,
+						bre_status,
+						bre_failed_rule,
+						lead_id: 12345,
+						profile_response: {
+							lead_id: 12345,
+							af_amount: 99,
+							assessment_fee: 99,
+							af: "0",
+							allocated_lender_id: 1,
+							lender_name: "RapidMoney Finance",
+						},
+					},
 				},
 			},
 			status: 200,

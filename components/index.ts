@@ -6,3 +6,4 @@ export { TermsAndConditions } from "./TermsAndConditions";
 export { TermsAndPolicy } from "./terms_and_policy";
 export { TranslatedInput } from "./TranslatedInput";
 export { TranslatedText } from "./TranslatedText";
+export { StickyFormFooter } from "./StickyFormFooter";

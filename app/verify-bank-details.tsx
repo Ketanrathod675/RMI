@@ -28,6 +28,7 @@ import {
     BackHandler,
     Image,
     KeyboardAvoidingView,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
@@ -407,7 +408,10 @@ export default function VerifyBankDetails() {
 
 	return (
 		<>
-			<KeyboardAvoidingView style={styles.container} behavior="padding">
+			<KeyboardAvoidingView
+				style={styles.container}
+				behavior={Platform.OS === "ios" ? "padding" : undefined}
+				keyboardVerticalOffset={0}>
 			{/* Header */}
 			{/* <View style={styles.header}>
 				<TouchableOpacity

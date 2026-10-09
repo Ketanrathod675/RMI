@@ -44,6 +44,7 @@ type SelectProps = {
 	showCheckmark?: boolean;
 	searchable?: boolean;
 	searchPlaceholder?: string;
+	error?: boolean;
 	onOpen?: () => void;
 	onClose?: () => void;
 };
@@ -55,6 +56,7 @@ export const Select: FC<SelectProps> = ({
 	placeholder,
 	title,
 	disabled = false,
+	error = false,
 	containerStyle,
 	buttonStyle,
 	buttonTextStyle,
@@ -175,7 +177,12 @@ export const Select: FC<SelectProps> = ({
 	return (
 		<View style={[styles.container, containerStyle]}>
 			<TouchableOpacity
-				style={[styles.button, buttonStyle, disabled && styles.buttonDisabled]}
+				style={[
+					styles.button,
+					buttonStyle,
+					disabled && styles.buttonDisabled,
+					error && styles.buttonError,
+				]}
 				onPress={handleButtonPress}
 				activeOpacity={0.7}
 				disabled={disabled}>
@@ -268,6 +275,9 @@ const styles = StyleSheet.create({
 	buttonDisabled: {
 		backgroundColor: "#F9FAFB",
 		borderColor: "#E5E7EB",
+	},
+	buttonError: {
+		borderColor: "#d32f2f",
 	},
 	buttonText: {
 		fontSize: 15,

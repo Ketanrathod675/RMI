@@ -87,6 +87,7 @@ export const TranslatedInput = forwardRef<TextInput, TranslatedInputProps>(
 						style,
 						disabled && styles.disabledInput,
 						isFocused && styles.focusedInput,
+						Boolean(errorText) && styles.errorInput,
 					]}
 					placeholder={placeholderText}
 					placeholderTextColor={dark + "99"}
@@ -148,6 +149,10 @@ const styles = StyleSheet.create({
 		borderColor: dark + "80",
 		borderWidth: 2,
 		backgroundColor: "#FAFAFA", // Slightly different background when focused
+	},
+	errorInput: {
+		borderColor: "#d32f2f",
+		borderWidth: 1.5,
 	},
 	error: {
 		color: "#d32f2f",

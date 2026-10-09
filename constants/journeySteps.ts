@@ -4,6 +4,11 @@
  * (basic_details, assessment_fee, pan_verification, professional_details, ekyc_ckyc, bank_details, loan_application/sanction, agreement_signing, disbursement)
  */
 
+/**
+ * Default minimum time the basic-details loader stays visible before the assessment fee screen.
+ */
+export const BASIC_DETAILS_LOADER_MS = 3000;
+
 export type JourneyStepId =
 	| "basic_details"
 	| "assessment_fee"

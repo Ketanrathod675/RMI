@@ -13,12 +13,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { useDefault } from "@/hooks/useDefault";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { usePermissions } from "@/hooks/usePermissions";
+import { usePendingPaymentRecovery } from "@/hooks/usePendingPaymentRecovery";
 import { useTranslation } from "@/hooks/useTranslation";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
-import { checkCanReapply, getPublicReviews, getUserDashboardData, Status, StepHref } from "@/utils/api";
-// TODO: migrate off legacy API
-import { verifyLeadCreation, checkEasebuzzPaymentStatus } from "@/utils/api/kyc";
+import { checkCanReapply, checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, reapplyForLoan, Status, StepHref } from "@/utils/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { font, height, width } from "@/utils/dimensions";
 import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
@@ -142,6 +142,7 @@ const CircularProgress = ({ percentage }: { percentage: number }) => {
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
 
 export default function Home() {
+	usePendingPaymentRecovery();
 	const insets = useSafeAreaInsets();
 	// [FOWS-DIAGNOSTIC] Log MOUNTED message with timestamp
 	if (__DEV__) {
@@ -184,8 +185,22 @@ export default function Home() {
 	const [modalVisible, setModalVisible] = useState(false);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
 	const paymentPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const isMountedRef = useRef(true);
 
-
+	useEffect(() => {
+		isMountedRef.current = true;
+		return () => {
+			isMountedRef.current = false;
+			if (pollIntervalRef.current) {
+				clearInterval(pollIntervalRef.current);
+				pollIntervalRef.current = null;
+			}
+			if (paymentPollIntervalRef.current) {
+				clearInterval(paymentPollIntervalRef.current);
+				paymentPollIntervalRef.current = null;
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (modalVisible) {
@@ -199,7 +214,7 @@ export default function Home() {
 
 			const timeout2 = setTimeout(async () => {
 				setModalVisible(false);
-				
+
 				// Reset animation scale
 				scaleAnim.setValue(0);
 
@@ -226,12 +241,15 @@ export default function Home() {
 		const pollStartTime = Date.now();
 
 		const checkStatus = async () => {
+			if (!isMountedRef.current) return false;
 			try {
 				console.log(`[Dashboard] Checking Easebuzz status for transaction ${txnId}...`);
-				const res = await checkEasebuzzPaymentStatus(txnId);
+				// New backend: POST /payment/verify-status/{txnid} -> { success, data: { status } }
+				const res = await checkPaymentStatus(txnId);
 				Logger.debug("Dashboard payment status response", res);
+				const gatewayStatus = String(res?.data?.status ?? "").toUpperCase();
 
-				if (res.status === "success") {
+				if (gatewayStatus === "COMPLETED" || gatewayStatus === "SUCCESS") {
 					if (paymentPollIntervalRef.current) clearInterval(paymentPollIntervalRef.current);
 					setIsPaymentPolling(false);
 					setDelayVisible(false);
@@ -249,7 +267,7 @@ export default function Home() {
 					return true;
 				}
 
-				if (res.status === "failure") {
+				if (["FAILED", "FAILURE", "CANCELLED", "EXPIRED"].includes(gatewayStatus)) {
 					if (paymentPollIntervalRef.current) clearInterval(paymentPollIntervalRef.current);
 					setIsPaymentPolling(false);
 					setDelayVisible(false);
@@ -307,7 +325,21 @@ export default function Home() {
 		}, 5000);
 	};
 
+	const queryClient = useQueryClient();
+
+	const { data, isPending, refetch } = useNetworkAwareQuery({
+		queryKey: ["user", "dashboard"],
+		queryFn: getUserDashboardData,
+		staleTime: 3000,
+		retry: 2,
+	});
+
 	const startVerifyLeadFlow = (isPostPayment = true) => {
+		if (pollIntervalRef.current) {
+			clearInterval(pollIntervalRef.current);
+			pollIntervalRef.current = null;
+		}
+
 		setDelayStageKey(
 			isPostPayment
 				? "paymentConfirmedVerifyingDetails"
@@ -319,21 +351,29 @@ export default function Home() {
 		const startTime = Date.now();
 
 		const checkLead = async () => {
+			if (!isMountedRef.current) return false;
 			try {
-				console.log("🚀 Calling verifyLeadCreation() from dashboard...");
-				const res = await verifyLeadCreation();
-				Logger.debug("Dashboard lead verification response", res);
+				const res = await getHandshakeStatus();
+				console.log("Handshake status:", res.status);
 
-				if (res?.lead_created) {
-					console.log("✅ Lead created is true! Continuing to verify-email...");
+				if (res.status === "rejected" || res.status === "error") {
 					if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
 					setDelayVisible(false);
 					setIsVerifyLeadFlow(false);
-					router.push("/verify-email" as any);
+					refetch();
+					return true;
+				}
+
+				if (res.status === "approved") {
+					console.log("✅ Lead approved! Continuing to professional-details...");
+					if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+					setDelayVisible(false);
+					setIsVerifyLeadFlow(false);
+					router.push("/professional-details" as any);
 					return true;
 				}
 			} catch (err) {
-				Logger.error("Dashboard lead verification failed", err);
+				Logger.error("Dashboard handshake check failed", err);
 			}
 			return false;
 		};
@@ -346,9 +386,9 @@ export default function Home() {
 			const elapsed = Date.now() - startTime;
 			if (elapsed >= 60000) {
 				if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-				const isCreated = await checkLead();
-				if (!isCreated) {
-					console.log("❌ Lead verification still false after 60s on dashboard. Closing loader...");
+				const isFinished = await checkLead();
+				if (!isFinished) {
+					console.log("❌ Handshake check still pending after 60s on dashboard. Closing loader...");
 					setDelayVisible(false);
 					setIsVerifyLeadFlow(false);
 				}
@@ -366,13 +406,6 @@ export default function Home() {
 
 	const dispatch = useDispatch();
 	const notifications = useSelector((state: RootState) => state.user.notifications);
-
-	const { data, isPending, refetch } = useNetworkAwareQuery({
-		queryKey: ["user", "dashboard"],
-		queryFn: getUserDashboardData,
-		staleTime: 3000,
-		retry: 2,
-	});
 
 	const { data: publicReviews, refetch: refetchReviews } = useNetworkAwareQuery({
 		queryKey: ["publicReviews"],
@@ -416,17 +449,17 @@ export default function Home() {
 			}
 			refetch();
 			refetchReviews();
-			  try {
-                console.log("FB _ dashboard_viewed");
-            } catch (error) {
-                console.error("🔥 [Analytics] FB Dashboard event error:", error);
-            }
+			try {
+				console.log("FB _ dashboard_viewed");
+			} catch (error) {
+				console.error("🔥 [Analytics] FB Dashboard event error:", error);
+			}
 		}, [refetch, refetchReviews])
 	);
 
 	Logger.debug("Dashboard response", data);
 
-	
+
 
 	useEffect(() => {
 		const fetchTermDate = async () => {
@@ -467,6 +500,20 @@ export default function Home() {
 			}
 		};
 	}, []);
+
+	useEffect(() => {
+		if (
+			!hasNoApprovedAmountFlag &&
+			data?.workflow_progress?.overall_status === "rejected" &&
+			data?.workflow_progress?.bre_status !== "rejected"
+		) {
+			router.replace("/no-approved-amount");
+		}
+	}, [
+		hasNoApprovedAmountFlag,
+		data?.workflow_progress?.overall_status,
+		data?.workflow_progress?.bre_status,
+	]);
 
 	useEffect(() => {
 		if (isPending) {
@@ -610,20 +657,36 @@ export default function Home() {
 			const reapplyData = await checkCanReapply();
 
 			if (reapplyData.can_apply) {
-				const startingStep = reapplyData.starting_step;
-				const href = StepHref[startingStep as keyof typeof StepHref];
-
-				if (href) {
-					console.log("Re-applying from step:", startingStep, "->", href);
-					router.push({
-						pathname: href as any,
-						params: { fromReapply: "true" },
+				try {
+					const reapplyRes = await reapplyForLoan();
+					await queryClient.invalidateQueries({
+						queryKey: ["user", "dashboard"],
 					});
-				} else {
+					const currentStep = reapplyRes?.current_step;
+					const href = currentStep
+						? StepHref[currentStep as keyof typeof StepHref]
+						: "/new-assessment-fee";
+
+					if (href) {
+						console.log("Re-applying to step:", currentStep, "->", href);
+						router.push({
+							pathname: href as any,
+							params: { fromReapply: "true" },
+						});
+					} else {
+						router.push("/(tabs)");
+					}
+				} catch (reapplyErr: any) {
+					const rawDetail =
+						reapplyErr?.response?.data?.detail ||
+						reapplyErr?.detail ||
+						reapplyErr?.message;
+					const detailText =
+						typeof rawDetail === "string" ? rawDetail : t("reApplicationCheckFailed");
 					Toast.show({
 						type: "error",
-						text1: t("error"),
-						text2: "Unable to determine the starting step",
+						text1: t("cannotReapply"),
+						text2: detailText,
 					});
 				}
 			} else {
@@ -637,25 +700,59 @@ export default function Home() {
 					text2: message,
 				});
 			}
-		} catch (error) {
+		} catch (error: any) {
 			console.error("Re-apply error:", error);
+			const rawDetail =
+				error?.response?.data?.detail ||
+				error?.detail ||
+				error?.message;
+			const detailText =
+				typeof rawDetail === "string" ? rawDetail : t("reApplicationCheckFailed");
 			Toast.show({
 				type: "error",
 				text1: t("error"),
-				text2: t("reApplicationCheckFailed"),
+				text2: detailText,
 			});
 		}
 	};
 
 	const handleContinueJourney = async () => {
 
-				// Check if there is an active payment transaction first
+		// Check if there is an active payment transaction first
 		const transactionId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
 		if (transactionId) {
 			startPaymentPolling(transactionId);
 			return;
 		}
 		const progress = data?.workflow_progress?.current_step;
+		const overallStatus = data?.workflow_progress?.overall_status;
+		const breStatus = data?.workflow_progress?.bre_status;
+		const breFailedRule = data?.workflow_progress?.bre_failed_rule;
+
+		if (overallStatus === "rejected") {
+			if (breStatus === "rejected") {
+				const fixRoute = getBreFixRoute(breFailedRule);
+				if (fixRoute) {
+					router.push(fixRoute as any);
+					return;
+				}
+				// Stay on dashboard, do not route to /no-approved-amount
+				return;
+			}
+			router.push("/no-approved-amount");
+			return;
+		}
+
+		if (
+			(progress === "pan_verification" || progress === "professional_details") &&
+			(breStatus === "pending" || breStatus === "error")
+		) {
+			router.push({
+				pathname: "/new-assessment-fee" as any,
+				params: { resumeChecks: "true" },
+			});
+			return;
+		}
 
 		if (progress === "consent_permission") {
 			router.push("/request-permissions");
@@ -663,7 +760,7 @@ export default function Home() {
 		}
 
 		if (progress === "pan_verification") {
-			startVerifyLeadFlow(false);
+			router.push("/professional-details" as any);
 			return;
 		}
 
@@ -717,6 +814,8 @@ export default function Home() {
 			}
 
 			router.push(href as any);
+		} else {
+			router.push("/(tabs)");
 		}
 	};
 
@@ -1043,8 +1142,8 @@ export default function Home() {
 							{data?.dashboard_type === "loan_dashboard"
 								? t("loanSummaryDetails")
 								: isReapplyScenario
-								? t("welcomeReapplyLoan")
-								: "Apply for a Loan Now"}
+									? t("welcomeReapplyLoan")
+									: "Apply for a Loan Now"}
 						</Text>
 					</View>
 
@@ -1247,7 +1346,7 @@ export default function Home() {
 									style={styles.reapplyBenefitsTitle}
 									translationKey="benefitsOfReapplying"
 								/>
-								
+
 								<View style={styles.reapplyBenefitsList}>
 									<View style={styles.reapplyBenefitItem}>
 										<Image source={Images.MONEY_ICON} style={styles.reapplyBenefitIcon} />
@@ -1319,52 +1418,7 @@ export default function Home() {
 															translationKey="clickHere"
 														/>
 														<TouchableOpacity
-															onPress={async () => {
-																try {
-																	// Call the can-reapply API
-																	const reapplyData = await checkCanReapply();
-
-																	if (reapplyData.can_apply) {
-																		// ── Analytics: User Segmentation ──
-																		setUserType("repeat_user").catch(() => { });
-																		// ───────────────────────────────────
-
-																		const startingStep = reapplyData.starting_step;
-																		const href = StepHref[startingStep as keyof typeof StepHref];
-
-																		if (href) {
-																			console.log("Re-applying from step:", startingStep, "->", href);
-																			router.push({
-																				pathname: href as any,
-																				params: { fromReapply: "true" },
-																			});
-																		} else {
-																			Toast.show({
-																				type: "error",
-																				text1: t("error"),
-																				text2: "Unable to determine the starting step",
-																			});
-																		}
-																	} else {
-																		const message = reapplyData.message?.toLowerCase().includes("overdue")
-																			? t("overdueLoanMessage")
-																			: reapplyData.message || t("notEligibleToReapply");
-
-																		Toast.show({
-																			type: "error",
-																			text1: t("cannotReapply"),
-																			text2: message,
-																		});
-																	}
-																} catch (error) {
-																	console.error("Re-apply error:", error);
-																	Toast.show({
-																		type: "error",
-																		text1: t("error"),
-																		text2: t("reApplicationCheckFailed"),
-																	});
-																}
-															}}
+															onPress={handleReapply}
 															style={styles.reapplyButton}>
 															<IconSymbol name="arrow.clockwise" size={18} color={white} />
 															<TranslatedText
@@ -1413,8 +1467,8 @@ export default function Home() {
 
 						<View style={styles.categoriesRow}>
 							{loanTypes.map((item, index) => (
-								<TouchableOpacity 
-									key={index}   
+								<TouchableOpacity
+									key={index}
 									activeOpacity={0.8}
 									style={styles.categoryCard}>
 									<View style={styles.categoryIconCircle}>
@@ -1424,10 +1478,10 @@ export default function Home() {
 											resizeMode="contain"
 										/>
 									</View>
-									<Text 
-										style={styles.categoryTitle} 
-										numberOfLines={1} 
-										adjustsFontSizeToFit 
+									<Text
+										style={styles.categoryTitle}
+										numberOfLines={1}
+										adjustsFontSizeToFit
 										minimumFontScale={0.8}
 										ellipsizeMode="tail">
 										{t(item.titleKey)}

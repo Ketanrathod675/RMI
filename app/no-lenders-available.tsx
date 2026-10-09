@@ -7,12 +7,12 @@ import React, { useEffect, useRef, useState } from "react";
 import {
 	Animated,
 	BackHandler,
-	SafeAreaView,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function NoLendersAvailable() {
 	const router = useRouter();

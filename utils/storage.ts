@@ -26,6 +26,7 @@ export const STORAGE_KEYS = {
 	"@digilocker-uid": "@digilocker-uid",
 	"@digilocker-timer": "@digilocker-timer",
 	"@digilocker-transaction-id": "@digilocker-transaction-id",
+	"@digilocker-txn-id": "@digilocker-txn-id",
 	"@digilocker-status": "@digilocker-status",
 	"@digilocker-timestamp": "@digilocker-timestamp",
 	"@auto-debit-status": "@auto-debit-status",
@@ -48,6 +49,9 @@ export const STORAGE_KEYS = {
 	"@allocated-lender-id": "@allocated-lender-id",
 	"@allocated-lender-name": "@allocated-lender-name",
 	"@assessment-fee-amount": "@assessment-fee-amount",
+	"@assessment-fee": "@assessment-fee",
+	"@latest-assessment-fee-txnid": "@latest-assessment-fee-txnid",
+	"@kyc-response": "@kyc-response",
 	"@completed-journey-steps": "@completed-journey-steps",
 } as const;
 

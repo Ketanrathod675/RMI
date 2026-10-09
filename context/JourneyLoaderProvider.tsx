@@ -30,6 +30,7 @@ export interface RunStepOptions {
 	subSteps?: { id: string; title: string; subtitle?: string }[];
 	timeoutMs?: number;
 	keepOpen?: boolean;
+	minDurationMs?: number;
 }
 
 interface JourneyLoaderContextValue {
@@ -210,11 +211,16 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 					clearTimeout(timeoutHandle);
 				}
 
-				// Ensure minimum 600ms active display time for smooth UX
+				// Ensure minimum active display time for smooth UX
+				const completionAnimMs = 550;
+				const requiredActiveTime =
+					options?.minDurationMs !== undefined
+						? Math.max(minActiveTime, options.minDurationMs - completionAnimMs)
+						: minActiveTime;
 				const elapsed = Date.now() - startTime;
-				if (elapsed < minActiveTime) {
+				if (elapsed < requiredActiveTime) {
 					await new Promise((resolve) =>
-						setTimeout(resolve, minActiveTime - elapsed)
+						setTimeout(resolve, requiredActiveTime - elapsed)
 					);
 				}
 

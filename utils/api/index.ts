@@ -30,6 +30,9 @@ export * from "./services/notifications.service";
 export * from "./services/faq.service";
 export * from "./services/video.service";
 export * from "./services/feedback.service";
+export * from "./services/pincode.service";
+export * from "./services/professional.service";
+export * from "./services/identity.service";
 
 // LEGACY — old backend, disabled during in-house rebuild
 // Domain Modules & Legacy Fallbacks

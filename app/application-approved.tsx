@@ -7,7 +7,8 @@ import { height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useEffect } from "react";
-import { BackHandler, SafeAreaView, StyleSheet, TouchableOpacity, View } from "react-native";
+import { BackHandler, StyleSheet, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ApplicationApproved() {
 	useJourneyTracker("/application-approved");

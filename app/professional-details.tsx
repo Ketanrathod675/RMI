@@ -1,20 +1,21 @@
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
-import { Select, type SelectOption } from "@/components";
+import { Select, StickyFormFooter, type SelectOption } from "@/components";
 import { primary } from "@/constants/Colors";
 import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useKeyboardVisible } from "@/hooks/useKeyboardVisible";
+import { useFormScroll } from "@/hooks/useFormScroll";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
-import { errorHandler } from "@/utils/api";
-import { getEmploymentDetailsHbPartner } from "@/utils/api/user";
 import {
-	getProfessionalDetails,
-	submitEmploymentDetails,
-	type EmploymentDetailsRequestType,
-} from "@/utils/api/kyc";
+	getProfessionalDetailsWithMeta,
+	submitProfessionalDetails,
+	type ProfessionalDetailsPayload,
+} from "@/utils/api";
+import { getEmploymentDetailsHbPartner } from "@/utils/api/user";
 import { useNavigation, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
@@ -51,6 +52,9 @@ export default function ProfessionalDetails() {
 
 	const companyNameRef = useRef<TextInput>(null);
 	const designationRef = useRef<TextInput>(null);
+
+	const { visible: isKeyboardVisible, height: keyboardHeight } = useKeyboardVisible();
+	const { scrollRef, scrollProps, registerField, scrollToField, scrollToFirstError } = useFormScroll();
 
 	const dismissActiveInputs = () => {
 		companyNameRef.current?.blur();
@@ -155,6 +159,39 @@ export default function ProfessionalDetails() {
 		{ label: "Malayalam", value: "malayalam" },
 	];
 
+	const LANGUAGE_TO_ISO: Record<string, string> = {
+		english: "en",
+		hindi: "hi",
+		marathi: "mr",
+		gujarati: "gu",
+		bengali: "bn",
+		tamil: "ta",
+		telugu: "te",
+		kannada: "kn",
+		malayalam: "ml",
+	};
+
+	const ISO_TO_LANGUAGE: Record<string, string> = Object.entries(LANGUAGE_TO_ISO).reduce(
+		(acc, [lang, code]) => {
+			acc[code] = lang;
+			return acc;
+		},
+		{} as Record<string, string>,
+	);
+
+	const defaultLoanPurposeOptions: SelectOption[] = [
+		{ label: t("purposeMedicalEmergency", "Medical / Emergency"), value: "medical_emergency" },
+		{ label: t("purposeEducation", "Education / Fees"), value: "education" },
+		{ label: t("purposeHomeRepair", "Home repair / Renovation"), value: "home_repair" },
+		{ label: t("purposeWeddingFunction", "Wedding / Family function"), value: "wedding_function" },
+		{ label: t("purposeTravel", "Travel"), value: "travel" },
+		{ label: t("purposeBusinessNeeds", "Business needs"), value: "business_needs" },
+		{ label: t("purposeDebtRepayment", "Repay existing loans"), value: "debt_repayment" },
+		{ label: t("purposeVehicle", "Vehicle purchase / repair"), value: "vehicle" },
+		{ label: t("purposeHousehold", "Household expenses / purchases"), value: "household" },
+		{ label: t("purposeOther", "Other"), value: "other" },
+	];
+
 	// Initialized to match the exact defaults in the screenshot
 	const [formData, setFormData] = useState({
 		employmentType: "salaried" as "salaried" | "self_employed",
@@ -166,6 +203,7 @@ export default function ProfessionalDetails() {
 		natureOfBusiness: "",
 		typeOfIndustry: "",
 		modeOfSalary: "",
+		reasonForLoan: "",
 		preferredLanguage: "",
 	});
 
@@ -179,11 +217,13 @@ export default function ProfessionalDetails() {
 		natureOfBusiness: "",
 		typeOfIndustry: "",
 		modeOfSalary: "",
+		reasonForLoan: "",
 		preferredLanguage: "",
 	});
 
 	const [fetchingDetails, setFetchingDetails] = useState(false);
 	const [backendLanguages, setBackendLanguages] = useState<string[]>([]);
+	const [backendLoanPurposes, setBackendLoanPurposes] = useState<Array<{ value: string; label: string }>>([]);
 
 	const languageOptions: SelectOption[] =
 		backendLanguages.length > 0
@@ -192,6 +232,14 @@ export default function ProfessionalDetails() {
 				value: lang.toLowerCase(),
 			}))
 			: defaultLanguages;
+
+	const loanPurposeOptions: SelectOption[] =
+		backendLoanPurposes.length > 0
+			? backendLoanPurposes.map((p) => ({
+				label: p.label || p.value,
+				value: p.value,
+			}))
+			: defaultLoanPurposeOptions;
 
 	const { applicantFrom } = useAuth();
 	const { runStep } = useJourneyLoader();
@@ -222,14 +270,22 @@ export default function ProfessionalDetails() {
 	}, [hbEmploymentData]);
 
 	useEffect(() => {
-		getProfessionalDetails()
+		getProfessionalDetailsWithMeta()
 			.then((response) => {
-				if (response?.languages && Array.isArray(response.languages) && response.languages.length > 0) {
-					setBackendLanguages(response.languages);
+				const options = response?.options;
+				if (options?.languages && Array.isArray(options.languages) && options.languages.length > 0) {
+					setBackendLanguages(options.languages);
 				}
-				if (response?.status && response?.data) {
-					const data = response.data;
-					const normalize = (val: string | null) => (val ? val.replace(/-/g, "_") : "");
+				if (options?.reason_for_loan && Array.isArray(options.reason_for_loan)) {
+					setBackendLoanPurposes(options.reason_for_loan);
+				}
+				const data = response?.data;
+				if (data) {
+					const normalize = (val: string | null | undefined) => (val ? val.replace(/-/g, "_") : "");
+					const rawLang = data.kfs_language;
+					const mappedLang = (rawLang && ISO_TO_LANGUAGE[rawLang.toLowerCase()])
+						? ISO_TO_LANGUAGE[rawLang.toLowerCase()]
+						: (rawLang ? rawLang.toLowerCase() : "");
 
 					setFormData((prev) => ({
 						...prev,
@@ -237,12 +293,13 @@ export default function ProfessionalDetails() {
 						companyType: normalize(data.type_of_company) || prev.companyType,
 						companyName: data.company_name || prev.companyName,
 						designation: data.designation || prev.designation,
-						incomeRange: normalize(data.income_range) || prev.incomeRange,
+						incomeRange: normalize(data.salary_range) || prev.incomeRange,
 						residenceStatus: normalize(data.residence_status) || prev.residenceStatus,
 						natureOfBusiness: normalize(data.nature_of_business) || prev.natureOfBusiness,
-						typeOfIndustry: normalize(data.industry_type) || prev.typeOfIndustry,
+						typeOfIndustry: normalize(data.type_of_industry) || prev.typeOfIndustry,
 						modeOfSalary: normalize(data.mode_of_salary) || prev.modeOfSalary,
-						preferredLanguage: data.preferred_language?.toLowerCase() || prev.preferredLanguage,
+						reasonForLoan: normalize(data.reason_for_loan) || prev.reasonForLoan,
+						preferredLanguage: mappedLang || prev.preferredLanguage,
 					}));
 				}
 			})
@@ -306,7 +363,7 @@ export default function ProfessionalDetails() {
 	};
 
 	// Validation
-	const validateForm = (): boolean => {
+	const validateForm = () => {
 		const newErrors = {
 			employmentType: "",
 			companyType: "",
@@ -317,6 +374,7 @@ export default function ProfessionalDetails() {
 			natureOfBusiness: "",
 			typeOfIndustry: "",
 			modeOfSalary: "",
+			reasonForLoan: "",
 			preferredLanguage: "",
 		};
 
@@ -357,16 +415,21 @@ export default function ProfessionalDetails() {
 			}
 		}
 
+		if (!formData.reasonForLoan) {
+			newErrors.reasonForLoan = t("pleaseSelectPurposeOfLoan", "Please select the purpose of loan");
+		}
+
 		if (!formData.preferredLanguage) {
 			newErrors.preferredLanguage = t("preferredLanguageRequired", "Preferred language is required");
 		}
 
 		setErrors(newErrors);
-		return Object.values(newErrors).every((error) => error === "");
+		const isValid = Object.values(newErrors).every((error) => error === "");
+		return { isValid, errors: newErrors };
 	};
 
-	const { mutate: submitEmploymentDetailsMutation, isPending } = useNetworkAwareMutation({
-		mutationFn: submitEmploymentDetails,
+	const { mutate: submitProfessionalDetailsMutation, isPending } = useNetworkAwareMutation({
+		mutationFn: submitProfessionalDetails,
 		onSuccess: async () => {
 			await runStep("professional_details", async () => {
 				Toast.show({
@@ -378,12 +441,33 @@ export default function ProfessionalDetails() {
 
 			router.replace("/professional-details-success");
 		},
-		onError: (err, variables, ctx) => {
-			const { error } = errorHandler(err, variables, ctx);
+		onError: (err: any) => {
+			const status = err?.status ?? err?.response?.status;
+			const detail = err?.detail ?? err?.response?.data?.detail ?? err?.message ?? "";
+			const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
+
+			if (status === 409) {
+				if (detailStr.includes("No active loan workflow")) {
+					Toast.show({
+						type: "error",
+						text1: detailStr,
+					});
+					router.replace("/(tabs)");
+					return;
+				}
+				if (detailStr.includes("Eligibility checks not completed")) {
+					router.replace({
+						pathname: "/new-assessment-fee",
+						params: { resumeChecks: "true" },
+					});
+					return;
+				}
+			}
+
 			Toast.show({
 				type: "error",
 				text1: t("failedToSubmitEmploymentDetails", "Failed to submit details"),
-				text2: error?.message ?? t("pleaseRetryPayment", "Please try again"),
+				text2: detailStr || t("pleaseRetryPayment", "Please try again"),
 			});
 		},
 	});
@@ -412,25 +496,53 @@ export default function ProfessionalDetails() {
 	}, [isPending, shimmerAnim]);
 
 	const handleSubmit = () => {
-		if (!validateForm()) {
+		const { isValid, errors: validationErrors } = validateForm();
+		if (!isValid) {
+			const orderedKeys =
+				formData.employmentType === "salaried"
+					? [
+							"residenceStatus",
+							"employmentType",
+							"companyType",
+							"companyName",
+							"designation",
+							"incomeRange",
+							"modeOfSalary",
+							"reasonForLoan",
+							"preferredLanguage",
+					  ]
+					: [
+							"residenceStatus",
+							"employmentType",
+							"natureOfBusiness",
+							"typeOfIndustry",
+							"incomeRange",
+							"reasonForLoan",
+							"preferredLanguage",
+					  ];
+
+			scrollToFirstError(validationErrors, orderedKeys, {
+				companyName: companyNameRef,
+				designation: designationRef,
+			});
 			return;
 		}
 
-		const apiData: EmploymentDetailsRequestType = {
-			employment_type: formData.employmentType,
-			verification_type: "automatic",
-			income_range: formData.incomeRange,
-			residence_status: formData.residenceStatus,
-			type_of_company: formData.companyType || undefined,
-			company_name: formData.companyName || undefined,
-			designation: formData.designation || undefined,
-			nature_of_business: formData.natureOfBusiness || undefined,
-			industry_type: formData.typeOfIndustry || undefined,
-			mode_of_salary: formData.modeOfSalary || undefined,
-			preferred_language: formData.preferredLanguage || "english",
+		const apiData: ProfessionalDetailsPayload = {
+			employmentType: formData.employmentType,
+			residenceStatus: formData.residenceStatus,
+			typeOfCompany: formData.employmentType === "salaried" ? (formData.companyType || undefined) : undefined,
+			companyName: formData.employmentType === "salaried" ? (formData.companyName || undefined) : undefined,
+			designation: formData.employmentType === "salaried" ? (formData.designation || undefined) : undefined,
+			salaryRange: formData.incomeRange,
+			modeOfSalary: formData.employmentType === "salaried" ? (formData.modeOfSalary || undefined) : undefined,
+			natureOfBusiness: formData.employmentType === "self_employed" ? (formData.natureOfBusiness || undefined) : undefined,
+			// WORKAROUND (F7): Send full lowercase language name until backend F-B2 is deployed
+			kfsLanguage: formData.preferredLanguage.toLowerCase() || "english",
+			reasonForLoan: formData.reasonForLoan,
 		};
 
-		submitEmploymentDetailsMutation(apiData);
+		submitProfessionalDetailsMutation(apiData);
 	};
 
 	if (fetchingDetails) {
@@ -444,292 +556,333 @@ export default function ProfessionalDetails() {
 	return (
 		<>
 			<KeyboardAvoidingView
-			style={styles.container}
-			behavior={Platform.OS === "ios" ? "padding" : "height"}
-			keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}>
-			<StatusBar style={isDark ? "light" : "dark"} />
+				style={styles.container}
+				behavior={Platform.OS === "ios" ? "padding" : undefined}
+				keyboardVerticalOffset={0}>
+				<StatusBar style={isDark ? "light" : "dark"} />
 
-			{/* Upper Header following system theme */}
-			<View
-				style={[
-					styles.header,
-					{
-						paddingTop: Math.max(insets.top, 14),
-						backgroundColor: headerBg,
-						borderBottomColor: headerBorderColor,
-					},
-				]}>
-				<TouchableOpacity
-					onPress={handleBack}
-					style={styles.backButton}
-					hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-					activeOpacity={0.7}>
-					<MaterialIcons name="arrow-back" size={24} color={iconColor} />
-				</TouchableOpacity>
-				<Text style={[styles.headerTitle, { color: headerTextColor }]}>Professional Details</Text>
-			</View>
-
-			<ScrollView
-				style={styles.scrollView}
-				contentContainerStyle={styles.scrollContent}
-				showsVerticalScrollIndicator={false}
-				keyboardShouldPersistTaps="handled">
-
-				{/* 1. Residence Status */}
-				<View style={styles.inputContainer}>
-					<Text style={styles.inputLabel}>
-						Residence Status<Text style={styles.requiredAsterisk}> *</Text>
-					</Text>
-					<Select
-						options={residenceStatusOptions}
-						selectedValue={formData.residenceStatus}
-						onSelect={(val) => handleForm("residenceStatus", val as string)}
-						placeholder="Select residence status"
-						disabled={isPending}
-					/>
-					{errors.residenceStatus ? (
-						<Text style={styles.errorText}>{errors.residenceStatus}</Text>
-					) : null}
+				{/* Upper Header following system theme */}
+				<View
+					style={[
+						styles.header,
+						{
+							paddingTop: Math.max(insets.top, 14),
+							backgroundColor: headerBg,
+							borderBottomColor: headerBorderColor,
+						},
+					]}>
+					<TouchableOpacity
+						onPress={handleBack}
+						style={styles.backButton}
+						hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+						activeOpacity={0.7}>
+						<MaterialIcons name="arrow-back" size={24} color={iconColor} />
+					</TouchableOpacity>
+					<Text style={[styles.headerTitle, { color: headerTextColor }]}>Professional Details</Text>
 				</View>
 
-				{/* 2. Employment Type */}
-				<View style={styles.inputContainer}>
-					<Text style={styles.inputLabel}>
-						Employment Type<Text style={styles.requiredAsterisk}> *</Text>
-					</Text>
-					<Select
-						options={employmentTypeOptions}
-						selectedValue={formData.employmentType}
-						onSelect={(val) =>
-							handleForm("employmentType", val as "salaried" | "self_employed")
-						}
-						placeholder="Select employment type"
-						disabled={isPending}
-					/>
-					{errors.employmentType ? (
-						<Text style={styles.errorText}>{errors.employmentType}</Text>
-					) : null}
-				</View>
+				<ScrollView
+					ref={scrollRef}
+					{...scrollProps}
+					style={styles.scrollView}
+					contentContainerStyle={[
+						styles.scrollContent,
+						{
+							paddingBottom: isKeyboardVisible
+								? (keyboardHeight > 0 ? keyboardHeight : 320) + 40
+								: Math.max(insets.bottom + 14, 28) + 24,
+						},
+					]}
+					showsVerticalScrollIndicator={false}>
 
-				{/* Salaried Specific Fields */}
-				{formData.employmentType === "salaried" && (
-					<>
-						{/* 3. Type of Company */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Type of Company<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<Select
-								options={companyTypeOptions}
-								selectedValue={formData.companyType}
-								onSelect={(val) => handleForm("companyType", val as string)}
-								placeholder="Select company type"
-								disabled={isPending}
-							/>
-							{errors.companyType ? (
-								<Text style={styles.errorText}>{errors.companyType}</Text>
-							) : null}
-						</View>
+					{/* 1. Residence Status */}
+					<View {...registerField("residenceStatus")} style={styles.inputContainer}>
+						<Text style={styles.inputLabel}>
+							Residence Status<Text style={styles.requiredAsterisk}> *</Text>
+						</Text>
+						<Select
+							options={residenceStatusOptions}
+							selectedValue={formData.residenceStatus}
+							onSelect={(val) => handleForm("residenceStatus", val as string)}
+							placeholder="Select residence status"
+							disabled={isPending}
+							error={Boolean(errors.residenceStatus)}
+						/>
+						{errors.residenceStatus ? (
+							<Text style={styles.errorText}>{errors.residenceStatus}</Text>
+						) : null}
+					</View>
 
-						{/* 4. Company Name */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Company Name<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<TextInput
-								ref={companyNameRef}
-								style={styles.textInput}
-								value={formData.companyName}
-								onChangeText={(val) => handleForm("companyName", val)}
-								placeholder="Enter company name"
-								placeholderTextColor="#A0A0A0"
-								blurOnSubmit={true}
-								returnKeyType="done"
-								onSubmitEditing={() => Keyboard.dismiss()}
-							/>
-							{errors.companyName ? (
-								<Text style={styles.errorText}>{errors.companyName}</Text>
-							) : null}
-						</View>
+					{/* 2. Employment Type */}
+					<View {...registerField("employmentType")} style={styles.inputContainer}>
+						<Text style={styles.inputLabel}>
+							Employment Type<Text style={styles.requiredAsterisk}> *</Text>
+						</Text>
+						<Select
+							options={employmentTypeOptions}
+							selectedValue={formData.employmentType}
+							onSelect={(val) =>
+								handleForm("employmentType", val as "salaried" | "self_employed")
+							}
+							placeholder="Select employment type"
+							disabled={isPending}
+							error={Boolean(errors.employmentType)}
+						/>
+						{errors.employmentType ? (
+							<Text style={styles.errorText}>{errors.employmentType}</Text>
+						) : null}
+					</View>
 
-						{/* 5. Designation */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Designation<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<TextInput
-								ref={designationRef}
-								style={styles.textInput}
-								value={formData.designation}
-								onChangeText={(val) => handleForm("designation", val)}
-								placeholder="Enter your designation"
-								placeholderTextColor="#A0A0A0"
-								blurOnSubmit={true}
-								returnKeyType="done"
-								onSubmitEditing={() => Keyboard.dismiss()}
-							/>
-							{errors.designation ? (
-								<Text style={styles.errorText}>{errors.designation}</Text>
-							) : null}
-						</View>
+					{/* Salaried Specific Fields */}
+					{formData.employmentType === "salaried" && (
+						<>
+							{/* 3. Type of Company */}
+							<View {...registerField("companyType")} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Type of Company<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<Select
+									options={companyTypeOptions}
+									selectedValue={formData.companyType}
+									onSelect={(val) => handleForm("companyType", val as string)}
+									placeholder="Select company type"
+									disabled={isPending}
+									error={Boolean(errors.companyType)}
+								/>
+								{errors.companyType ? (
+									<Text style={styles.errorText}>{errors.companyType}</Text>
+								) : null}
+							</View>
 
-						{/* 6. Salary Range (Rs.) */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Salary Range  (Rs.)<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<Select
-								options={incomeRangeOptions}
-								selectedValue={formData.incomeRange}
-								onSelect={(val) => handleForm("incomeRange", val as string)}
-								placeholder="Select income range"
-								disabled={isPending}
-							/>
-							{errors.incomeRange ? (
-								<Text style={styles.errorText}>{errors.incomeRange}</Text>
-							) : null}
-						</View>
+							{/* 4. Company Name */}
+							<View {...registerField("companyName", companyNameRef)} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Company Name<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<TextInput
+									ref={companyNameRef}
+									style={[styles.textInput, Boolean(errors.companyName) && styles.textInputError]}
+									value={formData.companyName}
+									onChangeText={(val) => handleForm("companyName", val)}
+									placeholder="Enter company name"
+									placeholderTextColor="#A0A0A0"
+									autoCapitalize="words"
+									blurOnSubmit={false}
+									returnKeyType="next"
+									onSubmitEditing={() => designationRef.current?.focus()}
+									onFocus={() => scrollToField("companyName", companyNameRef)}
+								/>
+								{errors.companyName ? (
+									<Text style={styles.errorText}>{errors.companyName}</Text>
+								) : null}
+							</View>
 
-						{/* 7. Mode of Salary */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Mode of Salary<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<Select
-								options={modeOfSalaryOptions}
-								selectedValue={formData.modeOfSalary}
-								onSelect={(val) => handleForm("modeOfSalary", val as string)}
-								placeholder="Select mode of salary"
-								disabled={isPending}
-							/>
-							{errors.modeOfSalary ? (
-								<Text style={styles.errorText}>{errors.modeOfSalary}</Text>
-							) : null}
-						</View>
-					</>
-				)}
+							{/* 5. Designation */}
+							<View {...registerField("designation", designationRef)} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Designation<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<TextInput
+									ref={designationRef}
+									style={[styles.textInput, Boolean(errors.designation) && styles.textInputError]}
+									value={formData.designation}
+									onChangeText={(val) => handleForm("designation", val)}
+									placeholder="Enter your designation"
+									placeholderTextColor="#A0A0A0"
+									autoCapitalize="words"
+									blurOnSubmit={true}
+									returnKeyType="done"
+									onSubmitEditing={handleSubmit}
+									onFocus={() => scrollToField("designation", designationRef)}
+								/>
+								{errors.designation ? (
+									<Text style={styles.errorText}>{errors.designation}</Text>
+								) : null}
+							</View>
 
-				{/* Self Employed Specific Fields */}
-				{formData.employmentType === "self_employed" && (
-					<>
-						{/* 3. Nature of Business */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Nature of Business<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<Select
-								options={natureOfBusinessOptions}
-								selectedValue={formData.natureOfBusiness}
-								onSelect={(val) => handleForm("natureOfBusiness", val as string)}
-								placeholder="Select nature of business"
-								disabled={isPending}
-							/>
-							{errors.natureOfBusiness ? (
-								<Text style={styles.errorText}>{errors.natureOfBusiness}</Text>
-							) : null}
-						</View>
+							{/* 6. Salary Range (Rs.) */}
+							<View {...registerField("incomeRange")} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Salary Range  (Rs.)<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<Select
+									options={incomeRangeOptions}
+									selectedValue={formData.incomeRange}
+									onSelect={(val) => handleForm("incomeRange", val as string)}
+									placeholder="Select income range"
+									disabled={isPending}
+									error={Boolean(errors.incomeRange)}
+								/>
+								{errors.incomeRange ? (
+									<Text style={styles.errorText}>{errors.incomeRange}</Text>
+								) : null}
+							</View>
 
-						{/* 4. Type of Industry */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Type of Industry<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<Select
-								options={typeOfIndustryOptions}
-								selectedValue={formData.typeOfIndustry}
-								onSelect={(val) => handleForm("typeOfIndustry", val as string)}
-								placeholder="Select type of industry"
-								disabled={isPending}
-							/>
-							{errors.typeOfIndustry ? (
-								<Text style={styles.errorText}>{errors.typeOfIndustry}</Text>
-							) : null}
-						</View>
-
-						{/* 5. Income (Rs.) */}
-						<View style={styles.inputContainer}>
-							<Text style={styles.inputLabel}>
-								Income (Rs.)<Text style={styles.requiredAsterisk}> *</Text>
-							</Text>
-							<Select
-								options={incomeRangeOptions}
-								selectedValue={formData.incomeRange}
-								onSelect={(val) => handleForm("incomeRange", val as string)}
-								placeholder="Select income range"
-								disabled={isPending}
-							/>
-							{errors.incomeRange ? (
-								<Text style={styles.errorText}>{errors.incomeRange}</Text>
-							) : null}
-						</View>
-					</>
-				)}
-
-				{/* Preferred Language (Common to both) */}
-				<View style={styles.inputContainer}>
-					<Text style={styles.inputLabel}>
-						Preferred Language<Text style={styles.requiredAsterisk}> *</Text>
-					</Text>
-					<Select
-						options={languageOptions}
-						selectedValue={formData.preferredLanguage}
-						onSelect={(val) => handleForm("preferredLanguage", val as string)}
-						placeholder="Select your preferred language"
-						title="Select Language"
-						searchable={true}
-						searchPlaceholder="Search language..."
-						disabled={isPending}
-					/>
-					{errors.preferredLanguage ? (
-						<Text style={styles.errorText}>{errors.preferredLanguage}</Text>
-					) : null}
-				</View>
-			</ScrollView>
-
-			{/* Sticky Bottom Pill Button with Shimmer */}
-			<View style={[styles.bottomButtonContainer, { paddingBottom: Math.max(insets.bottom + 14, 28) }]}>
-				<TouchableOpacity
-					style={[styles.submitButton, isPending && styles.submitButtonDisabled]}
-					onPress={handleSubmit}
-					disabled={isPending}
-					activeOpacity={0.85}>
-					{/* Shimmer animation */}
-					{!isPending && (
-						<Animated.View
-							style={[
-								StyleSheet.absoluteFill,
-								{
-									width: "50%",
-									transform: [
-										{
-											translateX: shimmerAnim.interpolate({
-												inputRange: [0, 1],
-												outputRange: [-180, 420],
-											}),
-										},
-									],
-								},
-							]}>
-							<LinearGradient
-								colors={["transparent", "rgba(255, 255, 255, 0.7)", "transparent"]}
-								start={{ x: 0, y: 0 }}
-								end={{ x: 1, y: 0 }}
-								style={StyleSheet.absoluteFill}
-							/>
-						</Animated.View>
+							{/* 7. Mode of Salary */}
+							<View {...registerField("modeOfSalary")} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Mode of Salary<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<Select
+									options={modeOfSalaryOptions}
+									selectedValue={formData.modeOfSalary}
+									onSelect={(val) => handleForm("modeOfSalary", val as string)}
+									placeholder="Select mode of salary"
+									disabled={isPending}
+									error={Boolean(errors.modeOfSalary)}
+								/>
+								{errors.modeOfSalary ? (
+									<Text style={styles.errorText}>{errors.modeOfSalary}</Text>
+								) : null}
+							</View>
+						</>
 					)}
 
-					{isPending ? (
-						<ActivityIndicator size="small" color="#000000" />
-					) : (
-						<View style={styles.submitButtonContent}>
-							<Text style={styles.submitButtonText}>Submit & Check Eligibility</Text>
-							<MaterialIcons name="arrow-forward" size={20} color="#000000" style={{ marginLeft: 8 }} />
-						</View>
+					{/* Self Employed Specific Fields */}
+					{formData.employmentType === "self_employed" && (
+						<>
+							{/* 3. Nature of Business */}
+							<View {...registerField("natureOfBusiness")} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Nature of Business<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<Select
+									options={natureOfBusinessOptions}
+									selectedValue={formData.natureOfBusiness}
+									onSelect={(val) => handleForm("natureOfBusiness", val as string)}
+									placeholder="Select nature of business"
+									disabled={isPending}
+									error={Boolean(errors.natureOfBusiness)}
+								/>
+								{errors.natureOfBusiness ? (
+									<Text style={styles.errorText}>{errors.natureOfBusiness}</Text>
+								) : null}
+							</View>
+
+							{/* 4. Type of Industry */}
+							<View {...registerField("typeOfIndustry")} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Type of Industry<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<Select
+									options={typeOfIndustryOptions}
+									selectedValue={formData.typeOfIndustry}
+									onSelect={(val) => handleForm("typeOfIndustry", val as string)}
+									placeholder="Select type of industry"
+									disabled={isPending}
+									error={Boolean(errors.typeOfIndustry)}
+								/>
+								{errors.typeOfIndustry ? (
+									<Text style={styles.errorText}>{errors.typeOfIndustry}</Text>
+								) : null}
+							</View>
+
+							{/* 5. Income (Rs.) */}
+							<View {...registerField("incomeRange")} style={styles.inputContainer}>
+								<Text style={styles.inputLabel}>
+									Income (Rs.)<Text style={styles.requiredAsterisk}> *</Text>
+								</Text>
+								<Select
+									options={incomeRangeOptions}
+									selectedValue={formData.incomeRange}
+									onSelect={(val) => handleForm("incomeRange", val as string)}
+									placeholder="Select income range"
+									disabled={isPending}
+									error={Boolean(errors.incomeRange)}
+								/>
+								{errors.incomeRange ? (
+									<Text style={styles.errorText}>{errors.incomeRange}</Text>
+								) : null}
+							</View>
+						</>
 					)}
-				</TouchableOpacity>
-			</View>
-		</KeyboardAvoidingView>
+
+					{/* Purpose of Loan (Common to both) */}
+					<View {...registerField("reasonForLoan")} style={styles.inputContainer}>
+						<Text style={styles.inputLabel}>
+							{t("purposeOfLoan", "Purpose of loan")}<Text style={styles.requiredAsterisk}> *</Text>
+						</Text>
+						<Select
+							options={loanPurposeOptions}
+							selectedValue={formData.reasonForLoan}
+							onSelect={(val) => handleForm("reasonForLoan", val as string)}
+							placeholder={t("selectPurposeOfLoan", "Select purpose of loan")}
+							title={t("purposeOfLoan", "Purpose of loan")}
+							searchable={false}
+							disabled={isPending}
+							error={Boolean(errors.reasonForLoan)}
+						/>
+						{errors.reasonForLoan ? (
+							<Text style={styles.errorText}>{errors.reasonForLoan}</Text>
+						) : null}
+					</View>
+
+					{/* Preferred Language (Common to both) */}
+					<View {...registerField("preferredLanguage")} style={styles.inputContainer}>
+						<Text style={styles.inputLabel}>
+							Preferred Language<Text style={styles.requiredAsterisk}> *</Text>
+						</Text>
+						<Select
+							options={languageOptions}
+							selectedValue={formData.preferredLanguage}
+							onSelect={(val) => handleForm("preferredLanguage", val as string)}
+							placeholder="Select your preferred language"
+							title="Select Language"
+							searchable={true}
+							searchPlaceholder="Search language..."
+							disabled={isPending}
+							error={Boolean(errors.preferredLanguage)}
+						/>
+						{errors.preferredLanguage ? (
+							<Text style={styles.errorText}>{errors.preferredLanguage}</Text>
+						) : null}
+					</View>
+				</ScrollView>
+
+				{/* Sticky Bottom Pill Button with Shimmer */}
+				<StickyFormFooter style={styles.bottomButtonContainer}>
+					<TouchableOpacity
+						style={[styles.submitButton, isPending && styles.submitButtonDisabled]}
+						onPress={handleSubmit}
+						disabled={isPending}
+						activeOpacity={0.85}>
+						{/* Shimmer animation */}
+						{!isPending && (
+							<Animated.View
+								style={[
+									StyleSheet.absoluteFill,
+									{
+										width: "50%",
+										transform: [
+											{
+												translateX: shimmerAnim.interpolate({
+													inputRange: [0, 1],
+													outputRange: [-180, 420],
+												}),
+											},
+										],
+									},
+								]}>
+								<LinearGradient
+									colors={["transparent", "rgba(255, 255, 255, 0.7)", "transparent"]}
+									start={{ x: 0, y: 0 }}
+									end={{ x: 1, y: 0 }}
+									style={StyleSheet.absoluteFill}
+								/>
+							</Animated.View>
+						)}
+
+						{isPending ? (
+							<ActivityIndicator size="small" color="#000000" />
+						) : (
+							<View style={styles.submitButtonContent}>
+								<Text style={styles.submitButtonText}>Submit & Check Eligibility</Text>
+								<MaterialIcons name="arrow-forward" size={20} color="#000000" style={{ marginLeft: 8 }} />
+							</View>
+						)}
+					</TouchableOpacity>
+				</StickyFormFooter>
+			</KeyboardAvoidingView>
 
 			<ExitIntentModal
 				visible={isExitModalVisible}
@@ -796,6 +949,9 @@ const styles = StyleSheet.create({
 		borderWidth: 1,
 		borderColor: "#D1D5DB",
 		minHeight: 52,
+	},
+	textInputError: {
+		borderColor: "#d32f2f",
 	},
 	bottomButtonContainer: {
 		paddingHorizontal: 18,

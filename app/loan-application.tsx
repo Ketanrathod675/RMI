@@ -1,16 +1,20 @@
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
-import { DateInput, Dropdown, Select, type SelectOption } from "@/components";
+import { DateInput, Dropdown, Select, StickyFormFooter, type SelectOption } from "@/components";
 import TranslatedInput from "@/components/TranslatedInput";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useKeyboardVisible } from "@/hooks/useKeyboardVisible";
+import { useFormScroll } from "@/hooks/useFormScroll";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
+import { BASIC_DETAILS_LOADER_MS } from "@/constants/journeySteps";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	errorHandler,
+	getPincodeDetails,
 	submitBasicDetails,
 	triggerPostKycAllocationAdapter,
 	type KycSubmitPayload,
@@ -53,6 +57,8 @@ const NAME_REGEX = /^[A-Za-z. ]*$/;
 
 // Strict email validation regex
 const EMAIL_REGEX = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+const BLOCK_UNSERVICEABLE_PINCODE_AT_BASIC_DETAILS = false;
 
 export default function LoanApplication() {
 	const { t } = useTranslation();
@@ -111,10 +117,84 @@ export default function LoanApplication() {
 
 	const [isPanVerified, setIsPanVerified] = useState(false);
 
+	const fullNameRef = useRef<TextInput>(null);
+	const panRef = useRef<TextInput>(null);
+	const fatherNameRef = useRef<TextInput>(null);
+	const emailRef = useRef<TextInput>(null);
+	const pincodeRef = useRef<TextInput>(null);
+
+	const [pincodeLookupResult, setPincodeLookupResult] = useState<{
+		loading: boolean;
+		locationText?: string;
+		warning?: string;
+		isUnserviceable?: boolean;
+	} | null>(null);
+	const pincodeAbortControllerRef = useRef<AbortController | null>(null);
+
+	// Debounced pincode lookup (~400ms) with request cancellation
+	useEffect(() => {
+		const pin = formData.pincode.trim();
+		if (pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+			if (pincodeAbortControllerRef.current) {
+				pincodeAbortControllerRef.current.abort();
+				pincodeAbortControllerRef.current = null;
+			}
+			setPincodeLookupResult(null);
+			return;
+		}
+
+		if (pincodeAbortControllerRef.current) {
+			pincodeAbortControllerRef.current.abort();
+		}
+		const controller = new AbortController();
+		pincodeAbortControllerRef.current = controller;
+
+		setPincodeLookupResult({ loading: true });
+
+		const timer = setTimeout(async () => {
+			try {
+				const res = await getPincodeDetails(pin, controller.signal);
+				if (controller.signal.aborted) return;
+
+				if (res.found) {
+					const loc = [res.city || res.district, res.state].filter(Boolean).join(", ");
+					const isUnserviceable = res.serviceable === false;
+					setPincodeLookupResult({
+						loading: false,
+						locationText: loc ? `📍 ${loc}` : undefined,
+						isUnserviceable,
+						warning:
+							BLOCK_UNSERVICEABLE_PINCODE_AT_BASIC_DETAILS && isUnserviceable
+								? "We don't serve this area yet"
+								: undefined,
+					});
+				} else {
+					setPincodeLookupResult({
+						loading: false,
+						warning: "We couldn't verify this pincode",
+					});
+				}
+			} catch (err: any) {
+				if (controller.signal.aborted) return;
+				// Lookup failures must never block the form
+				setPincodeLookupResult(null);
+			}
+		}, 400);
+
+		return () => {
+			clearTimeout(timer);
+			controller.abort();
+		};
+	}, [formData.pincode]);
+
+	const { visible: isKeyboardVisible, height: keyboardHeight } = useKeyboardVisible();
+	const { scrollRef, scrollProps, registerField, scrollToField, scrollToFirstError } = useFormScroll();
+
 	const navigation = useNavigation();
 	const dispatch = useAppDispatch();
 	const { userId, accessToken, logout, applicantFrom } = useAuth(true);
 	const { runStep, resetJourney } = useJourneyLoader();
+	const hasAllocatedInSessionRef = useRef(false);
 
 	useEffect(() => {
 		// When starting basic details, reset any previous completed journey steps
@@ -252,9 +332,10 @@ export default function LoanApplication() {
 					}
 				}
 
-				if (!allocatedId && effectiveUserId) {
+				if (!allocatedId && !hasAllocatedInSessionRef.current) {
+					hasAllocatedInSessionRef.current = true;
 					try {
-						const allocation = await triggerPostKycAllocationAdapter(effectiveUserId);
+						const allocation = await triggerPostKycAllocationAdapter();
 						allocatedId = allocation?.allocated_lender_id ?? null;
 						allocatedName = allocation?.lender_name ?? null;
 					} catch {
@@ -276,7 +357,7 @@ export default function LoanApplication() {
 						STORAGE_KEYS["@allocated-lender-name"],
 					]);
 				}
-			});
+			}, { minDurationMs: BASIC_DETAILS_LOADER_MS });
 
 			Toast.show({
 				type: "success",
@@ -438,11 +519,20 @@ export default function LoanApplication() {
 		if (field === "fullName" || field === "fatherName") {
 			sanitizedValue = value.replace(/[^A-Za-z. ]/g, "");
 		} else if (field === "panNumber") {
+			// If already at 10 characters and user attempts to insert more, ignore to avoid chopping the last character
+			if (formData.panNumber.length >= 10 && value.length > formData.panNumber.length) {
+				return;
+			}
 			sanitizedValue = value
 				.replace(/[^A-Za-z0-9]/g, "")
 				.slice(0, 10)
 				.toUpperCase();
+		} else if (field === "email") {
+			sanitizedValue = value.trim().toLowerCase();
 		} else if (field === "pincode") {
+			if (formData.pincode.length >= 6 && value.length > formData.pincode.length) {
+				return;
+			}
 			sanitizedValue = value.replace(/[^0-9]/g, "").slice(0, 6);
 		}
 
@@ -597,10 +687,16 @@ export default function LoanApplication() {
 		} else if (!/^\d{6}$/.test(formData.pincode)) {
 			errors.pincode = t("validSixDigitPincode", "Please enter a valid 6-digit pincode");
 			hasErrors = true;
+		} else if (
+			BLOCK_UNSERVICEABLE_PINCODE_AT_BASIC_DETAILS &&
+			pincodeLookupResult?.isUnserviceable
+		) {
+			errors.pincode = "We don't serve this area yet";
+			hasErrors = true;
 		}
 
 		setFieldErrors(errors);
-		return !hasErrors;
+		return { isValid: !hasErrors, errors };
 	};
 
 	const formatDateForAPI = (date: Date): string => {
@@ -622,11 +718,11 @@ export default function LoanApplication() {
 			dob: formatDateForAPI(formData.dateOfBirth!),
 			gender: normalizedGender,
 			pincode: formData.pincode.trim(),
-			email: formData.email.trim(),
+			email: formData.email.trim().toLowerCase(),
 		};
 
 		if (__DEV__) {
-			console.log("🚀 [KYC Submit] Initiating submission to FastAPI backend (/kyc/submit)...");
+			console.log("🚀 [KYC Submit] Initiating submission to FastAPI backend (/profile/submit)...");
 		}
 
 		submitPersonalDetailsMutation(apiData);
@@ -657,8 +753,24 @@ export default function LoanApplication() {
 			}
 		}
 
-		const isValid = validateForm();
+		const { isValid, errors } = validateForm();
 		if (!isValid) {
+			const orderedKeys = [
+				"fullName",
+				"panNumber",
+				"fatherName",
+				"dateOfBirth",
+				"gender",
+				"email",
+				"pincode",
+			];
+			scrollToFirstError(errors, orderedKeys, {
+				fullName: fullNameRef,
+				panNumber: panRef,
+				fatherName: fatherNameRef,
+				email: emailRef,
+				pincode: pincodeRef,
+			});
 			return;
 		}
 
@@ -722,19 +834,22 @@ export default function LoanApplication() {
 	return (
 		<KeyboardAvoidingView
 			style={styles.container}
-			behavior={Platform.OS === "ios" ? "padding" : "height"}
-			keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}>
+			behavior={Platform.OS === "ios" ? "padding" : undefined}
+			keyboardVerticalOffset={0}>
 			<ScrollView
+				ref={scrollRef}
+				{...scrollProps}
 				style={styles.scrollView}
 				contentContainerStyle={[
 					styles.scrollContent,
 					{
 						paddingTop: insets.top + height(2),
-						paddingBottom: height(14),
+						paddingBottom: isKeyboardVisible
+							? (keyboardHeight > 0 ? keyboardHeight : 320) + 40
+							: height(14),
 					},
 				]}
-				showsVerticalScrollIndicator={false}
-				keyboardShouldPersistTaps="handled">
+				showsVerticalScrollIndicator={false}>
 				{/* Header Section */}
 				<View style={styles.headerSection}>
 					<TranslatedText style={styles.title} translationKey="loanApplication" />
@@ -742,25 +857,34 @@ export default function LoanApplication() {
 
 				{/* Form Section */}
 				<View style={styles.formSection}>
-					<TranslatedInput
-						labelKey="fullName"
-						placeholderKey="enterFullName"
-						value={formData.fullName}
-						onChangeText={(value) => handleInputChange("fullName", value)}
-						containerStyle={styles.inputContainer}
-						required={true}
-						disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.fullName)}
-					/>
-					{fieldErrors.fullName ? (
-						<Text style={styles.errorText}>{fieldErrors.fullName}</Text>
-					) : null}
-
-					<View style={styles.panInputContainer}>
+					<View {...registerField("fullName", fullNameRef)}>
 						<TranslatedInput
+							ref={fullNameRef}
+							labelKey="fullName"
+							placeholderKey="enterFullName"
+							value={formData.fullName}
+							onChangeText={(value) => handleInputChange("fullName", value)}
+							containerStyle={styles.inputContainer}
+							autoCapitalize="words"
+							returnKeyType="next"
+							blurOnSubmit={false}
+							onSubmitEditing={() => panRef.current?.focus()}
+							onFocus={() => scrollToField("fullName", fullNameRef)}
+							required={true}
+							disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.fullName)}
+							error={fieldErrors.fullName}
+						/>
+					</View>
+
+					<View {...registerField("panNumber", panRef)} style={styles.panInputContainer}>
+						<TranslatedInput
+							ref={panRef}
 							labelKey="panNumber"
 							placeholderKey="enterPANNumber"
 							value={formData.panNumber}
+							maxLength={10}
 							onFocus={(e) => {
+								scrollToField("panNumber", panRef);
 								if (formData.fullName.length < 3) {
 									e.preventDefault();
 									Toast.show({
@@ -773,6 +897,10 @@ export default function LoanApplication() {
 							onChangeText={(value) => handleInputChange("panNumber", value)}
 							containerStyle={styles.inputContainer}
 							autoCapitalize="characters"
+							returnKeyType="next"
+							blurOnSubmit={false}
+							onSubmitEditing={() => fatherNameRef.current?.focus()}
+							error={fieldErrors.panNumber}
 							disabled={
 								formData.fullName.length < 3 ||
 								isPanVerifying ||
@@ -794,40 +922,46 @@ export default function LoanApplication() {
 								<MaterialIcons name="verified" size={22} color="#666" />
 							)}
 						</TouchableOpacity>
-						{fieldErrors.panNumber ? (
-							<Text style={styles.errorText}>{fieldErrors.panNumber}</Text>
+					</View>
+
+					<View {...registerField("fatherName", fatherNameRef)}>
+						<TranslatedInput
+							ref={fatherNameRef}
+							labelKey="fatherName"
+							placeholderKey="enterYourFatherName"
+							value={formData.fatherName}
+							onChangeText={(value) => handleInputChange("fatherName", value)}
+							containerStyle={styles.inputContainer}
+							autoCapitalize="words"
+							returnKeyType="next"
+							blurOnSubmit={false}
+							onSubmitEditing={() => scrollToField("dateOfBirth")}
+							onFocus={() => scrollToField("fatherName", fatherNameRef)}
+							required={true}
+							disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.fatherName)}
+							error={fieldErrors.fatherName}
+						/>
+					</View>
+
+					<View {...registerField("dateOfBirth")}>
+						<DateInput
+							label={t("dateOfBirthPAN", "Date of Birth (as per PAN)")}
+							placeholder={t("ddmmyyyy", "DD-MM-YYYY")}
+							value={formData.dateOfBirth}
+							onChange={handleDateChange}
+							maximumDate={new Date()}
+							minimumDate={new Date(1900, 0, 1)}
+							containerStyle={styles.inputContainer}
+							disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.dateOfBirth)}
+							required={true}
+							error={!!fieldErrors.dateOfBirth}
+						/>
+						{fieldErrors.dateOfBirth ? (
+							<Text style={styles.errorText}>{fieldErrors.dateOfBirth}</Text>
 						) : null}
 					</View>
 
-					<TranslatedInput
-						labelKey="fatherName"
-						placeholderKey="enterYourFatherName"
-						value={formData.fatherName}
-						onChangeText={(value) => handleInputChange("fatherName", value)}
-						containerStyle={styles.inputContainer}
-						required={true}
-						disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.fatherName)}
-					/>
-					{fieldErrors.fatherName ? (
-						<Text style={styles.errorText}>{fieldErrors.fatherName}</Text>
-					) : null}
-
-					<DateInput
-						label={t("dateOfBirthPAN", "Date of Birth (as per PAN)")}
-						placeholder={t("ddmmyyyy", "DD-MM-YYYY")}
-						value={formData.dateOfBirth}
-						onChange={handleDateChange}
-						maximumDate={new Date()}
-						minimumDate={new Date(1900, 0, 1)}
-						containerStyle={styles.inputContainer}
-						disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.dateOfBirth)}
-						required={true}
-					/>
-					{fieldErrors.dateOfBirth ? (
-						<Text style={styles.errorText}>{fieldErrors.dateOfBirth}</Text>
-					) : null}
-
-					<View style={styles.inputContainer}>
+					<View {...registerField("gender")} style={styles.inputContainer}>
 						<TranslatedText
 							style={styles.inputLabel}
 							translationKey="gender"
@@ -851,34 +985,54 @@ export default function LoanApplication() {
 						) : null}
 					</View>
 
-					<TranslatedInput
-						labelKey="emailAddress"
-						placeholderKey="enterEmailAddress"
-						value={formData.email}
-						onChangeText={(value) => handleInputChange("email", value)}
-						containerStyle={styles.inputContainer}
-						keyboardType="email-address"
-						required={true}
-						disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.email)}
-					/>
-					{fieldErrors.email ? (
-						<Text style={styles.errorText}>{fieldErrors.email}</Text>
-					) : null}
-
-					<View style={styles.inputContainer}>
+					<View {...registerField("email", emailRef)}>
 						<TranslatedInput
+							ref={emailRef}
+							labelKey="emailAddress"
+							placeholderKey="enterEmailAddress"
+							value={formData.email}
+							onChangeText={(value) => handleInputChange("email", value)}
+							containerStyle={styles.inputContainer}
+							keyboardType="email-address"
+							autoCapitalize="none"
+							autoCorrect={false}
+							autoComplete="email"
+							textContentType="emailAddress"
+							spellCheck={false}
+							returnKeyType="next"
+							blurOnSubmit={false}
+							onSubmitEditing={() => pincodeRef.current?.focus()}
+							onFocus={() => scrollToField("email", emailRef)}
+							required={true}
+							disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.email)}
+							error={fieldErrors.email}
+						/>
+					</View>
+
+					<View {...registerField("pincode", pincodeRef)} style={styles.inputContainer}>
+						<TranslatedInput
+							ref={pincodeRef}
 							labelKey="pincode"
 							placeholderKey="enterPincode"
 							value={formData.pincode}
 							onChangeText={(value) => handleInputChange("pincode", value)}
 							containerStyle={styles.inputContainer}
 							keyboardType="numeric"
+							autoCapitalize="none"
 							maxLength={6}
+							returnKeyType="done"
+							onSubmitEditing={handleProceed}
+							onFocus={() => scrollToField("pincode", pincodeRef)}
 							required={true}
 							disabled={isPending || isSendingOtp || (applicantFrom === "HB" && !!formData.pincode)}
+							error={fieldErrors.pincode}
 						/>
-						{fieldErrors.pincode ? (
-							<Text style={styles.errorText}>{fieldErrors.pincode}</Text>
+						{pincodeLookupResult?.loading ? (
+							<Text style={styles.pincodeHelperText}>Verifying pincode...</Text>
+						) : pincodeLookupResult?.locationText ? (
+							<Text style={styles.pincodeSuccessText}>{pincodeLookupResult.locationText}</Text>
+						) : pincodeLookupResult?.warning && !fieldErrors.pincode ? (
+							<Text style={styles.pincodeWarningText}>{pincodeLookupResult.warning}</Text>
 						) : null}
 					</View>
 				</View>
@@ -894,7 +1048,7 @@ export default function LoanApplication() {
 			</ScrollView>
 
 			{/* Sticky Submit Button Container */}
-			<View style={[styles.bottomButtonContainer, { paddingBottom: Math.max(insets.bottom + height(1.5), height(3)) }]}>
+			<StickyFormFooter style={styles.bottomButtonContainer}>
 				<TouchableOpacity
 					style={[styles.proceedButton, (isPending || isSendingOtp) && styles.proceedButtonDisabled]}
 					onPress={handleProceed}
@@ -945,7 +1099,7 @@ export default function LoanApplication() {
 						</View>
 					)}
 				</TouchableOpacity>
-			</View>
+			</StickyFormFooter>
 
 			{/* OTP Modal */}
 			<Modal
@@ -1251,5 +1405,25 @@ const styles = StyleSheet.create({
 		fontSize: font(1.3),
 		color: dark_primary,
 		fontWeight: "600",
+	},
+	pincodeHelperText: {
+		fontSize: font(1.3),
+		color: "#6B7280",
+		marginTop: height(0.4),
+		paddingHorizontal: width(1),
+	},
+	pincodeSuccessText: {
+		fontSize: font(1.3),
+		color: "#059669",
+		fontWeight: "600",
+		marginTop: height(0.4),
+		paddingHorizontal: width(1),
+	},
+	pincodeWarningText: {
+		fontSize: font(1.3),
+		color: "#D97706",
+		fontWeight: "500",
+		marginTop: height(0.4),
+		paddingHorizontal: width(1),
 	},
 });

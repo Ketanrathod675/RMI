@@ -33,7 +33,16 @@ SplashScreen.preventAutoHideAsync().catch(() => {
 	/* No-op */
 });
 
-export const queryClient = new QueryClient();
+export const queryClient = new QueryClient({
+	defaultOptions: {
+		queries: {
+			staleTime: 30_000,
+			gcTime: 5 * 60_000,
+			retry: 1,
+			refetchOnWindowFocus: false,
+		},
+	},
+});
 
 function RootLayoutNav() {
 	const colorScheme = useColorScheme();
@@ -101,7 +110,6 @@ function RootLayoutNav() {
 
 	return (
 		<ThemeProvider value={DefaultTheme}>
-			{Platform.OS === "android" && <NavigationBar hidden={true} />}
 			<View style={styles.rootContainer}>
 				{/* Main App Navigation Stack */}
 				<Stack screenOptions={{ headerShown: false, animation: "fade" }}>
@@ -182,6 +190,7 @@ function RootLayoutNav() {
 					<Stack.Screen name="verifying-bank" options={{ headerShown: false }} />
 					<Stack.Screen name="forgot-mpin" options={{ headerShown: false }} />
 					<Stack.Screen name="dev-loader-preview" options={{ headerShown: false }} />
+					<Stack.Screen name="digilocker-kyc" options={{ headerShown: false }} />
 					<Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 					<Stack.Screen name="+not-found" options={{ title: "Oops!" }} />
 				</Stack>

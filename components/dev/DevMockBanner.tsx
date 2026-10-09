@@ -401,6 +401,86 @@ export function DevMockBanner() {
 									onValueChange={() => handleOptionToggle("ckycSendOtpSuccess")}
 								/>
 							</View>
+
+							<View style={styles.divider} />
+							<Text style={styles.sectionHeader}>⚖️ BRE / Handshake Simulation</Text>
+							<Text style={styles.optionDesc}>Select BRE outcome for payment handshake:</Text>
+							<View style={styles.stepChipsRow}>
+								{[
+									{ label: "Pending → Approved", value: "pending_then_approved" },
+									{ label: "Approved Immediately", value: "approved" },
+									{ label: "Rejected (Bureau)", value: "rejected_bureau" },
+									{ label: "Rejected (PAN Fixable)", value: "rejected_pan_fixable" },
+									{ label: "Rejected (Email Fixable)", value: "rejected_email_fixable" },
+									{ label: "Error", value: "error" },
+								].map((item) => (
+									<TouchableOpacity
+										key={item.value}
+										style={[
+											styles.stepChip,
+											(options.breOutcome || "pending_then_approved") === item.value && styles.stepChipActive,
+										]}
+										onPress={() => {
+											updateDevMockOptions({ breOutcome: item.value as any });
+											Toast.show({
+												type: "info",
+												text1: `BRE Outcome: ${item.label}`,
+												visibilityTime: 1800,
+											});
+										}}
+										activeOpacity={0.75}>
+										<Text
+											style={[
+												styles.stepChipText,
+												(options.breOutcome || "pending_then_approved") === item.value && styles.stepChipTextActive,
+											]}>
+											{item.label}
+										</Text>
+									</TouchableOpacity>
+								))}
+							</View>
+
+							<View style={styles.divider} />
+
+							{/* KYC & Identity Outcome */}
+							<Text style={styles.sectionHeader}>KYC Outcome</Text>
+							<Text style={styles.optionDesc}>
+								Configure identity / CKYC / Selfie flow behavior:
+							</Text>
+
+							<View style={styles.stepChipsRow}>
+								{[
+									{ label: "Success (Happy)", value: "success" },
+									{ label: "CKYC OTP Fail (3x → Digi)", value: "ckyc_otp_fail" },
+									{ label: "DigiLocker Only", value: "digilocker_only" },
+									{ label: "Liveness Fail", value: "liveness_fail" },
+									{ label: "Face Mismatch", value: "face_mismatch" },
+								].map((item) => (
+									<TouchableOpacity
+										key={item.value}
+										style={[
+											styles.stepChip,
+											(options.kycOutcome || "success") === item.value && styles.stepChipActive,
+										]}
+										onPress={() => {
+											updateDevMockOptions({ kycOutcome: item.value as any });
+											Toast.show({
+												type: "info",
+												text1: `KYC Outcome: ${item.label}`,
+												visibilityTime: 1800,
+											});
+										}}
+										activeOpacity={0.75}>
+										<Text
+											style={[
+												styles.stepChipText,
+												(options.kycOutcome || "success") === item.value && styles.stepChipTextActive,
+											]}>
+											{item.label}
+										</Text>
+									</TouchableOpacity>
+								))}
+							</View>
 						</ScrollView>
 
 						<TouchableOpacity

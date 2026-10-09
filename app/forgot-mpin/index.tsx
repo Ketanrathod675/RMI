@@ -46,7 +46,6 @@ export default function ForgotMpin() {
 	const slideAnim = useRef(new Animated.Value(screenHeight)).current;
 	const backgroundOpacity = useRef(new Animated.Value(0)).current;
 
-	console.log("storedPhoneNumber", storedPhoneNumber);
 
 	// Initialize phoneNumber from stored value
 	useEffect(() => {

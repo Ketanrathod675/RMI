@@ -2,11 +2,14 @@
  * RapidMoney Step Routing Definitions
  */
 export const STEP_NAMES = [
+	"signup_login",
 	"login_signup",
 	"mpin_set",
+	"basic_details",
 	"personal_details",
 	"assessment_fee",
 	"assessment_fee_payment",
+	"email_verification",
 	"pan_verification",
 	"professional_details",
 	"ekyc_ckyc",
@@ -17,6 +20,7 @@ export const STEP_NAMES = [
 	"kfs_signing",
 	"enach_mandate",
 	"agreement_signing",
+	"disbursement",
 	"credit_queue",
 	"digilocker",
 	"ckyc",
@@ -25,25 +29,93 @@ export const STEP_NAMES = [
 export type StepNameTypes = (typeof STEP_NAMES)[number];
 
 export const StepHref: { [key in StepNameTypes]: string } = {
+	signup_login: "/login",
 	login_signup: "/login",
 	mpin_set: "/set-mpin",
+	basic_details: "/loan-application",
 	personal_details: "/loan-application",
 	assessment_fee: "/new-assessment-fee",
 	assessment_fee_payment: "/new-assessment-fee",
-	pan_verification: "/verify-email",
+	email_verification: "/verify-email",
+	pan_verification: "/professional-details",
 	professional_details: "/professional-details",
 	ekyc_ckyc: "/ckyc-instructions",
-	selfie_match: "/ckyc-instructions",
-	address_submission: "/aadhaar-kyc",
+	selfie_match: "/ckyc-instructions?startSelfie=true",
+	address_submission: "/aadhaar-kyc?startFromAddress=true",
 	loan_application: "/loan-approved",
 	agreement_signing: "/sanction-letter",
 	bank_details: "/verify-bank-details",
 	enach_mandate: "/auto-debit-setup",
 	kfs_signing: "/sanction-letter",
+	disbursement: "/application-approved",
 	credit_queue: "/application-verification",
-	digilocker: "/aadhaar-kyc",
+	digilocker: "/digilocker-kyc",
 	ckyc: "/ckyc-instructions",
 } as const;
+
+const STEPS_PROFESSIONAL_OR_LATER = [
+	"pan_verification",
+	"professional_details",
+	"ekyc_ckyc",
+	"selfie_match",
+	"address_submission",
+	"loan_application",
+	"bank_details",
+	"kfs_signing",
+	"enach_mandate",
+	"agreement_signing",
+	"disbursement",
+	"credit_queue",
+	"digilocker",
+	"ckyc",
+];
+
+export function getBreFixRoute(failedRule?: string | null): "/verify-email" | "/verify-pan" | null {
+	if (failedRule === "email") return "/verify-email";
+	if (failedRule === "pan_card") return "/verify-pan";
+	return null;
+}
+
+export function resolveWorkflowRoute(
+	currentStep?: string | null,
+	overallStatus?: string | null,
+	breStatus?: string | null,
+	breFailedRule?: string | null,
+): string {
+	if (overallStatus === "rejected") {
+		if (breStatus === "rejected") {
+			const fixRoute = getBreFixRoute(breFailedRule);
+			if (fixRoute) {
+				return fixRoute;
+			}
+			return "/(tabs)";
+		}
+		return "/no-approved-amount";
+	}
+	if (overallStatus === "completed") {
+		return "/(tabs)";
+	}
+	if (!currentStep) {
+		return "/(tabs)";
+	}
+	const route = StepHref[currentStep as StepNameTypes];
+	if (route) {
+		const isProfOrLater =
+			route === "/professional-details" ||
+			STEPS_PROFESSIONAL_OR_LATER.includes(currentStep);
+		if (isProfOrLater) {
+			if (breStatus === "rejected") {
+				const fixRoute = getBreFixRoute(breFailedRule);
+				if (fixRoute) return fixRoute;
+			}
+			if (breStatus === "pending" || breStatus === "error") {
+				return "/new-assessment-fee?resumeChecks=true";
+			}
+		}
+		return route;
+	}
+	return "/(tabs)";
+}
 
 /**
  * RapidMoney FastAPI User Models
@@ -95,7 +167,7 @@ export interface BasicDetailsPayload {
 }
 
 /**
- * FastAPI POST /kyc/submit Payload and Response
+ * FastAPI POST /profile/submit Payload and Response
  */
 export interface KycSubmitPayload {
 	full_name: string; // letters, spaces, dots only, 2-100
@@ -189,6 +261,8 @@ export type WorkflowProgress = {
 	last_activity_at: Date;
 	next_required_step: string;
 	workflow_started_at: Date;
+	bre_status?: string | null;
+	bre_failed_rule?: string | null;
 };
 
 export type UserDashboardResponseType = {
@@ -252,6 +326,35 @@ export type AddressDetails = {
 	kyc_address_shown?: KycAddressShown;
 };
 
+export interface CurrentWorkflow {
+	id: string;
+	lead_id?: string | null;
+	current_step: string;
+	next_step?: string | null;
+	overall_status: "in_progress" | "completed" | "rejected";
+	overall_percentage: number;
+	is_active?: boolean;
+	created_at?: string;
+	bre_status?: string | null;
+	bre_failed_rule?: string | null;
+	profile_response?: {
+		lead_id?: string;
+		af?: string | number;
+		af_amount?: number;
+		assessment_fee?: number;
+		af_source?: string;
+		base_fee?: number;
+		gst_percentage?: number;
+		aftype?: string;
+		lender_allocated?: boolean;
+		allocated_product_id?: string | null;
+		product_name?: string | null;
+		allocated_lender_id?: string | null;
+		lender_name?: string | null;
+		[key: string]: any;
+	} | null;
+}
+
 export type UserProfileResponseType = {
 	id: string;
 	user_id: string;
@@ -270,6 +373,8 @@ export type UserProfileResponseType = {
 	kyc_address?: AddressDetails;
 	created_at: string;
 	last_login: string;
+	current_workflow?: CurrentWorkflow | null;
+	profile?: any;
 };
 
 export type DeleteAccountPayload = {

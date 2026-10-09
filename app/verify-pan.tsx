@@ -1,252 +1,303 @@
-import RejectionModal from '@/components/RejectionModal';
+import FiveSecDelay from "@/components/FiveSecDelay";
+import RejectionModal from "@/components/RejectionModal";
 import { TranslatedText } from "@/components/TranslatedText";
-import { dark_primary, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
+import { dark_primary, primary, white } from "@/constants/Colors";
+import {
+	isEmailFixable,
+	isPanFixable,
+	pollAssessmentChecks,
+	useAssessmentChecksController,
+} from "@/hooks/useAssessmentChecks";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getMyDetails, initialApproval, verifyPan } from "@/utils/api/kyc";
+import {
+	getHandshakeStatus,
+	getUserProfile,
+	retryAssessmentChecks,
+	type AssessmentChecks,
+} from "@/utils/api";
 import { height, width } from "@/utils/dimensions";
+import { resolveLeadId } from "@/utils/leadId";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Animated,
-    BackHandler,
-    Image,
-    ImageBackground,
-    Linking,
-    Modal,
-    Platform,
-    SafeAreaView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+	ActivityIndicator,
+	BackHandler,
+	Keyboard,
+	StyleSheet,
+	Text,
+	TextInput,
+	TouchableOpacity,
+	View,
 } from "react-native";
-import { Images } from "@/constants/images";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 
-// New regex to match logic in loan-application
-const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+// 4th character must be 'P' (Personal PAN)
+const PAN_REGEX = /^[A-Z]{3}P[A-Z][0-9]{4}[A-Z]$/;
 
 export default function VerifyPan() {
 	const router = useRouter();
 	const params = useLocalSearchParams();
 	const { t } = useTranslation();
+	const { signal, cancel } = useAssessmentChecksController();
 
 	const [name, setName] = useState("");
 	const [pan, setPan] = useState("");
-    const [nameError, setNameError] = useState("");
-    const [panError, setPanError] = useState("");
+	const [panError, setPanError] = useState("");
+	const [serverError, setServerError] = useState("");
+	const [remainingAttempts, setRemainingAttempts] = useState<number>(2);
 	const [isVerifying, setIsVerifying] = useState(false);
-	const [attempts, setAttempts] = useState(0);
+	const [isLoadingDetails, setIsLoadingDetails] = useState(true);
 
-    const [isLoadingDetails, setIsLoadingDetails] = useState(true);
+	// Still checking panel states
+	const [isStillChecking, setIsStillChecking] = useState(false);
+	const [lastCheckError, setLastCheckError] = useState<"error" | "timeout" | null>(null);
 
-    // Rejection modal state
-	const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
+	// Rejection modal state
 	const [delayVisible, setDelayVisible] = useState(false);
-	const [rejectionMessage, setRejectionMessage] = useState<string>("");
+	const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
 	const [rejectionCountdown, setRejectionCountdown] = useState(15);
 
-	// Params from previous screen
-	const email = (params.email as string) || "";
-	const isDeliverable = params.is_deliverable === "true";
+	const handleBack = useCallback(() => {
+		cancel();
+		router.replace("/(tabs)");
+	}, [cancel, router]);
 
-	const finalSubmission = async (isPanVerified: boolean, isPanValid: boolean, currentName?: string, currentPan?: string) => {
-		try {
-			const approvalResponse = await initialApproval({
-				email: email,
-				is_deliverable: isDeliverable,
-				is_pan_verified: isPanVerified,
-				is_pan_valid: isPanValid,
-				name: currentName || name,
-				pan_number: currentPan || pan,
-			});
-
-			if (approvalResponse.status === "approved") {
-				router.replace("/application-approved");
-			} else if (approvalResponse.status === "reject") {
-				// Show rejection modal
-				setRejectionMessage(t("standardRejectionMessage"));
-				setRejectionModalVisible(true);
-			} else {
-				router.replace({
-					pathname: "/professional-details",
-					params: { disableBack: "true" },
-				});
-			}
-		} catch (error) {
-			console.error("Approval check failed", error);
-			router.replace({
-				pathname: "/professional-details",
-				params: { disableBack: "true" },
-			});
-		}
-	};
-
-	useEffect(() => {
-		const fetchDetails = async () => {
-			try {
-				const response = await getMyDetails();
-				console.log("=== Get My Details API Response ===", JSON.stringify(response, null, 2));
-
-				if (response.reapplication) {
-					const nextStep = response.next_step;
-					if (nextStep) {
-						let route = `/${nextStep.replace(/_/g, "-")}`;
-						if (nextStep === "pan_verification") route = "/verify-pan";
-						else if (nextStep === "email_verification") route = "/verify-email";
-
-						console.log(`➡️ Reapplication is true, navigating to next step: ${route}`);
-						router.replace(route as any);
-						return;
-					}
-				}
-
-				const details = response.kyc_record;
-
-				let fetchedName = "";
-				let fetchedPan = "";
-
-				if (details?.name || details?.full_name) {
-					fetchedName = details.name || details.full_name || "";
-					setName(fetchedName);
-					console.log("ℹ️ Auto-populated name from API:", fetchedName);
-				}
-				if (details?.pan_number) {
-					fetchedPan = details.pan_number;
-					setPan(fetchedPan);
-					console.log("ℹ️ Auto-populated PAN from API:", fetchedPan);
-				}
-
-				// Auto-verification logic
-				if (fetchedName && fetchedPan && PAN_REGEX.test(fetchedPan)) {
-					console.log("🔄 Auto-verifying PAN...");
-					setIsVerifying(true);
-					try {
-						const verifyRes = await verifyPan({
-							name: fetchedName,
-							pan_number: fetchedPan,
-						});
-
-						console.log("✅ Auto-verify PAN Success");
-						const isPanValid = verifyRes.is_pan_valid || false;
-						await finalSubmission(true, isPanValid, fetchedName, fetchedPan);
-						return;
-					} catch (err) {
-						console.error("❌ Auto-verify failed:", err);
-						// Fallback to manual verification handled by UI
-					} finally {
-						setIsVerifying(false);
-					}
-				}
-
-			} catch (error) {
-				console.error("Failed to fetch user details for PAN:", error);
-			} finally {
-				setIsLoadingDetails(false);
-			}
-		};
-
-		fetchDetails();
-	}, []);
-
+	// Hardware back button
 	useEffect(() => {
 		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
-			router.replace("/(tabs)");
+			handleBack();
 			return true;
 		});
 		return () => backHandler.remove();
-	}, []);
+	}, [handleBack]);
 
+	// Initial data fetch & status check
+	useEffect(() => {
+		let isMounted = true;
 
+		const init = async () => {
+			try {
+				try {
+					const profile = await getUserProfile();
+					const meData = (profile as any)?.data || profile;
+					const fullName =
+						meData?.personal_details?.full_name ||
+						meData?.profile?.full_name ||
+						meData?.name ||
+						"";
+					const existingPan =
+						meData?.personal_details?.pan_number ||
+						meData?.profile?.pan_number ||
+						meData?.pan_number ||
+						"";
 
+					if (isMounted) {
+						if (fullName) setName(fullName);
+						if (existingPan) setPan(existingPan);
+					}
+				} catch {
+					// Fallback
+				}
 
+				const checks = await getHandshakeStatus();
+				if (!isMounted) return;
 
+				if (checks.status === "approved") {
+					router.replace({
+						pathname: "/professional-details" as any,
+						params: { disableBack: "true" },
+					});
+					return;
+				}
+
+				if (checks.status === "rejected") {
+					if (isEmailFixable(checks)) {
+						router.replace("/verify-email" as any);
+						return;
+					}
+					if (isPanFixable(checks)) {
+						setRemainingAttempts(checks.remaining_pan_updates);
+						setIsLoadingDetails(false);
+						return;
+					}
+					// Final rejection
+					setIsLoadingDetails(false);
+					setDelayVisible(true);
+					return;
+				}
+
+				if (checks.status === "pending" || checks.status === "error") {
+					router.replace({
+						pathname: "/new-assessment-fee" as any,
+						params: { resumeChecks: "true" },
+					});
+					return;
+				}
+
+				setIsLoadingDetails(false);
+			} catch (err) {
+				if (isMounted) {
+					setIsLoadingDetails(false);
+				}
+			}
+		};
+
+		init();
+
+		return () => {
+			isMounted = false;
+		};
+	}, [router]);
+
+	const handleAssessmentOutcome = useCallback(
+		(checks: AssessmentChecks) => {
+			if (checks.status === "approved") {
+				router.replace({
+					pathname: "/professional-details" as any,
+					params: { disableBack: "true" },
+				});
+				return;
+			}
+
+			if (checks.status === "rejected") {
+				if (isEmailFixable(checks)) {
+					router.replace("/verify-email" as any);
+					return;
+				}
+				if (isPanFixable(checks)) {
+					setRemainingAttempts(checks.remaining_pan_updates);
+					setServerError(t("panVerificationFailed"));
+					return;
+				}
+				// Final rejection
+				setDelayVisible(true);
+				return;
+			}
+
+			// error or pending
+			setLastCheckError("error");
+			setIsStillChecking(true);
+		},
+		[router, t],
+	);
 
 	const handleVerify = async () => {
-        let hasError = false;
-        
-		if (!name.trim() || name.length < 3) {
-            setNameError(t("enterFullNamePAN"));
-            hasError = true;
-		}
-        
-		if (!pan || !PAN_REGEX.test(pan)) {
-            setPanError(t("invalidPANFormat"));
-            hasError = true;
+		Keyboard.dismiss();
+		const cleanPan = pan.trim().toUpperCase();
+
+		if (!cleanPan || !PAN_REGEX.test(cleanPan)) {
+			setPanError(t("invalidPANFormat") || t("invalidPanFormat"));
+			return;
 		}
 
-        if (hasError) return;
-
+		setPanError("");
+		setServerError("");
+		setIsStillChecking(false);
 		setIsVerifying(true);
+
 		try {
-			const verifyRes = await verifyPan({
-				name: name,
-				pan_number: pan,
-			});
+			const leadId = await resolveLeadId(params.lead_id as string);
+			if (!leadId) {
+				Toast.show({
+					type: "error",
+					text1: t("detailsNotFound") || "Lead details not found",
+					text2: t("pleaseTryAgain") || "Please try again from dashboard",
+				});
+				setIsVerifying(false);
+				return;
+			}
 
-			// If verifyPan throws error, it goes to catch. 
-			// Check response structure if verifyPan returns specific success flag not handled by throwing.
-			// Assuming verifyPan throws on failure or returns success data.
-			
-			// Use actual verified status from response, default to true if it succeeds (as it didn't throw) but prefer response value
-			const isPanVerified = verifyRes.verified !== false;
-			const isPanValid = verifyRes.is_pan_valid || false;
+			try {
+				await retryAssessmentChecks({
+					lead_id: leadId,
+					updated_pan: cleanPan,
+				});
+			} catch (retryErr: any) {
+				const status = retryErr?.status ?? retryErr?.response?.status;
+				const detail =
+					retryErr?.detail ??
+					retryErr?.response?.data?.detail ??
+					retryErr?.message ??
+					"Update failed";
+				const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
 
-			console.log("👉 Sending to Initial Approval:", {
-				isPanVerified,
-				isPanValid,
-				name,
-				pan
-			});
-
-			await finalSubmission(isPanVerified, isPanValid, name, pan);
-
-		} catch (error: any) {
-			console.error("PAN verification failed", error);
-			
-			// Show API error message
-			const apiError = error?.response?.data?.message || error?.message || "Verification failed";
-
-			if (apiError.toLowerCase().includes("already linked")) {
-				const newAttempts = attempts + 1;
-				setAttempts(newAttempts);
-
-				if (newAttempts >= 2) {
-					// Failed twice, proceed with is_pan_verified = false
-					await finalSubmission(false, false, name, pan);
-				} else {
-					Toast.show({
-						type: "error",
-						text1: t("error"),
-						text2: apiError,
-						props: { numberOfLines: 10 }
-					});
+				if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
+					const checks = await getHandshakeStatus();
+					handleAssessmentOutcome(checks);
+					setIsVerifying(false);
+					return;
 				}
-			} else {
-				// For other errors, fail immediately as per requirement
-				await finalSubmission(false, false, name, pan);
+
+				Toast.show({
+					type: "error",
+					text1: detailStr,
+				});
+				setIsVerifying(false);
+				return;
+			}
+
+			// Poll handshake status
+			try {
+				const checks = await pollAssessmentChecks({
+					signal,
+					timeoutMs: 60000,
+					intervalMs: 2000,
+				});
+				handleAssessmentOutcome(checks);
+			} catch (pollErr: any) {
+				if (pollErr?.aborted) return;
+				setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
+				setIsStillChecking(true);
 			}
 		} finally {
 			setIsVerifying(false);
 		}
 	};
 
-	const handleBack = () => {
-		router.replace("/(tabs)");
+	const handleRetryChecking = async () => {
+		setIsStillChecking(false);
+		setIsVerifying(true);
+		setServerError("");
+
+		try {
+			const leadId = await resolveLeadId(params.lead_id as string);
+			if (lastCheckError === "error" && leadId) {
+				try {
+					await retryAssessmentChecks({ lead_id: leadId });
+				} catch {
+					// Continue to poll
+				}
+			}
+
+			const checks = await pollAssessmentChecks({
+				signal,
+				timeoutMs: 60000,
+				intervalMs: 2000,
+			});
+			handleAssessmentOutcome(checks);
+		} catch (err: any) {
+			if (err?.aborted) return;
+			setLastCheckError(err?.isTimeout ? "timeout" : "error");
+			setIsStillChecking(true);
+		} finally {
+			setIsVerifying(false);
+		}
 	};
 
 	return (
-		<View style={{ flex: 1, backgroundColor: white }}>
+		<View style={styles.root}>
 			{/* Custom Header */}
 			{!isLoadingDetails && (
-				<SafeAreaView style={{ backgroundColor: '#000' }}>
+				<SafeAreaView edges={["top"]} style={styles.headerSafeArea}>
 					<View style={styles.header}>
-						<TouchableOpacity onPress={handleBack} style={styles.backButton}>
+						<TouchableOpacity
+							onPress={handleBack}
+							style={styles.backButton}
+							hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+						>
 							<Ionicons name="arrow-back" size={24} color="#fff" />
 						</TouchableOpacity>
 						<TranslatedText style={styles.headerTitle} translationKey="verifyPan" />
@@ -254,93 +305,170 @@ export default function VerifyPan() {
 				</SafeAreaView>
 			)}
 
-		<SafeAreaView style={styles.container}>
-			<View style={styles.content}>
+			<SafeAreaView edges={["bottom", "left", "right"]} style={styles.container}>
 				{!isLoadingDetails && (
-					<>
-				<TranslatedText style={styles.description} translationKey="verifyPanDescription" />
+					<View style={styles.content}>
+						<TranslatedText style={styles.description} translationKey="verifyPanDescription" />
 
-				<View style={styles.inputContainer}>
-					<TranslatedText style={styles.label} translationKey="fullName" />
-					<TextInput
-						style={[styles.input, nameError ? { borderColor: 'red' } : null]}
-						value={name}
-						onChangeText={(text) => {
-                            // Helper to allow only letters and single spaces
-                            const cleaned = text.replace(/[^a-zA-Z\s]/g, '').replace(/\s+/g, ' ');
-                            setName(cleaned);
-                            if (nameError) setNameError("");
-                        }}
-						placeholder="John Doe"
-						autoCapitalize="words"
-						editable={!isVerifying}
-					/>
-                    {nameError ? <Text style={styles.errorText}>{nameError}</Text> : null}
-				</View>
+						{/* Read-only Name Input */}
+						{name ? (
+							<View style={styles.inputContainer}>
+								<TranslatedText style={styles.label} translationKey="fullName" fallback="Full Name" />
+								<TextInput
+									style={[styles.input, styles.inputReadOnly]}
+									value={name}
+									editable={false}
+								/>
+							</View>
+						) : null}
 
-				<View style={styles.inputContainer}>
-					<TranslatedText style={styles.label} translationKey="panNumber" />
-					<TextInput
-						style={[styles.input, panError ? { borderColor: 'red' } : null]}
-						value={pan}
-						onChangeText={(text) => {
-                            // Helper to allow only alphanumeric (uppercase enforced)
-                            const cleaned = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-                            setPan(cleaned);
-                            if (panError) setPanError("");
-                        }}
-						placeholder="ABCDE1234F"
-						autoCapitalize="characters"
-						maxLength={10}
-						editable={!isVerifying}
-					/>
-                    {panError ? <Text style={styles.errorText}>{panError}</Text> : null}
-				</View>
-
-
-
-				<TouchableOpacity
-					style={[styles.button, isVerifying && styles.buttonDisabled]}
-					onPress={handleVerify}
-					disabled={isVerifying}>
-					{isVerifying ? (
-						<ActivityIndicator color="white" />
-					) : (
-						<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-							<TranslatedText style={styles.buttonText} translationKey="verifyAndProceed" />
-							<IconSymbol name="arrow.right" size={20} color={white} />
+						{/* PAN Input */}
+						<View style={styles.inputContainer}>
+							<TranslatedText style={styles.label} translationKey="panNumber" fallback="PAN Number" />
+							<TextInput
+								style={[
+									styles.input,
+									panError || serverError ? styles.inputError : null,
+								]}
+								value={pan}
+								onChangeText={(text) => {
+									const cleaned = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+									setPan(cleaned);
+									if (panError) setPanError("");
+									if (serverError) setServerError("");
+								}}
+								placeholder="ABCDE1234F"
+								placeholderTextColor="#9CA3AF"
+								autoCapitalize="characters"
+								maxLength={10}
+								editable={!isVerifying}
+							/>
+							{panError ? <Text style={styles.errorText}>{panError}</Text> : null}
+							{serverError ? <Text style={styles.errorText}>{serverError}</Text> : null}
+							{remainingAttempts > 0 && !panError && !serverError ? (
+								<Text style={styles.attemptsText}>
+									{remainingAttempts}{" "}
+									{remainingAttempts === 1
+										? t("attemptLeft", "attempt left")
+										: t("attemptsLeft", "attempts left")}
+								</Text>
+							) : null}
 						</View>
-					)}
-				</TouchableOpacity>
-				</>
+
+						{/* Still checking panel on error/timeout */}
+						{isStillChecking && (
+							<View style={styles.stillCheckingCard}>
+								<Text style={styles.stillCheckingTitle}>
+									{t("stillCheckingDetailsTitle", "We're still checking your details")}
+								</Text>
+								<Text style={styles.stillCheckingDesc}>
+									{t(
+										"stillCheckingDetailsDesc",
+										"Verification is taking longer than expected. You can try again or check your dashboard.",
+									)}
+								</Text>
+								<View style={styles.stillCheckingActions}>
+									<TouchableOpacity
+										style={styles.retryButton}
+										onPress={handleRetryChecking}
+										disabled={isVerifying}
+									>
+										<Text style={styles.retryButtonText}>
+											{t("tryAgain", "Try Again")}
+										</Text>
+									</TouchableOpacity>
+									<TouchableOpacity
+										style={styles.dashboardButton}
+										onPress={handleBack}
+									>
+										<Text style={styles.dashboardButtonText}>
+											{t("goToDashboard", "Go to Dashboard")}
+										</Text>
+									</TouchableOpacity>
+								</View>
+							</View>
+						)}
+
+						{!isStillChecking && (
+							<TouchableOpacity
+								style={[styles.button, isVerifying && styles.buttonDisabled]}
+								onPress={handleVerify}
+								disabled={isVerifying}
+								activeOpacity={0.85}
+							>
+								{isVerifying ? (
+									<ActivityIndicator color="white" />
+								) : (
+									<View style={styles.buttonInner}>
+										<TranslatedText
+											style={styles.buttonText}
+											translationKey="verifyAndProceed"
+										/>
+										<IconSymbol name="arrow.right" size={20} color="white" />
+									</View>
+								)}
+							</TouchableOpacity>
+						)}
+					</View>
 				)}
-			</View>
-            
-			{/* Rejection Modal */}
+			</SafeAreaView>
+
+			<FiveSecDelay
+				visible={delayVisible}
+				onComplete={() => {
+					setDelayVisible(false);
+					setRejectionModalVisible(true);
+				}}
+			/>
+
 			<RejectionModal
 				visible={rejectionModalVisible}
 				countdown={rejectionCountdown}
 				setCountdown={setRejectionCountdown}
-				onClose={() => setRejectionModalVisible(false)}
+				onClose={() => {
+					setRejectionModalVisible(false);
+					router.replace("/(tabs)");
+				}}
 			/>
-		</SafeAreaView>
 
-		{/* 🔥 FULLSCREEN LOADER (covers header too) */}
-		{isLoadingDetails && (
-		<View style={styles.loaderOverlay}>
-			<ActivityIndicator size="large" color="#00C853" />
-			<TranslatedText
-			style={{ marginTop: 16 }}
-			translationKey="loadingDetails"
-			fallback="Fetching details..."
-			/>
+			{/* Fullscreen Loader while fetching initial details */}
+			{isLoadingDetails && (
+				<View style={styles.loaderOverlay}>
+					<ActivityIndicator size="large" color="#00C853" />
+					<TranslatedText
+						style={styles.loadingText}
+						translationKey="loadingDetails"
+						fallback="Fetching details..."
+					/>
+				</View>
+			)}
 		</View>
-		)}
-	</View>
 	);
 }
 
 const styles = StyleSheet.create({
+	root: {
+		flex: 1,
+		backgroundColor: white,
+	},
+	headerSafeArea: {
+		backgroundColor: "#000",
+	},
+	header: {
+		flexDirection: "row",
+		alignItems: "center",
+		paddingHorizontal: 16,
+		paddingVertical: 14,
+		backgroundColor: "#000",
+	},
+	backButton: {
+		marginRight: 16,
+	},
+	headerTitle: {
+		color: "#fff",
+		fontSize: 18,
+		fontWeight: "bold",
+	},
 	container: {
 		flex: 1,
 		backgroundColor: white,
@@ -351,37 +479,10 @@ const styles = StyleSheet.create({
 		justifyContent: "flex-start",
 		paddingTop: height(2),
 	},
-	header: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		paddingHorizontal: 16,
-		paddingBottom: 12,
-		paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 12,
-		backgroundColor: '#000',
-	},
-	backButton: {
-		marginRight: 16,
-	},
-	headerTitle: {
-		color: '#fff',
-		fontSize: 18,
-		fontWeight: 'bold',
-	},
-	loaderOverlay: {
-		position: "absolute",
-		top: 0,
-		left: 0,
-		right: 0,
-		bottom: 0,
-		backgroundColor: white,
-		alignItems: "center",
-		justifyContent: "center",
-		zIndex: 9999,
-	},
 	description: {
 		fontSize: 16,
 		color: "#666",
-		marginBottom: height(4),
+		marginBottom: height(3),
 		lineHeight: 24,
 	},
 	inputContainer: {
@@ -395,11 +496,32 @@ const styles = StyleSheet.create({
 	},
 	input: {
 		borderWidth: 1,
-		borderColor: "#ddd",
-		borderRadius: 8,
-		padding: 12,
+		borderColor: "#E5E7EB",
+		borderRadius: 10,
+		paddingHorizontal: 14,
+		paddingVertical: 13,
 		fontSize: 16,
 		color: "#000",
+		backgroundColor: "#FAFAFA",
+	},
+	inputReadOnly: {
+		backgroundColor: "#F3F4F6",
+		color: "#6B7280",
+	},
+	inputError: {
+		borderColor: "#EF4444",
+		backgroundColor: "#FEF2F2",
+	},
+	errorText: {
+		color: "#EF4444",
+		fontSize: 12,
+		marginTop: 6,
+		fontWeight: "500",
+	},
+	attemptsText: {
+		color: "#6B7280",
+		fontSize: 12,
+		marginTop: 6,
 	},
 	button: {
 		backgroundColor: "#00C853",
@@ -407,18 +529,87 @@ const styles = StyleSheet.create({
 		borderRadius: 12,
 		alignItems: "center",
 		marginTop: height(2),
+		shadowColor: "#00C853",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.2,
+		shadowRadius: 6,
+		elevation: 3,
 	},
 	buttonDisabled: {
 		opacity: 0.7,
+	},
+	buttonInner: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
 	},
 	buttonText: {
 		color: "white",
 		fontWeight: "bold",
 		fontSize: 18,
 	},
-    errorText: {
-        color: 'red',
-        fontSize: 12,
-        marginTop: 4,
-    },
+	stillCheckingCard: {
+		backgroundColor: "#F9FAFB",
+		borderRadius: 12,
+		padding: 16,
+		borderWidth: 1,
+		borderColor: "#E5E7EB",
+		marginTop: 10,
+	},
+	stillCheckingTitle: {
+		fontSize: 16,
+		fontWeight: "600",
+		color: "#1F2937",
+		marginBottom: 6,
+	},
+	stillCheckingDesc: {
+		fontSize: 14,
+		color: "#6B7280",
+		lineHeight: 20,
+		marginBottom: 16,
+	},
+	stillCheckingActions: {
+		flexDirection: "row",
+		gap: 12,
+	},
+	retryButton: {
+		flex: 1,
+		backgroundColor: "#00C853",
+		paddingVertical: 12,
+		borderRadius: 8,
+		alignItems: "center",
+	},
+	retryButtonText: {
+		color: "#fff",
+		fontWeight: "600",
+		fontSize: 14,
+	},
+	dashboardButton: {
+		flex: 1,
+		backgroundColor: "#F3F4F6",
+		paddingVertical: 12,
+		borderRadius: 8,
+		alignItems: "center",
+	},
+	dashboardButtonText: {
+		color: "#374151",
+		fontWeight: "600",
+		fontSize: 14,
+	},
+	loaderOverlay: {
+		position: "absolute",
+		top: 0,
+		left: 0,
+		right: 0,
+		bottom: 0,
+		backgroundColor: white,
+		alignItems: "center",
+		justifyContent: "center",
+		zIndex: 9999,
+	},
+	loadingText: {
+		marginTop: 16,
+		fontSize: 14,
+		color: "#6B7280",
+	},
 });

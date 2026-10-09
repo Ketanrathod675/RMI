@@ -23,7 +23,7 @@ import { dark, primary } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
-import { axios, getUserDashboardData, StepHref } from "@/utils/api";
+import { axios, getBreFixRoute, getUserDashboardData, StepHref } from "@/utils/api";
 import { height, width } from "@/utils/dimensions";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -190,16 +190,45 @@ export default function SearchLoan() {
 
 					console.log("Search Loan Completed. Step:", currentStep, "Status:", overallStatus);
 
+					const breStatus = workflowProgress?.bre_status;
+					const breFailedRule = workflowProgress?.bre_failed_rule;
+
 					if (
 						overallStatus === "rejected" ||
 						overallStatus === "application_rejected" ||
 						overallStatus === "no_approved_amount"
 					) {
+						if (breStatus === "rejected") {
+							const fixRoute = getBreFixRoute(breFailedRule);
+							if (fixRoute) {
+								router.push(fixRoute as any);
+								return;
+							}
+						}
 						router.push("/(tabs)");
 						return;
 					}
 
 					if (currentStep) {
+						if (
+							currentStep === "pan_verification" || currentStep === "professional_details"
+						) {
+							if (breStatus === "rejected") {
+								const fixRoute = getBreFixRoute(breFailedRule);
+								if (fixRoute) {
+									router.push(fixRoute as any);
+									return;
+								}
+							}
+							if (breStatus === "pending" || breStatus === "error") {
+								router.push({
+									pathname: "/new-assessment-fee" as any,
+									params: { resumeChecks: "true" },
+								});
+								return;
+							}
+						}
+
 						if (currentStep === "selfie_match") {
 							router.push({
 								pathname: "/ckyc-instructions",
@@ -225,10 +254,7 @@ export default function SearchLoan() {
 						}
 
 						if (targetStep === "digilocker") {
-							router.push({
-								pathname: "/aadhaar-kyc",
-								params: { nextStep: "digilocker" },
-							});
+							router.push("/digilocker-kyc" as any);
 							return;
 						}
 
