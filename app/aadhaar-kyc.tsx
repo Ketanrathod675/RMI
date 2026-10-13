@@ -79,6 +79,19 @@ export type UploadedFileType = {
 	mimeType?: string;
 };
 
+const DEFAULT_DOCUMENT_TYPE_OPTIONS: SelectOption[] = [
+	{ label: "Electricity Bill", value: "electricity_bill" },
+	{ label: "Water Bill", value: "water_bill" },
+	{ label: "Gas Bill", value: "gas_bill" },
+	{ label: "Telephone / Broadband Bill", value: "telephone_bill" },
+	{ label: "General Utility Bill", value: "utility_bill" },
+	{ label: "Registered Rental Agreement", value: "rental_agreement" },
+	{ label: "Property Tax Receipt", value: "property_tax_receipt" },
+	{ label: "Driving License", value: "driving_license" },
+	{ label: "Voter ID Card", value: "voter_id" },
+	{ label: "Passport", value: "passport" },
+];
+
 export default function AadhaarKyc() {
 	const { t } = useTranslation();
 	const router = useRouter();
@@ -100,7 +113,7 @@ export default function AadhaarKyc() {
 	const [address, setAddress] = useState<AddressType | null>(DEFAULT_EMPTY_ADDRESS);
 	const [isAddressLoading, setIsAddressLoading] = useState(true);
 	const [addressLoadError, setAddressLoadError] = useState<string | null>(null);
-	const [documentTypeOptions, setDocumentTypeOptions] = useState<SelectOption[]>([]);
+	const [documentTypeOptions, setDocumentTypeOptions] = useState<SelectOption[]>(DEFAULT_DOCUMENT_TYPE_OPTIONS);
 	const [selectedDocumentType, setSelectedDocumentType] = useState<string>("electricity_bill");
 	const [currentAddress, setCurrentAddress] = useState<"Yes" | "No">("Yes");
 	const [commAddressLine1, setCommAddressLine1] = useState("");
@@ -162,32 +175,47 @@ export default function AadhaarKyc() {
 					}
 				}
 
-				const formattedOptions: SelectOption[] = (rawTypes && rawTypes.length > 0)
-					? rawTypes.map((item: any) => {
-							if (typeof item === "string") {
-								return {
-									label: item.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
-									value: item,
-								};
-							}
-							return { label: item.label || item.value, value: item.value || item.label };
-					  })
-					: [
-							{ label: "Electricity Bill", value: "electricity_bill" },
-							{ label: "Rental Agreement", value: "rental_agreement" },
-							{ label: "Gas Bill", value: "gas_bill" },
-							{ label: "Water Bill", value: "water_bill" },
-					  ];
+				const formattedOptions: SelectOption[] = [];
+				if (rawTypes && Array.isArray(rawTypes) && rawTypes.length > 0) {
+					for (const item of rawTypes) {
+						if (!item) continue;
+						if (typeof item === "string") {
+							formattedOptions.push({
+								label: item.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+								value: item,
+							});
+							continue;
+						}
+						const val = item.value ?? item.id ?? item.code ?? item.type ?? "";
+						if (!val) continue;
+						const lbl =
+							item.label ??
+							item.name ??
+							item.title ??
+							String(val).replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+						formattedOptions.push({
+							label: String(lbl),
+							value: String(val),
+						});
+					}
+				}
 
-				setDocumentTypeOptions(formattedOptions);
-				if (formattedOptions.length > 0) {
-					setSelectedDocumentType(String(formattedOptions[0].value));
+				const resolvedOptions: SelectOption[] =
+					formattedOptions.length > 0 ? formattedOptions : DEFAULT_DOCUMENT_TYPE_OPTIONS;
+
+				setDocumentTypeOptions(resolvedOptions);
+				if (resolvedOptions.length > 0) {
+					setSelectedDocumentType((prev) => {
+						const exists = resolvedOptions.some((opt) => opt.value === prev);
+						return exists ? prev : String(resolvedOptions[0].value);
+					});
 				}
 			} else {
 				setAddressLoadError(res.message || "Failed to load KYC address");
 			}
 		} catch (err: any) {
 			setAddressLoadError(err?.detail || err?.message || "Failed to load KYC address");
+			setDocumentTypeOptions((prev) => (prev.length > 0 ? prev : DEFAULT_DOCUMENT_TYPE_OPTIONS));
 		} finally {
 			setIsAddressLoading(false);
 		}

@@ -77,7 +77,7 @@ export const Select: FC<SelectProps> = ({
 	const [searchText, setSearchText] = useState("");
 	const slideAnim = useRef(new Animated.Value(screenHeight)).current;
 
-	const selectedOption = options.find((option) => option.value === selectedValue);
+	const selectedOption = (options || []).find((option) => option && option.value === selectedValue);
 
 	// Use translation with fallbacks
 	const displayPlaceholder = placeholder || t("selectAnOption", "Select an option");
@@ -85,9 +85,15 @@ export const Select: FC<SelectProps> = ({
 	const displaySearchPlaceholder = searchPlaceholder || t("searchPlaceholder", "Search...");
 
 	// Filter options based on search text
-	const filteredOptions = searchable
-		? options.filter((option) => option.label.toLowerCase().includes(searchText.toLowerCase()))
-		: options;
+	const filteredOptions = (options || []).filter((option) => {
+		if (!option) return false;
+		if (!searchable) return true;
+		const labelText =
+			option.label !== undefined && option.label !== null
+				? String(option.label)
+				: String(option.value ?? "");
+		return labelText.toLowerCase().includes(searchText.toLowerCase());
+	});
 
 	const dismissActiveInput = () => {
 		Keyboard.dismiss();
@@ -145,8 +151,14 @@ export const Select: FC<SelectProps> = ({
 		}
 	};
 
-	const renderOption = ({ item }: { item: SelectOption }) => {
-		const isSelected = item.value === selectedValue;
+	const renderOption = ({ item, index }: { item: SelectOption; index: number }) => {
+		const isSelected = item && item.value !== undefined && item.value === selectedValue;
+		const labelText =
+			item?.label !== undefined && item?.label !== null
+				? String(item.label)
+				: item?.value !== undefined && item?.value !== null
+				? String(item.value)
+				: "";
 
 		return (
 			<TouchableOpacity
@@ -156,7 +168,11 @@ export const Select: FC<SelectProps> = ({
 					isSelected && styles.selectedOption,
 					isSelected && selectedOptionStyle,
 				]}
-				onPress={() => handleSelect(item.value)}
+				onPress={() => {
+					if (item && item.value !== undefined && item.value !== null) {
+						handleSelect(item.value);
+					}
+				}}
 				activeOpacity={0.7}>
 				<Text
 					style={[
@@ -165,7 +181,7 @@ export const Select: FC<SelectProps> = ({
 						isSelected && styles.selectedOptionText,
 						isSelected && selectedOptionTextStyle,
 					]}>
-					{item.label}
+					{labelText}
 				</Text>
 				{showCheckmark && isSelected && (
 					<MaterialIcons name="check" size={20} color="#B7FB52" />
@@ -237,7 +253,11 @@ export const Select: FC<SelectProps> = ({
 								<FlatList
 									data={filteredOptions}
 									renderItem={renderOption}
-									keyExtractor={(item) => item.value.toString()}
+									keyExtractor={(item, index) =>
+										item?.value !== undefined && item?.value !== null
+											? String(item.value)
+											: `opt-${index}`
+									}
 									style={styles.optionsList}
 									showsVerticalScrollIndicator={false}
 									bounces={false}

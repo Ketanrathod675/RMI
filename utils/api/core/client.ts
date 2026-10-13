@@ -6,6 +6,7 @@ import Logger from "@/utils/logger";
 import SecureStorage from "@/utils/secure-storage";
 import {
 	AuthKeys,
+	RemovableKeys,
 	removeMultipleStorageItems,
 	setStorageItem,
 	STORAGE_KEYS,
@@ -13,13 +14,47 @@ import {
 import { showLocalizedToast } from "@/utils/toast_translations";
 import a, { isAxiosError, type AxiosError } from "axios";
 import { router } from "expo-router";
+import { Alert } from "react-native";
 import Toast from "react-native-toast-message";
 import { API_URL } from "./config";
 import { URLS } from "./endpoints";
+import { isSessionReplacedError } from "./sessionErrors";
 
 let networkToastShown = false;
 let refreshAccessTokenPromise: Promise<string | null> | null = null;
 let sessionExpiryPromise: Promise<void> | null = null;
+let sessionReplacedPromise: Promise<void> | null = null;
+let sessionReplacedAlertTimestamp = 0;
+
+const handleSessionReplaced = async (): Promise<void> => {
+	if (sessionReplacedPromise) return sessionReplacedPromise;
+
+	sessionReplacedPromise = (async () => {
+		const now = Date.now();
+		const shouldShowAlert = now - sessionReplacedAlertTimestamp > 5000;
+		if (shouldShowAlert) {
+			sessionReplacedAlertTimestamp = now;
+		}
+
+		await Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
+		store.dispatch(clearAuth());
+		router.replace("/login");
+
+		if (shouldShowAlert) {
+			Alert.alert(
+				"Logged out",
+				"Your account was logged in on another device, so you have been logged out here. Only one device can be active at a time.",
+				[{ text: "OK" }],
+			);
+		}
+	})();
+
+	try {
+		await sessionReplacedPromise;
+	} finally {
+		sessionReplacedPromise = null;
+	}
+};
 
 const refreshAccessToken = async (): Promise<string | null> => {
 	if (refreshAccessTokenPromise) return refreshAccessTokenPromise;
@@ -159,17 +194,28 @@ axios.interceptors.response.use(
 			return Promise.reject(error);
 		}
 
-		// Handle 401 Unauthorized (Session Expired / Token Refresh)
+		// Handle 401 Unauthorized (Session Expired / Token Refresh / Session Replaced)
+		const isLogoutUrl =
+			error.config?.url === URLS.auth.logout ||
+			error.config?.url?.endsWith(URLS.auth.logout);
+
 		if (
 			error.config &&
 			error.config.url !== (URLS.auth as any).mpin_login &&
 			error.config.url !== URLS.auth.refresh_token &&
 			!error.config.url?.endsWith(URLS.auth.refresh_token) &&
+			!isLogoutUrl &&
 			!Object.keys(URLS.digilocker).some((key) =>
 				error.config?.url?.includes(URLS.digilocker[key as keyof typeof URLS.digilocker]),
 			) &&
 			error.response?.status === 401
 		) {
+			// Check if kicked off because another device logged in
+			if (isSessionReplacedError(error)) {
+				await handleSessionReplaced();
+				return Promise.reject(error);
+			}
+
 			const originalRequest = error.config as any;
 
 			if (!originalRequest._retry) {
@@ -178,11 +224,17 @@ axios.interceptors.response.use(
 				try {
 					const accessToken = await refreshAccessToken();
 					if (accessToken) {
-							originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-							return axios(originalRequest);
+						originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+						return axios(originalRequest);
 					}
-				} catch (refreshError) {
+				} catch (refreshError: any) {
 					Logger.error("Background token refresh failed", refreshError);
+					// If the refresh call itself returned SESSION_REPLACED, handle that directly
+					// without triggering a generic session expired toast
+					if (isSessionReplacedError(refreshError)) {
+						await handleSessionReplaced();
+						return Promise.reject(error);
+					}
 				}
 			}
 

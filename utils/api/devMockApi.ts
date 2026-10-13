@@ -568,6 +568,20 @@ export async function handleDevMockRequest(
 		};
 	}
 
+	// 7b. Auth Logout
+	if (url.includes("auth/logout") && method === "post") {
+		return {
+			data: {
+				success: true,
+				message: "Logged out successfully",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
 	// 8. Address Status
 	if (url.includes("address/status") && method === "get") {
 		await delay(200);

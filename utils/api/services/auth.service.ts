@@ -2,6 +2,7 @@ import * as Application from "expo-application";
 import { Platform } from "react-native";
 import { getBranchAttribution, getBranchDeviceToken } from "@/utils/branch";
 import { getBranchDeviceContext } from "@/utils/deviceContext";
+import { getDeviceId, getDeviceName } from "@/utils/deviceId";
 import { getUserIdFromToken } from "@/utils/encode_decode";
 import { axios } from "../core/client";
 import { URLS } from "../core/endpoints";
@@ -116,6 +117,8 @@ export const verifyOtp = async (
 	data: VerifyOtpRequestType,
 ): Promise<Partial<VerifyOtpResponseType>> => {
 	const attributionPayload = await getAttributionPayload();
+	const deviceId = data.device_id || (await getDeviceId());
+	const deviceName = data.device_name || getDeviceName();
 
 	const payload: FastApiVerifyOtpPayload = {
 		phone_number: data.phone_number,
@@ -123,6 +126,11 @@ export const verifyOtp = async (
 		otp: typeof data.otp === "number" ? data.otp : parseInt(String(data.otp).trim(), 10),
 		sign_in_key: data.sign_in_key,
 		client_type: "app" as const,
+		device_id: deviceId,
+		device_name: deviceName,
+		...(data.force_logout_other_device !== undefined
+			? { force_logout_other_device: data.force_logout_other_device }
+			: {}),
 		...attributionPayload,
 	};
 
@@ -242,4 +250,28 @@ export const verifyEmailOtp = async (data: VerifyEmailOtpRequestType) => {
 		data,
 	);
 	return response.data;
+};
+
+/**
+ * Logout Session (`/auth/logout`)
+ * Notifies the backend that this device session is terminated.
+ */
+export const logoutSession = async (token?: string): Promise<void> => {
+	try {
+		const headers: Record<string, string> = {};
+		if (token) {
+			headers.Authorization = `Bearer ${token}`;
+		}
+		await axios.post(
+			URLS.auth.logout,
+			{},
+			{
+				headers,
+			},
+		);
+	} catch (error) {
+		if (__DEV__) {
+			console.warn("⚠️ [AUTH] logoutSession failed:", error);
+		}
+	}
 };

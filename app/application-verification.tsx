@@ -2,12 +2,16 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getCreditQueueStatus } from "@/utils/api/services/creditQueue.service";
 import { font, height, width } from "@/utils/dimensions";
+import Logger from "@/utils/logger";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	Animated,
+	AppState,
 	BackHandler,
 	StyleSheet,
 	Text,
@@ -19,12 +23,21 @@ import { SafeAreaView } from "react-native-safe-area-context";
 export default function ApplicationVerification() {
 	useJourneyTracker("/application-verification");
 	const router = useRouter();
-	const { tWithValues } = useTranslation();
-	const [timeLeft, setTimeLeft] = useState(15);
+	const queryClient = useQueryClient();
+	const [isFocused, setIsFocused] = useState(true);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
 
+	useFocusEffect(
+		React.useCallback(() => {
+			setIsFocused(true);
+			return () => {
+				setIsFocused(false);
+			};
+		}, [])
+	);
+
+	// Back handler to navigate back to dashboard
 	useEffect(() => {
-		// Handle Android back button - redirect to dashboard
 		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
 			router.replace("/(tabs)");
 			return true;
@@ -33,29 +46,69 @@ export default function ApplicationVerification() {
 		return () => backHandler.remove();
 	}, [router]);
 
+	// Card scale animation on mount
 	useEffect(() => {
-		// Timer logic
-		if (timeLeft === 0) {
-			router.replace("/(tabs)");
-			return;
-		}
-
-		const timer = setInterval(() => {
-			setTimeLeft((prev) => prev - 1);
-		}, 1000);
-
-		return () => clearInterval(timer);
-	}, [timeLeft, router]);
-
-	useEffect(() => {
-		// Start animations
 		Animated.spring(scaleAnim, {
 			toValue: 1,
 			friction: 5,
 			tension: 40,
 			useNativeDriver: true,
 		}).start();
-	}, []);
+	}, [scaleAnim]);
+
+	// Poll credit queue status
+	const { data, isError, refetch, isFetching } = useQuery({
+		queryKey: ["credit-queue", "status"],
+		queryFn: getCreditQueueStatus,
+		refetchInterval: (query) => {
+			if (!isFocused) return false;
+			const currentStatus = query.state.data?.status;
+			const canProceed = query.state.data?.can_proceed;
+			if (currentStatus === "approved" || canProceed || currentStatus === "rejected") {
+				return false;
+			}
+			return 10000;
+		},
+		refetchOnWindowFocus: true,
+	});
+
+	// Refetch when returning to foreground
+	useEffect(() => {
+		const subscription = AppState.addEventListener("change", (nextState) => {
+			if (nextState === "active" && isFocused) {
+				refetch();
+			}
+		});
+
+		return () => subscription.remove();
+	}, [isFocused, refetch]);
+
+	// React to credit queue result
+	useEffect(() => {
+		if (!data) return;
+
+		Logger.debug("Credit queue review status", {
+			status: data.status,
+			can_proceed: data.can_proceed,
+		});
+
+		if (data.status === "approved" || data.can_proceed) {
+			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+			router.replace("/loan-approved");
+			return;
+		}
+
+		if (data.status === "rejected") {
+			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+			router.replace("/no-approved-amount");
+			return;
+		}
+
+		if (data.status === "not_started") {
+			router.replace("/(tabs)");
+			return;
+		}
+	}, [data, queryClient, router]);
 
 	return (
 		<SafeAreaView style={styles.container}>
@@ -102,6 +155,10 @@ export default function ApplicationVerification() {
 							style={styles.note}
 							translationKey="applicationUnderProcessNote"
 						/>
+
+						{data?.status === "rejected" && data.rejection_reason ? (
+							<Text style={styles.rejectionReason}>{data.rejection_reason}</Text>
+						) : null}
 					</View>
 
 					{/* Action Button */}
@@ -118,9 +175,26 @@ export default function ApplicationVerification() {
 						</View>
 					</TouchableOpacity>
 
-					<Text style={styles.redirectText}>
-						{tWithValues("redirectingToDashboardIn", { seconds: timeLeft })}
-					</Text>
+					{/* Non-blocking retry error indicator */}
+					{isError && (
+						<View style={styles.errorContainer}>
+							<TranslatedText
+								style={styles.errorText}
+								translationKey={"couldntRefreshRetrying" as any}
+								fallback="Couldn't refresh. Retrying..."
+							/>
+							<TouchableOpacity
+								onPress={() => refetch()}
+								disabled={isFetching}
+								hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+								<TranslatedText
+									style={styles.retryText}
+									translationKey="retry"
+									fallback="Retry"
+								/>
+							</TouchableOpacity>
+						</View>
+					)}
 				</Animated.View>
 			</View>
 		</SafeAreaView>
@@ -190,6 +264,13 @@ const styles = StyleSheet.create({
 		lineHeight: font(2),
 		marginTop: height(1),
 	},
+	rejectionReason: {
+		fontSize: font(1.4),
+		color: "#DC2626",
+		textAlign: "center",
+		marginTop: height(1),
+		fontWeight: "500",
+	},
 	button: {
 		width: "100%",
 		backgroundColor: "#B7FB52",
@@ -209,11 +290,20 @@ const styles = StyleSheet.create({
 		fontWeight: "700",
 		color: "#000000",
 	},
-	redirectText: {
-		fontSize: font(1.4),
-		color: "#6B7280",
-		textAlign: "center",
+	errorContainer: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
 		marginTop: height(2),
-		fontWeight: "500",
+	},
+	errorText: {
+		fontSize: font(1.3),
+		color: "#6B7280",
+	},
+	retryText: {
+		fontSize: font(1.3),
+		fontWeight: "600",
+		color: "#2563EB",
+		textDecorationLine: "underline",
 	},
 });

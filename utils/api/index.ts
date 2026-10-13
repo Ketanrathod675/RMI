@@ -19,6 +19,7 @@ export * from "./types/auth.types";
 export * from "./types/user.types";
 export * from "./types/lender.types";
 export * from "./types/payment.types";
+export * from "./types/loan.types";
 
 // Domain Services
 export * from "./services/auth.service";
@@ -33,6 +34,8 @@ export * from "./services/feedback.service";
 export * from "./services/pincode.service";
 export * from "./services/professional.service";
 export * from "./services/identity.service";
+export * from "./services/creditQueue.service";
+export * from "./services/loanOffer.service";
 
 // LEGACY — old backend, disabled during in-house rebuild
 // Domain Modules & Legacy Fallbacks

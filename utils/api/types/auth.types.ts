@@ -31,6 +31,9 @@ export interface FastApiVerifyOtpPayload {
 	medium?: string;
 	campaign_name?: string;
 	branch_device_context?: any;
+	device_id?: string;
+	device_name?: string;
+	force_logout_other_device?: boolean;
 }
 
 export interface FastApiTokenResponse {
@@ -92,6 +95,9 @@ export type VerifyOtpRequestType = {
 	language?: Languages;
 	preferred_language?: Languages;
 	sign_in_key?: string;
+	device_id?: string;
+	device_name?: string;
+	force_logout_other_device?: boolean;
 };
 
 export type User = {

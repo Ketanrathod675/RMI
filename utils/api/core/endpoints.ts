@@ -8,6 +8,7 @@ export const URLS = {
 		verify_otp: "auth/verify-otp",
 		refresh_token: "auth/refresh-token",
 		me: "auth/me",
+		logout: "auth/logout",
 
 		// LEGACY — old backend endpoints for MPIN / legacy flows
 		login: "auth/login",
@@ -109,9 +110,21 @@ export const URLS = {
 		// LEGACY — replaced by URLS.address_v2.submit
 		verify_address: "address-verification/submit",
 	},
+	credit_queue: {
+		status: "credit-queue/status",
+	},
+	loan_offer: {
+		offer: "loan/offer",
+		sanction_letter: "loan/sanction-letter",
+		sanction_otp_send: "loan/sanction-otp/send",
+		sanction_otp_verify: "loan/sanction-otp/verify",
+		status: "loan/status",
+	},
 	loans: {
+		// LEGACY — replaced by URLS.loan_offer.*
 		// NOT IN NEW BACKEND
 		loan_terms: "loans/loan-terms",
+		// LEGACY — replaced by URLS.loan_offer.*
 		// NOT IN NEW BACKEND
 		submit_loan_application: "loans/submit-loan-application",
 		// NOT IN NEW BACKEND

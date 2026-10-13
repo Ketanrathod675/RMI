@@ -231,10 +231,21 @@ export const useAuth = (shouldAutoLoad = false) => {
 		[dispatch]
 	);
 
-	const logout = useCallback(() => {
+	const logout = useCallback(async () => {
+		try {
+			const token =
+				accessToken ||
+				(await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]));
+			if (token) {
+				const { logoutSession } = await import("@/utils/api/services/auth.service");
+				void logoutSession(token);
+			}
+		} catch {
+			// Ignore error capturing token for logout
+		}
 		void Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
 		dispatch(clearAuth());
-	}, [dispatch]);
+	}, [accessToken, dispatch]);
 
 	useEffect(() => {
 		if (shouldAutoLoad) {

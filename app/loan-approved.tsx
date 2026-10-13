@@ -8,19 +8,20 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
-import { axios, errorHandler, URLS } from "@/utils/api";
+import { Logger } from "@/utils/logger";
 import {
-	submitLoanApplication,
-	type SubmitLoanApplicationRequestType,
-} from "@/utils/api/kyc";
+	generateSanctionLetter,
+	getLoanOffer,
+} from "@/utils/api/services/loanOffer.service";
+import type { LoanOffer } from "@/utils/api/types/loan.types";
 import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
+import { useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
-	Alert,
 	Animated,
 	BackHandler,
 	Linking,
@@ -37,61 +38,6 @@ import Toast from "react-native-toast-message";
 const ASSESSMENT_BANNER = Images.CONGRATULATIONS_BANNER;
 const RUPEE_COIN = Images.RUPEE_COIN;
 
-export type TermsResponseType = {
-	success: boolean;
-	loan_terms: Partial<LoanTerms>;
-	product_details: Partial<ProductDetails>;
-	data_source: string;
-	message: string;
-};
-
-export type LoanTerms = {
-	amount_approved: number;
-	processing_fee: number;
-	gst_amount: number;
-	gst_amount_percentage?: number;
-	total_processing_fee: number;
-	interest_rate: number;
-	monthly_rate: number;
-	tenure_days: number;
-	due_date_options: DueDateOption[];
-	fee_breakdown: FeeBreakdown[];
-	net_disbursal_amount?: number;
-	amount_to_repay?: number;
-};
-
-export type DueDateOption = {
-	date: string;
-	display_date: string;
-	day: string;
-	recommended: boolean;
-	monthly_interest_rate: number;
-	annual_interest_rate: number;
-	interest_description: string;
-	days_from_now: number;
-	tenure_days: number;
-};
-
-export type FeeBreakdown = {
-	fee_type: string;
-	amount: number;
-	gst: number;
-	total: number;
-	calculation: string;
-	value: string;
-};
-
-export type ProductDetails = {
-	product_id: string;
-	product_name: string;
-	product_category: string;
-	repayment_type: string;
-	lender_id: string;
-	min_loan_amount?: number;
-	amount_increment?: number;
-	max_loan_amount?: number;
-};
-
 // Function to format amount using Intl formatter
 const formatAmount = (amount: number): string => {
 	return new Intl.NumberFormat("en-IN", {
@@ -102,62 +48,19 @@ const formatAmount = (amount: number): string => {
 	}).format(amount);
 };
 
-// Function to calculate days between today and selected due date
-const calculateTenureInDays = (dueDateString: string): number => {
-	if (!dueDateString) return 0;
-
-	const today = new Date();
-	const dueDate = new Date(dueDateString);
-
-	// Reset time to start of day for accurate day calculation
-	today.setHours(0, 0, 0, 0);
-	dueDate.setHours(0, 0, 0, 0);
-
-	// Calculate difference in milliseconds and convert to days
-	const timeDifference = dueDate.getTime() - today.getTime();
-	const dayDifference = Math.ceil(timeDifference / (1000 * 3600 * 24));
-
-	return Math.max(0, dayDifference); // Ensure non-negative result
-};
-
-// Function to get interest rate for selected due date
-const getInterestRateForDate = (
-	selectedDate: string,
-	dueDateOptions: DueDateOption[],
-): { monthlyRate: number; description: string } => {
-	if (!selectedDate || !dueDateOptions || dueDateOptions.length === 0) {
-		return { monthlyRate: 0, description: "N/A" };
-	}
-
-	const selectedOption = dueDateOptions.find(
-		(option) => option.date === selectedDate,
-	);
-	if (selectedOption) {
-		return {
-			monthlyRate: selectedOption.monthly_interest_rate,
-			description: selectedOption.interest_description,
-		};
-	}
-
-	// Fallback to first option if selected date not found
-	return {
-		monthlyRate: dueDateOptions[0]?.monthly_interest_rate || 0,
-		description: dueDateOptions[0]?.interest_description || "N/A",
-	};
-};
-
 export default function LoanApproved() {
 	const { t } = useTranslation();
+	const router = useRouter();
+	const navigation = useNavigation();
+	const queryClient = useQueryClient();
 
 	// Track this screen in the journey
 	useJourneyTracker("/loan-approved");
 
-	const router = useRouter();
-	const navigation = useNavigation();
 	const [modalVisible] = useState(false);
 	const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
-	const [rejectionMessage, setRejectionMessage] = useState<string>("");
 	const [rejectionCountdown, setRejectionCountdown] = useState(15);
+	const [selectedAmount, setSelectedAmount] = useState<number>(0);
 	const [selectedDueDate, setSelectedDueDate] = useState<string>("");
 	const [error, setError] = useState<string | null>(null);
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
@@ -175,7 +78,7 @@ export default function LoanApproved() {
 			const backHandler = BackHandler.addEventListener(
 				"hardwareBackPress",
 				() => {
-					return true; // prevent default app exit
+					return true;
 				},
 			);
 
@@ -198,7 +101,7 @@ export default function LoanApproved() {
 			"hardwareBackPress",
 			() => {
 				setIsExitModalVisible(true);
-				return true; // prevent default app exit
+				return true;
 			},
 		);
 
@@ -206,441 +109,236 @@ export default function LoanApproved() {
 			unsubscribe();
 			backHandler.remove();
 		};
-	}, [navigation, router, rejectionModalVisible]);
+	}, [navigation, rejectionModalVisible]);
 
-	// Fetch loan terms using React Query
+	// Fetch loan offer using React Query
 	const {
-		data,
+		data: offer,
 		error: queryError,
 		isPending: isLoading,
-		refetch: refetchLoanTerms,
-	} = useNetworkAwareQuery({
-		queryKey: ["loan", "terms"],
+		refetch: refetchLoanOffer,
+	} = useNetworkAwareQuery<LoanOffer>({
+		queryKey: ["loan", "offer"],
 		queryFn: async () => {
-			console.log("🚀 Calling GET /api/v1/loans/loan-terms");
-			const response = await axios.get<Partial<TermsResponseType>>(
-				URLS.loans.loan_terms,
-			);
-			console.log(
-				"📥 Loan Terms API Response:",
-				JSON.stringify(response.data, null, 2),
-			);
-			console.log("✅ Loan terms loaded successfully");
-			return response?.data;
+			Logger.debug("Fetching loan offer");
+			const result = await getLoanOffer();
+			Logger.debug("Loan offer loaded");
+			return result;
 		},
 		staleTime: 30000,
 	});
 
-	// Handle query error for "Approved amount not found."
+	// Handle query errors
 	useEffect(() => {
 		if (queryError) {
-			const error: any = queryError;
-			const errorMessage =
-				error?.response?.data?.message || error?.message || "";
-			if (errorMessage === "Approved amount not found.") {
-				console.log(
-					"⚠️ Approved amount not found - navigating to no-approved-amount screen",
-				);
+			const err: any = queryError;
+			const status = err?.response?.status;
+			const detail = err?.response?.data?.detail;
+			const message = err?.response?.data?.message || err?.message || "";
+			const combinedMsg = `${typeof detail === "string" ? detail : ""} ${typeof message === "string" ? message : ""}`.toLowerCase();
+
+			Logger.debug("Loan offer query error", { status });
+
+			if (status === 403) {
+				if (combinedMsg.includes("underwriting")) {
+					router.replace("/application-verification");
+					return;
+				}
 				router.replace("/no-approved-amount");
 				return;
 			}
-			// Set error for other types of errors
+
+			if (status === 404 && combinedMsg.includes("no lender product allocated")) {
+				router.replace("/no-lenders-available");
+				return;
+			}
+
+			if (status === 409) {
+				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+				router.replace("/(tabs)");
+				return;
+			}
+
+			if (status === 400) {
+				const displayErr =
+					typeof detail === "string"
+						? detail
+						: typeof message === "string"
+							? message
+							: "Invalid request";
+				Toast.show({
+					type: "error",
+					text1: t("error") || "Error",
+					text2: displayErr,
+				});
+				return;
+			}
+
 			setError(t("failedToLoadLoanTerms"));
 		} else {
 			setError(null);
 		}
-	}, [queryError, router, t]);
+	}, [queryError, router, queryClient, t]);
 
-	// Extract loan terms and product details flexibly supporting multiple API envelope shapes
-	const loanTermsData = useMemo(() => {
-		return (
-			(data as any)?.loan_terms ||
-			(data as any)?.data?.loan_terms ||
-			(data as any)?.data ||
-			data ||
-			{}
-		);
-	}, [data]);
-
-	const productDetailsData = useMemo(() => {
-		return (
-			(data as any)?.product_details ||
-			(data as any)?.data?.product_details ||
-			{}
-		);
-	}, [data]);
-
-	// Extract loan amount with full fallback support
-	const loanAmount = useMemo(() => {
-		const raw =
-			loanTermsData?.amount_approved ??
-			loanTermsData?.approved_amount ??
-			loanTermsData?.loan_amount ??
-			loanTermsData?.principal_amount ??
-			(data as any)?.amount_approved ??
-			(data as any)?.approved_amount ??
-			(data as any)?.loan_amount ??
-			(data as any)?.data?.amount_approved ??
-			(data as any)?.data?.approved_amount ??
-			(data as any)?.data?.loan_amount ??
-			productDetailsData?.max_loan_amount ??
-			productDetailsData?.min_loan_amount ??
-			0;
-
-		const num =
-			typeof raw === "string"
-				? parseFloat(raw.replace(/[^0-9.]/g, ""))
-				: Number(raw);
-		return isNaN(num) || num <= 0 ? 0 : num;
-	}, [loanTermsData, productDetailsData, data]);
-
-	const processingFee = useMemo(() => {
-		const fee =
-			loanTermsData?.processing_fee ??
-			(data as any)?.processing_fee ??
-			0;
-		return Number(fee) || 0;
-	}, [loanTermsData, data]);
-
-	const gstAmount = useMemo(() => {
-		const gst =
-			loanTermsData?.gst_amount_percentage ??
-			loanTermsData?.gst_amount ??
-			18;
-		return Number(gst) || 18;
-	}, [loanTermsData]);
-
-	const totalProcessingFee = useMemo(() => {
-		const total =
-			loanTermsData?.total_processing_fee ??
-			(data as any)?.total_processing_fee ??
-			0;
-		return Number(total) || 0;
-	}, [loanTermsData, data]);
-
-	const monthlyInterest = useMemo(() => {
-		const rate =
-			loanTermsData?.monthly_rate ??
-			(loanTermsData?.interest_rate
-				? Number(loanTermsData.interest_rate) / 12
-				: 0);
-		return Number(rate) || 0;
-	}, [loanTermsData]);
-
-	// Log interest rate data when it's extracted from the response
+	// Initialize / default selected amount to sanctioned_amount
 	useEffect(() => {
-		if (loanTermsData && Object.keys(loanTermsData).length > 0) {
-			console.log("📊 Interest Rate Data Extracted in loan-approved.tsx:");
-			console.log(
-				`   - Interest Rate: ${loanTermsData.interest_rate || "N/A"}%`,
-			);
-			console.log(
-				`   - Monthly Rate: ${loanTermsData.monthly_rate || "N/A"}%`,
-			);
-			console.log(
-				`   - Monthly Interest (used in calculations): ${monthlyInterest}%`,
-			);
-			console.log(`   - Loan Amount: ${loanAmount || "N/A"}`);
-			console.log(`   - Processing Fee: ${processingFee || "N/A"}`);
-			console.log(`   - GST Amount: ${gstAmount || "N/A"}`);
-			console.log(`   - Total Processing Fee: ${totalProcessingFee || "N/A"}`);
-			console.log(
-				"📋 Full loan_terms object:",
-				JSON.stringify(loanTermsData, null, 2),
-			);
+		if (offer?.sanctioned_amount && (!selectedAmount || !offer.amount_options?.includes(selectedAmount))) {
+			setSelectedAmount(offer.sanctioned_amount);
 		}
-	}, [loanTermsData, loanAmount, processingFee, gstAmount, totalProcessingFee, monthlyInterest]);
+	}, [offer?.sanctioned_amount, offer?.amount_options, selectedAmount]);
 
-	// Calculate tenure dynamically based on selected due date
-	const calculatedTenureDays = calculateTenureInDays(selectedDueDate);
-	const backendTenureDays = useMemo(() => {
-		const options = loanTermsData?.due_date_options;
-		if (Array.isArray(options) && selectedDueDate) {
-			const opt = options.find(
-				(o: any) => o?.date === selectedDueDate || o?.display_date === selectedDueDate,
-			);
-			return opt?.tenure_days || opt?.days_from_now || 0;
+	// Amount options for dropdown
+	const amountOptions: SelectOption[] = useMemo(() => {
+		if (offer?.amount_options && Array.isArray(offer.amount_options) && offer.amount_options.length > 0) {
+			return offer.amount_options.map((amt) => ({
+				label: `₹ ${Number(amt).toLocaleString("en-IN")}`,
+				value: Number(amt),
+			}));
 		}
-		return loanTermsData?.tenure_days || 0;
-	}, [loanTermsData, selectedDueDate]);
+		if (offer?.sanctioned_amount) {
+			return [
+				{
+					label: `₹ ${Number(offer.sanctioned_amount).toLocaleString("en-IN")}`,
+					value: Number(offer.sanctioned_amount),
+				},
+			];
+		}
+		return [];
+	}, [offer?.amount_options, offer?.sanctioned_amount]);
 
+	// Due date options for dropdown
+	const dueDateOptions: SelectOption[] = useMemo(() => {
+		if (offer?.due_date_options && Array.isArray(offer.due_date_options)) {
+			return offer.due_date_options
+				.filter((opt) => opt && (opt.display_date || opt.date))
+				.map((opt) => ({
+					label: String(opt.display_date || opt.date),
+					value: String(opt.date || opt.display_date),
+				}));
+		}
+		return [];
+	}, [offer?.due_date_options]);
+
+	// Preselect due date option (recommended === true, else selected_due_date, else first option)
+	useEffect(() => {
+		if (offer?.due_date_options && offer.due_date_options.length > 0 && !selectedDueDate) {
+			const recommended = offer.due_date_options.find((opt) => opt.recommended);
+			if (recommended?.date) {
+				setSelectedDueDate(recommended.date);
+			} else if (offer.selected_due_date) {
+				setSelectedDueDate(offer.selected_due_date);
+			} else {
+				setSelectedDueDate(offer.due_date_options[0].date);
+			}
+		}
+	}, [offer?.due_date_options, offer?.selected_due_date, selectedDueDate]);
+
+	// Selected due date item from backend options
+	const selectedDueDateOption = useMemo(() => {
+		if (!offer?.due_date_options) return undefined;
+		return offer.due_date_options.find((opt) => opt.date === selectedDueDate);
+	}, [offer?.due_date_options, selectedDueDate]);
+
+	// GST label derivation: gst_percent when present, else breakdown, else rupee amount
+	const gstLabel = useMemo(() => {
+		if (offer?.gst_percent !== undefined && offer?.gst_percent !== null) {
+			return `${offer.gst_percent}% ( GST )`;
+		}
+		if (offer?.processing_fee_breakdown) {
+			return offer.processing_fee_breakdown;
+		}
+		if (offer?.gst !== undefined && offer?.gst !== null) {
+			return `₹ ${offer.gst.toLocaleString("en-IN")} ( GST )`;
+		}
+		return "";
+	}, [offer?.gst_percent, offer?.processing_fee_breakdown, offer?.gst]);
+
+	// Tenure display from backend
 	const tenure = useMemo(() => {
-		const days = backendTenureDays || calculatedTenureDays;
-		if (!selectedDueDate || !days || days <= 0) {
+		const days = selectedDueDateOption?.tenure_days ?? offer?.tenure_days ?? 0;
+		if (!selectedDueDate || days <= 0) {
 			return t("selectDueDatePlaceholder");
 		}
 		return `${days} day${days !== 1 ? "s" : ""}`;
-	}, [selectedDueDate, backendTenureDays, calculatedTenureDays, t]);
+	}, [selectedDueDateOption?.tenure_days, offer?.tenure_days, selectedDueDate, t]);
 
-	// Debug logging for tenure calculation
-	console.log("🔍 Tenure Calculation Debug:");
-	console.log("- selectedDueDate:", selectedDueDate);
-	console.log("- calculatedTenureDays:", calculatedTenureDays);
-	console.log("- final tenure:", tenure);
-
-	// Get dynamic interest rate based on selected due date
-	const dynamicInterestRate = useMemo(() => {
-		const options = loanTermsData?.due_date_options;
-		if (Array.isArray(options) && selectedDueDate) {
-			return getInterestRateForDate(selectedDueDate, options);
+	// Interest rate display from backend
+	const interestRate = useMemo(() => {
+		if (selectedDueDateOption?.interest_description) {
+			return selectedDueDateOption.interest_description;
 		}
-		// Fallback to static rate if no dynamic data available
-		return {
-			monthlyRate: monthlyInterest,
-			description: `${monthlyInterest}% ${t("perMonth")}`,
-		};
-	}, [selectedDueDate, loanTermsData, monthlyInterest, t]);
-
-	const interestRate =
-		dynamicInterestRate.description ||
-		`${dynamicInterestRate.monthlyRate}% ${t("perMonth")}`;
-
-	// Debug log the due_date_options from API
-	console.log("🔍 Raw due_date_options from API:", loanTermsData?.due_date_options);
-	console.log("🔍 Selected due date:", selectedDueDate);
-	console.log("🔍 Dynamic interest rate:", dynamicInterestRate);
-	console.log("🔍 Final interest rate display:", interestRate);
-
-	const handleDueDateSelect = (value: string | number) => {
-		console.log("🎯 Due date selected:", value, "Type:", typeof value);
-		const stringValue = value ? String(value) : "";
-		setSelectedDueDate(stringValue);
-	};
-
-	// Use due date options from API response with fallback
-	const dueDateOptions: SelectOption[] = useMemo(() => {
-		try {
-			const optionsList =
-				loanTermsData?.due_date_options ||
-				(data as any)?.due_date_options ||
-				(data as any)?.data?.due_date_options;
-
-			if (Array.isArray(optionsList) && optionsList.length > 0) {
-				const options = optionsList
-					.filter(
-						(option: any) =>
-							option &&
-							typeof option === "object" &&
-							(option.display_date || option.date),
-					)
-					.map((option: any) => ({
-						label: String(option.display_date || option.date),
-						value: String(option.date || option.display_date),
-					}));
-
-				if (options.length > 0) {
-					return options;
-				}
-			}
-		} catch (error) {
-			console.error("Error processing due_date_options:", error);
+		if (selectedDueDateOption?.monthly_interest_rate) {
+			return `${selectedDueDateOption.monthly_interest_rate}% ${t("perMonth")}`;
 		}
-
-		// Fallback to default options with valid ISO date format (YYYY-MM-DD)
-		console.log("📋 Using fallback due date options");
-		const now = new Date();
-		const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-		const monthNames = [
-			"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-			"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-		];
-
-		const monthName = monthNames[nextMonth.getMonth()];
-		const year = nextMonth.getFullYear();
-		const pad = (n: number) => String(n).padStart(2, "0");
-		const m = pad(nextMonth.getMonth() + 1);
-
-		return [
-			{
-				label: `1st of ${monthName} ${year}`,
-				value: `${year}-${m}-01`,
-			},
-			{
-				label: `10th of ${monthName} ${year}`,
-				value: `${year}-${m}-10`,
-			},
-		];
-	}, [loanTermsData, data]);
-
-	// Auto-select first due date option when available
-	useEffect(() => {
-		if (dueDateOptions.length > 0 && !selectedDueDate) {
-			setSelectedDueDate(String(dueDateOptions[0].value));
+		if (offer?.monthly_interest_rate) {
+			return `${offer.monthly_interest_rate}% ${t("perMonth")}`;
 		}
-	}, [dueDateOptions, selectedDueDate]);
+		return "-";
+	}, [selectedDueDateOption, offer?.monthly_interest_rate, t]);
 
-	console.log("✅ Final dueDateOptions:", dueDateOptions);
+	// Amount to repay and net disbursal from backend
+	const amountToRepay = selectedDueDateOption?.amount_to_repay ?? offer?.amount_to_repay ?? 0;
+	const netDisbursalAmount = offer?.net_disbursal_amount ?? 0;
 
-	// Calculate Net Disbursal Amount
-	// Formula: Net Disbursal = Loan Amount - (Processing Fee + GST on Processing Fee)
-	const calculatedNetDisbursalAmount = useMemo(() => {
-		if (!loanAmount || loanAmount <= 0) return 0;
-		if (data?.loan_terms?.net_disbursal_amount) {
-			return data.loan_terms.net_disbursal_amount;
-		}
-
-		const calculatedProcessingFee = processingFee;
-		const calculatedGst =
-			data?.loan_terms?.gst_amount ??
-			calculatedProcessingFee * (gstAmount / 100);
-		const totalFee =
-			totalProcessingFee || (calculatedProcessingFee + calculatedGst);
-		const netDisbursal = loanAmount - totalFee;
-
-		console.log("💰 Net Disbursal Calculation:");
-		console.log(`   - Loan Amount: ₹${loanAmount}`);
-		console.log(`   - Processing Fee: ₹${calculatedProcessingFee}`);
-		console.log(`   - GST: ₹${calculatedGst}`);
-		console.log(`   - Total Fee: ₹${totalFee}`);
-		console.log(`   - Net Disbursal: ₹${netDisbursal}`);
-
-		return Math.round(netDisbursal);
-	}, [
-		loanAmount,
-		data?.loan_terms?.net_disbursal_amount,
-		data?.loan_terms?.gst_amount,
-		processingFee,
-		gstAmount,
-		totalProcessingFee,
-	]);
-
-	// Dynamic processing fee values for display and API
-	const dynamicProcessingFeeValues = useMemo(() => {
-		if (!loanAmount || loanAmount <= 0)
-			return { processingFee: 0, gstAmount: 0, totalProcessingFee: 0 };
-
-		const fee = processingFee;
-		const gst =
-			data?.loan_terms?.gst_amount ??
-			Math.round(fee * (gstAmount / 100));
-		const total = totalProcessingFee || (fee + gst);
-
-		return {
-			processingFee: Math.round(fee),
-			gstAmount: Math.round(gst),
-			totalProcessingFee: Math.round(total),
-		};
-	}, [
-		loanAmount,
-		processingFee,
-		gstAmount,
-		totalProcessingFee,
-		data?.loan_terms?.gst_amount,
-	]);
-
-	// Calculate Amount to Repay dynamically based on selected due date
-	// Formula:
-	// interest_amount = loan_amount * 12 * interest_rate(monthly) * tenure_days / (365 * 100)
-	// amount_to_repay = loan_amount + interest_amount
-	const calculatedAmountToRepay = useMemo(() => {
-		if (!loanAmount || loanAmount <= 0) return 0;
-
-		// Monthly interest rate for the selected due date
-		const monthlyRate =
-			dynamicInterestRate.monthlyRate || monthlyInterest || 0;
-		// Prefer backend tenure days; fallback to calculated days
-		const days = backendTenureDays || calculatedTenureDays || 0;
-		// Apply simple interest formula
-		const interestAmount =
-			(loanAmount * 12 * monthlyRate * days) / (365 * 100);
-		const totalRepayment = loanAmount + interestAmount;
-
-		console.log("💸 Amount to Repay Calculation:");
-		console.log(`   - Loan Amount: ₹${loanAmount}`);
-		console.log(`   - Monthly Rate: ${monthlyRate}%`);
-		console.log(`   - Tenure Days: ${days}`);
-		console.log(`   - Interest Amount: ₹${interestAmount.toFixed(2)}`);
-		console.log(`   - Total Repayment: ₹${totalRepayment.toFixed(2)}`);
-
-		return Math.round(totalRepayment);
-	}, [
-		loanAmount,
-		dynamicInterestRate.monthlyRate,
-		monthlyInterest,
-		backendTenureDays,
-		calculatedTenureDays,
-	]);
-
-	const { mutate: submitLoanApplicationMutation, isPending: isSubmitting } =
+	// Mutation for generating digital sanction letter and moving to OTP
+	const { mutate: generateSanctionMutation, isPending: isSubmitting } =
 		useNetworkAwareMutation({
-			mutationFn: submitLoanApplication,
-			onSuccess: (data) => {
-				console.log("Submit Loan Application API Response:", data);
-				console.log(
-					"Loan Application Success:",
-					JSON.stringify(data, null, 2),
-				);
-
-				Toast.show({
-					type: "success",
-					text1: t("loanApplicationSubmittedSuccessfully"),
-					text2: data?.message || t("yourLoanHasBeenApproved"),
+			mutationFn: generateSanctionLetter,
+			onSuccess: (result) => {
+				Logger.debug("Sanction letter generated successfully");
+				router.push({
+					pathname: "/loan-enter-otp",
+					params: {
+						sanction_number: result.sanction_number,
+						accepted_amount: String(result.sanctioned_amount),
+						selected_due_date: result.due_date,
+					},
 				});
-
-				// Navigate to combined documents (sanction letter, KFS, loan agreement)
-				router.replace("/verify-bank-details");
 			},
-			onError: (err: any, variables, ctx) => {
-				console.log("❌ Submit Loan Application API Error:", err);
-				console.log(
-					"📤 Request payload that failed:",
-					JSON.stringify(variables, null, 2),
-				);
+			onError: (err: any) => {
+				const status = err?.response?.status;
+				const detail = err?.response?.data?.detail;
+				const message = err?.response?.data?.message || err?.message || "";
+				const combinedMsg = `${typeof detail === "string" ? detail : ""} ${typeof message === "string" ? message : ""}`.toLowerCase();
 
-				// Log detailed error information
-				if (err?.response) {
-					console.log("🔍 Error Response Status:", err.response.status);
-					console.log(
-						"🔍 Error Response Data:",
-						JSON.stringify(err.response.data, null, 2),
-					);
-					console.log("🔍 Error Response Headers:", err.response.headers);
-				} else if (err?.request) {
-					console.log("🔍 No response received:", err.request);
-				} else {
-					console.log("🔍 Error setting up request:", err.message);
-				}
+				Logger.debug("Generate sanction letter error", { status });
 
-				const { error, errorType } = errorHandler(err, variables, ctx);
-
-				console.log("🔥 Processed Error:", error);
-				console.log("🔥 Error Type:", errorType);
-
-				// Handle specific lender credit policy rejection (400)
-				if (
-					err?.response?.status === 400 &&
-					(err?.response?.data?.message as string)
-						?.toLowerCase()
-						.includes("lender's credit policy")
-				) {
-					setRejectionMessage(t("standardRejectionMessage"));
-					setRejectionModalVisible(true);
+				if (status === 403) {
+					if (combinedMsg.includes("underwriting")) {
+						router.replace("/application-verification");
+						return;
+					}
+					router.replace("/no-approved-amount");
 					return;
 				}
 
-				// Show detailed error message for non-400 errors
-				let errorMessage = "Please try again";
-				if (err?.response?.data?.message) {
-					errorMessage = err.response.data.message;
-				} else if (err?.response?.data?.detail) {
-					errorMessage =
-						typeof err.response.data.detail === "string"
-							? err.response.data.detail
-							: JSON.stringify(err.response.data.detail);
-				} else if (error?.message) {
-					errorMessage = error.message;
+				if (status === 404 && combinedMsg.includes("no lender product allocated")) {
+					router.replace("/no-lenders-available");
+					return;
 				}
+
+				if (status === 409) {
+					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+					router.replace("/(tabs)");
+					return;
+				}
+
+				const displayErr =
+					typeof detail === "string"
+						? detail
+						: typeof message === "string"
+							? message
+							: t("pleaseRefreshAndTryAgain");
 
 				Toast.show({
 					type: "error",
-					text1: `API Error (${err?.response?.status || "Unknown"})`,
-					text2: errorMessage,
+					text1: t("error") || "Error",
+					text2: displayErr,
 				});
 			},
 		});
 
 	const handleAccept = () => {
-		// Validate that due date is selected
 		if (!selectedDueDate) {
 			Toast.show({
 				type: "error",
@@ -650,13 +348,8 @@ export default function LoanApproved() {
 			return;
 		}
 
-		// Validate all required fields have valid values
-		if (loanAmount <= 0) {
-			console.error("❌ loanAmount is invalid (<= 0):", {
-				loanAmount,
-				data,
-				loanTermsData,
-			});
+		const acceptedAmount = selectedAmount || offer?.sanctioned_amount || 0;
+		if (acceptedAmount <= 0) {
 			Toast.show({
 				type: "error",
 				text1: t("invalidLoanAmount"),
@@ -665,61 +358,13 @@ export default function LoanApproved() {
 			return;
 		}
 
-		// Debug: Log all current values
-		console.log("🔍 Debug - Current form state:");
-		console.log("- selectedDueDate (date value):", selectedDueDate);
-		console.log("- loanAmount:", loanAmount);
+		const chosenTenureDays = selectedDueDateOption?.tenure_days ?? offer?.tenure_days;
 
-		const selectedOption = dueDateOptions.find(
-			(option) => option.value === selectedDueDate,
-		);
-		if (selectedOption) {
-			console.log(
-				"- selectedOption.label (display_date):",
-				selectedOption.label,
-			);
-			console.log("- selectedOption.value (date):", selectedOption.value);
-		}
-
-		console.log("- processingFee:", processingFee);
-		console.log("- gstAmount:", gstAmount);
-		console.log("- totalProcessingFee:", totalProcessingFee);
-		console.log("- Full loan terms data:", JSON.stringify(loanTermsData, null, 2));
-
-		// Get the dynamic interest rate for the selected date
-		const selectedDateInterestRate = loanTermsData?.due_date_options
-			? getInterestRateForDate(
-					selectedDueDate,
-					loanTermsData.due_date_options,
-				)
-			: {
-					monthlyRate: monthlyInterest,
-					description: `${monthlyInterest}% ${t("perMonth")}`,
-				};
-
-		console.log(
-			"🔍 Selected date interest rate for API:",
-			selectedDateInterestRate,
-		);
-
-		// Prepare API payload with proper validation
-		const apiData: SubmitLoanApplicationRequestType = {
+		generateSanctionMutation({
+			accepted_amount: acceptedAmount,
 			selected_due_date: selectedDueDate,
-			agreed_to_terms: true,
-			loan_terms: {
-				amount_approved: loanAmount,
-				processing_fee: dynamicProcessingFeeValues.processingFee,
-				gst_amount: dynamicProcessingFeeValues.gstAmount,
-				total_processing_fee: dynamicProcessingFeeValues.totalProcessingFee,
-				interest_rate: Number(selectedDateInterestRate.monthlyRate) || 12,
-				monthly_rate: Number(selectedDateInterestRate.monthlyRate) || 12,
-			},
-		};
-
-		console.log("📋 Final API payload:", JSON.stringify(apiData, null, 2));
-
-		// Submit to API
-		submitLoanApplicationMutation(apiData);
+			tenure_days: chosenTenureDays,
+		});
 	};
 
 	useEffect(() => {
@@ -738,10 +383,8 @@ export default function LoanApproved() {
 	// Handle rejection modal animation and auto-redirect
 	useEffect(() => {
 		if (rejectionModalVisible) {
-			// Reset countdown to 15 when modal opens
 			setRejectionCountdown(15);
 
-			// Start animation
 			const animationTimeout = setTimeout(() => {
 				Animated.timing(rejectionScaleAnim, {
 					toValue: 1,
@@ -750,12 +393,10 @@ export default function LoanApproved() {
 				}).start();
 			}, 100);
 
-			// Countdown timer - update every second
 			const countdownInterval = setInterval(() => {
 				setRejectionCountdown((prev) => {
 					if (prev <= 1) {
 						clearInterval(countdownInterval);
-						// Defer navigation to avoid React warning
 						setTimeout(() => {
 							setRejectionModalVisible(false);
 							router.replace("/(tabs)");
@@ -773,7 +414,7 @@ export default function LoanApproved() {
 		}
 	}, [rejectionModalVisible, rejectionScaleAnim, router]);
 
-	// Show loading state while fetching loan terms
+	// Show loading state while fetching loan offer
 	if (isLoading) {
 		return (
 			<SafeAreaView style={{ flex: 1, backgroundColor: white }}>
@@ -823,8 +464,7 @@ export default function LoanApproved() {
 						}}
 						onPress={() => {
 							setError(null);
-							// Retry the API call using React Query refetch
-							refetchLoanTerms();
+							refetchLoanOffer();
 						}}>
 						<TranslatedText
 							style={{ color: "white", fontWeight: "600" }}
@@ -835,6 +475,8 @@ export default function LoanApproved() {
 			</SafeAreaView>
 		);
 	}
+
+	const displayBannerAmount = selectedAmount || offer?.sanctioned_amount || 0;
 
 	return (
 		<>
@@ -898,7 +540,7 @@ export default function LoanApproved() {
 								translationKey="yourLoanIsApprovedFor"
 							/>
 							<Text style={styles.amountText}>
-								{formatAmount(loanAmount)}/-
+								{formatAmount(displayBannerAmount)}/-
 							</Text>
 						</View>
 					</View>
@@ -911,8 +553,30 @@ export default function LoanApproved() {
 								translationKey="amountApproved"
 							/>
 							<Text style={styles.detailValue}>
-								₹ {loanAmount.toLocaleString()}
+								₹ {(offer?.sanctioned_amount ?? 0).toLocaleString("en-IN")}
 							</Text>
+						</View>
+
+						<View style={styles.separator} />
+
+						{/* Amount to Accept Dropdown */}
+						<View style={styles.detailRow}>
+							<TranslatedText
+								style={styles.detailLabel}
+								translationKey="amountToAccept"
+							/>
+							<View style={styles.selectContainer}>
+								<Select
+									options={amountOptions}
+									selectedValue={selectedAmount || ""}
+									onSelect={(val) => setSelectedAmount(Number(val))}
+									placeholder={t("selectAmount")}
+									title={t("selectAmount")}
+									containerStyle={styles.selectWrapper}
+									buttonStyle={styles.selectButton}
+									buttonTextStyle={styles.selectButtonText}
+								/>
+							</View>
 						</View>
 
 						<View style={styles.separator} />
@@ -923,8 +587,8 @@ export default function LoanApproved() {
 								translationKey="processingFee"
 							/>
 							<Text style={styles.detailValue}>
-								₹ {dynamicProcessingFeeValues.processingFee.toLocaleString()} +{" "}
-								{gstAmount}% ( GST )
+								₹ {(offer?.processing_fee ?? 0).toLocaleString("en-IN")}
+								{gstLabel ? ` + ${gstLabel}` : ""}
 							</Text>
 						</View>
 
@@ -940,7 +604,7 @@ export default function LoanApproved() {
 								<Select
 									options={dueDateOptions}
 									selectedValue={selectedDueDate || ""}
-									onSelect={handleDueDateSelect}
+									onSelect={(val) => setSelectedDueDate(String(val))}
 									placeholder={t("select")}
 									title={t("selectDueDate")}
 									containerStyle={styles.selectWrapper}
@@ -978,8 +642,8 @@ export default function LoanApproved() {
 								translationKey="netDisbursalAmount"
 							/>
 							<Text style={styles.detailValue}>
-								{calculatedNetDisbursalAmount > 0
-									? formatAmount(calculatedNetDisbursalAmount)
+								{netDisbursalAmount > 0
+									? formatAmount(netDisbursalAmount)
 									: "-"}
 							</Text>
 						</View>
@@ -992,8 +656,8 @@ export default function LoanApproved() {
 								translationKey="amountToRepay"
 							/>
 							<Text style={styles.detailValue}>
-								{calculatedAmountToRepay > 0
-									? formatAmount(calculatedAmountToRepay)
+								{amountToRepay > 0
+									? formatAmount(amountToRepay)
 									: "-"}
 							</Text>
 						</View>
@@ -1458,7 +1122,7 @@ const styles = StyleSheet.create({
 		lineHeight: font(2.2),
 	},
 	tipsCard: {
-		backgroundColor: "#ECEBFF", // Light purple bg
+		backgroundColor: "#ECEBFF",
 		borderRadius: width(4),
 		width: "100%",
 		overflow: "hidden",

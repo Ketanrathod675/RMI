@@ -25,6 +25,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
+	Alert,
 	BackHandler,
 	Keyboard,
 	Platform,
@@ -39,6 +40,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 import { useDispatch } from "react-redux";
+import { getApiErrorDetail, isSessionConflictError } from "@/utils/api/core/sessionErrors";
+import { timeAgo } from "@/utils/timeAgo";
 
 const ErrorVerifyingOtp = "Error verifying OTP";
 const LoginAgain = "Please Login again";
@@ -106,6 +109,8 @@ export default function SigninSignupOtp() {
 			return () => subscription.remove();
 		}, [])
 	);
+
+	const retryVerifyOtpRef = useRef<((vars: any) => void) | null>(null);
 
 	const { mutate: verifyOtpMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: verifyOtp,
@@ -266,7 +271,43 @@ export default function SigninSignupOtp() {
 				text2: LoginAgain,
 			});
 		},
-		onError: (err, variables, ctx) => {
+		onError: (err: any, variables, ctx) => {
+			if (isSessionConflictError(err)) {
+				const detail = getApiErrorDetail(err);
+				const deviceName =
+					detail?.device_name ||
+					detail?.existing_device_name ||
+					detail?.deviceName ||
+					"";
+
+				const when = timeAgo(detail?.logged_in_at);
+				const where = deviceName ? `"${deviceName}"` : "another device";
+				const message =
+					`Your account is currently logged in on ${where}${when ? ` (since ${when})` : ""}. ` +
+					`Only one device can be active at a time.\n\nLog out from that device and continue here?`;
+
+				Alert.alert(
+					"Already logged in on another device",
+					message,
+					[
+						{
+							text: "Cancel",
+							style: "cancel",
+						},
+						{
+							text: "Log out & continue",
+							onPress: () => {
+								retryVerifyOtpRef.current?.({
+									...variables,
+									force_logout_other_device: true,
+								});
+							},
+						},
+					]
+				);
+				return;
+			}
+
 			if (__DEV__) {
 				console.log("Verify OTP API Error:", err);
 			}
@@ -290,6 +331,8 @@ export default function SigninSignupOtp() {
 			});
 		},
 	});
+
+	retryVerifyOtpRef.current = verifyOtpMutation;
 
 	const autoVerify = async (otpCode: string) => {
 		const validate = validateMobileAndCountryCode(countryCode!, phoneNumber!);

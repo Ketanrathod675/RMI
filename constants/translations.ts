@@ -312,6 +312,7 @@ export const translations = {
 		progress: "Progress",
 		loanProcessing: "Loan Processing",
 		redirectingToDashboardIn: "Redirecting to dashboard in {{seconds}} seconds...",
+		couldntRefreshRetrying: "Couldn't refresh. Retrying...",
 
 		// Navigation
 		home: "Home",
@@ -1708,6 +1709,7 @@ export const translations = {
 		progress: "प्रगति",
 		loanProcessing: "ऋण प्रसंस्करण",
 		redirectingToDashboardIn: "{{seconds}} सेकंड में डैशबोर्ड पर निर्देशित किया जा रहा है...",
+		couldntRefreshRetrying: "रिफ्रेश नहीं हो सका। पुनः प्रयास किया जा रहा है...",
 
 		// Navigation
 		home: "होम",

@@ -209,8 +209,15 @@ export const uploadSelfie = async (
 // ---------------------------------------------------------------------------
 
 export type AddressDocumentTypeOption = {
-	label: string;
-	value: string;
+	id?: string;
+	name?: string;
+	label?: string;
+	value?: string;
+	code?: string;
+	type?: string;
+	title?: string;
+	description?: string;
+	[key: string]: any;
 };
 
 export type AddressStatusData = {
