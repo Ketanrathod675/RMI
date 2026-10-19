@@ -133,6 +133,7 @@ function RootLayoutNav() {
 					<Stack.Screen name="ckyc-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="aadhaar-kyc" options={{ headerShown: false }} />
 					<Stack.Screen name="auto-debit-setup" options={{ headerShown: false }} />
+					<Stack.Screen name="emandate-status" options={{ headerShown: false }} />
 					<Stack.Screen name="bank-details-settings" options={{ headerShown: false }} />
 					<Stack.Screen name="delete-account" options={{ headerShown: false }} />
 					<Stack.Screen name="help-support" options={{ headerShown: false }} />
@@ -175,7 +176,7 @@ function RootLayoutNav() {
 					<Stack.Screen name="assessment-fee" options={{ headerShown: false }} />
 					<Stack.Screen name="enter-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="language" options={{ headerShown: false }} />
-					<Stack.Screen name="loan-agreement" options={{ headerShown: false }} />
+					<Stack.Screen name="pdf-viewer" options={{ headerShown: false }} />
 					<Stack.Screen name="loan-approved" options={{ headerShown: false }} />
 					<Stack.Screen name="loan-enter-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="mpin-login" options={{ headerShown: false }} />

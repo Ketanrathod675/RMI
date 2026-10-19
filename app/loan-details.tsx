@@ -31,12 +31,6 @@ import Toast from "react-native-toast-message";
 
 const { height: screenHeight } = Dimensions.get("window");
 
-// API function to download loan agreement
-const downloadLoanAgreement = async (loanId: string) => {
-	const response = await axios.get(URLS.loan_agreement.download(loanId));
-	return response.data;
-};
-
 // API function to download insurance policy
 const downloadInsurancePolicy = async () => {
 	const response = await axios.post("insurance/download-my-policy", {});
@@ -240,17 +234,32 @@ export default function LoanDetails() {
 
 			let downloadUrl: string | null = null;
 
-			if (item.name === "Loan Agreement" || item.id === "4") {
-				const response = await downloadLoanAgreement(loanId || "default");
-				downloadUrl = response?.download_url || response?.url;
+			if (
+				item.id === "3" ||
+				item.id === "4" ||
+				item.id === "6" ||
+				item.name === "Key Facts Statement" ||
+				item.name === "Loan Agreement" ||
+				item.name === "Sanction Letter"
+			) {
+				// KFS / agreement / sanction letter is one signed PDF served by the backend
+				// (authenticated, so it is opened in the in-app viewer, not via a bare URL).
+				router.push({
+					pathname: "/pdf-viewer",
+					params: {
+						path: URLS.kfs.file,
+						title: item.name,
+						file: "loan-document.pdf",
+					},
+				});
+				return;
 			} else if (item.name === "NDC" || item.id === "5") {
 				const response = await downloadNOC(loanId || "default");
 				downloadUrl = response?.download_url || response?.url;
 			} else if (item.id === "2" || item.name === "Privacy Policy") {
 				downloadUrl = "https://rapidmoney.in/privacy-policy";
 			} else {
-				// Mock / fallback document placeholder
-				downloadUrl = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
+				throw new Error(`${item.name} is not available yet`);
 			}
 
 			if (downloadUrl) {

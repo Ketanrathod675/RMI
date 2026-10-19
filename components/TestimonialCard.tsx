@@ -20,7 +20,7 @@ const TestimonialCard: React.FC<TestimonialCardProps> = ({
 	return (
 		<View style={styles.cardContainer}>
 			<View style={styles.ratingRow}>
-				<StarRating rating={rating} size={18} filledColor="#F59E0B" emptyColor="#E5E7EB" outline={true} />
+				<StarRating rating={rating} size={18} filledColor="#F59E0B" emptyColor="#E5E7EB" outline={false} />
 			</View>
 
 			<Text style={styles.reviewText} numberOfLines={4} ellipsizeMode="tail">

@@ -20,6 +20,7 @@ export * from "./types/user.types";
 export * from "./types/lender.types";
 export * from "./types/payment.types";
 export * from "./types/loan.types";
+export * from "./types/signing.types";
 
 // Domain Services
 export * from "./services/auth.service";
@@ -27,6 +28,9 @@ export * from "./services/user.service";
 export * from "./services/lender.service";
 export * from "./services/payment.service";
 export * from "./services/loans.service";
+export * from "./services/signing.service";
+export * from "./services/autocollect.service";
+export * from "./services/pdfDownload";
 export * from "./services/notifications.service";
 export * from "./services/faq.service";
 export * from "./services/video.service";

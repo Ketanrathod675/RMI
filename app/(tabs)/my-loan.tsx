@@ -7,7 +7,7 @@ import Logger from "@/utils/logger";
 import { axios, getUserDashboardData, URLS } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { router, useFocusEffect, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useRef, useState } from "react";
 import {
@@ -59,19 +59,6 @@ const getLoanDetails = async (loanNumber: string) => {
 	Logger.debug("My loan response", response.data);
 	console.log("============================");
 	return response.data;
-};
-
-// API function to download loan agreement
-const downloadLoanAgreement = async (loanId: string) => {
-	try {
-		console.log("📄 Calling loan agreement download API for:", loanId);
-		const response = await axios.get(URLS.loan_agreement.download(loanId));
-		Logger.debug("Loan agreement response", response.data);
-		return response.data;
-	} catch (error) {
-		console.error("❌ Loan Agreement Download Error:", error);
-		throw error;
-	}
 };
 
 // API function to download insurance policy
@@ -129,45 +116,15 @@ const DocumentRow = ({
 				});
 				return;
 			}
-			try {
-				setIsDownloading(true);
-				console.log("📄 Starting loan agreement download for loanId:", loanId);
-
-				const response = await downloadLoanAgreement(loanId);
-
-				if (response.download_url) {
-					console.log("📄 Opening download URL:", response.download_url);
-
-					// Open the URL directly - mobile browsers will handle PDF downloads
-					const canOpen = await Linking.canOpenURL(response.download_url);
-
-					if (canOpen) {
-						await Linking.openURL(response.download_url);
-
-						Toast.show({
-							type: "success",
-							text1: "Download Started",
-							text2: "The PDF will download to your device",
-						});
-					} else {
-						throw new Error("Cannot open download URL");
-					}
-				} else {
-					throw new Error("No download URL received");
-				}
-			} catch (error: any) {
-				console.error("❌ Download failed:", error);
-				Toast.show({
-					type: "error",
-					text1: "Download Failed",
-					text2:
-						error?.response?.data?.message ||
-						error?.message ||
-						"Unable to download loan agreement",
-				});
-			} finally {
-				setIsDownloading(false);
-			}
+			// Signed KFS / agreement PDF is authenticated; open it in the in-app viewer.
+			router.push({
+				pathname: "/pdf-viewer",
+				params: {
+					path: URLS.kfs.file,
+					title: item.name,
+					file: "loan-agreement.pdf",
+				},
+			});
 		}
 		// Handle NOC Download
 		else if (item.name === t("nocDocument") || item.id === "6") {

@@ -14,6 +14,7 @@ import {
 } from "@/store/slices/auth";
 import type { SigninState } from "@/store/slices/signin";
 import { decode, encode, getUserIdFromToken } from "@/utils/encode_decode";
+import { resetLoanSearchSession } from "@/utils/loanSearchSession";
 import SecureStorage from "@/utils/secure-storage";
 import {
 	AuthKeys,
@@ -243,6 +244,7 @@ export const useAuth = (shouldAutoLoad = false) => {
 		} catch {
 			// Ignore error capturing token for logout
 		}
+		resetLoanSearchSession();
 		void Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
 		dispatch(clearAuth());
 	}, [accessToken, dispatch]);

@@ -13,7 +13,6 @@ import { Images } from "@/constants/images";
 import { useAssessmentFeePayment } from "@/hooks/useAssessmentFeePayment";
 import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
-import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	isEmailFixable,
@@ -23,7 +22,6 @@ import {
 } from "@/hooks/useAssessmentChecks";
 import {
 	allocateLenderForUser,
-	axios,
 	getHandshakeStatus,
 	getUserProfile,
 	retryAssessmentChecks,
@@ -316,105 +314,9 @@ export default function AssessmentFeeScreen() {
 		}, [navigation])
 	);
 
-	// Fetch eligible lenders and assessment fee
-	const {
-		data: lenderOffersData,
-		isLoading: isLoadingLenderOffers,
-		error: lenderOffersError,
-	} = useNetworkAwareQuery<LenderOffersResponseType>({
-		queryKey: ["lender-offers"],
-		queryFn: async () => {
-			try {
-				const response = await axios.get<LenderOffersResponseType>("kyc/lender-offers");
-				return response.data;
-			} catch (err: any) {
-				// If backend route is not yet implemented (e.g. 404 on in-house FastAPI) or network fails, use default offers
-				if (err?.response?.status === 404 || !err?.response) {
-					console.warn(
-						"⚠️ [LenderOffers] kyc/lender-offers returned 404 or network unavailable; using default lender offers."
-					);
-					return DEFAULT_LENDER_OFFERS;
-				}
-				throw err;
-			}
-		},
-		retry: 1,
-		staleTime: 5 * 1000,
-	});
-
-	// Handle lender offer errors / status failures
-	useEffect(() => {
-		if (lenderOffersData) {
-			const hasFailedStatus =
-				lenderOffersData.success === false ||
-				(lenderOffersData as any).status === false ||
-				(lenderOffersData as any).status === "failed" ||
-				(lenderOffersData as any).status === "reject";
-
-			if (hasFailedStatus) {
-				if (params.fromReapply === "true") {
-					router.replace("/no-lenders-available");
-					return;
-				}
-
-				const apiMessage =
-					(lenderOffersData as any).message || (lenderOffersData as any).msg || "";
-				let displayMessage = apiMessage;
-
-				if (!apiMessage || apiMessage.toLowerCase().includes("no eligible lender")) {
-					displayMessage =
-						t("noEligibleLendersFound") !== "noEligibleLendersFound"
-							? t("noEligibleLendersFound")
-							: "No eligible lenders found";
-				}
-
-				Toast.show({
-					type: "error",
-					text1: displayMessage,
-					visibilityTime: 4000,
-				});
-
-				setTimeout(() => {
-					router.replace("/(tabs)");
-				}, 2000);
-			}
-		}
-	}, [lenderOffersData, params.fromReapply, router, t]);
-
-	useEffect(() => {
-		if (lenderOffersError) {
-			console.warn("Lender offers fetch error:", lenderOffersError);
-
-			if (params.fromReapply === "true") {
-				router.replace("/no-lenders-available");
-				return;
-			}
-
-			let displayMessage =
-				t("failedToFetchLenderOffers") !== "failedToFetchLenderOffers"
-					? t("failedToFetchLenderOffers")
-					: "Failed to fetch lender offers";
-
-			const apiErrorData = (lenderOffersError as any)?.response?.data;
-			if (apiErrorData) {
-				const apiMessage =
-					apiErrorData.message || apiErrorData.msg || apiErrorData.detail || "";
-				if (apiMessage && typeof apiMessage === "string") {
-					displayMessage = apiMessage;
-				}
-			}
-
-			Toast.show({
-				type: "error",
-				text1: displayMessage,
-				visibilityTime: 4000,
-			});
-
-			setTimeout(() => {
-				router.replace("/(tabs)");
-			}, 2000);
-		}
-	}, [lenderOffersError, params.fromReapply, router, t]);
+	// Partner lenders & fallback fees (in-house backend handles actual fee & allocation via workflow and /payments/initiate-assessment-fee)
+	const lenderOffersData = DEFAULT_LENDER_OFFERS;
+	const isLoadingLenderOffers = false;
 
 	// Fee calculations
 	const initialFeeAmount =
@@ -641,6 +543,7 @@ export default function AssessmentFeeScreen() {
 		dismissPaymentOutcome,
 		simulateDeepLinkReturn,
 		clearTimer,
+		clearStoredPayment,
 	} = useAssessmentFeePayment({
 		processingFeeAmount,
 		leadId: (params.lead_id as string) || undefined,
@@ -908,6 +811,7 @@ export default function AssessmentFeeScreen() {
 				onConfirmExit={async () => {
 					setIsExitModalVisible(false);
 					await clearTimer();
+					await clearStoredPayment();
 					router.replace("/(tabs)");
 				}}
 			/>

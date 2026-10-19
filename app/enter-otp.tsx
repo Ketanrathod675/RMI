@@ -2,20 +2,21 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { Images } from "@/constants/images";
-import { useAuth } from "@/hooks/useAuth";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import RNOtpVerify from "@/utils/otpVerify";
 import {
-	errorHandler,
-	initiateDigitalSigning,
-	verifyOtpAndSign,
-	type VerifyOtpAndSignRequestType,
+	signKfs,
+	resendKfsOtp,
+	type KfsSignRequest,
 } from "@/utils/api";
+import { getApiErrorInfo, errorText } from "@/utils/api/errors";
+import Logger from "@/utils/logger";
+import { useQueryClient } from "@tanstack/react-query";
 import { height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useNavigation, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -29,7 +30,7 @@ import {
 	Text,
 	TextInput,
 	TouchableOpacity,
-	View
+	View,
 } from "react-native";
 import Toast from "react-native-toast-message";
 
@@ -40,7 +41,18 @@ export default function EnterOTP() {
 	const router = useRouter();
 	const navigation = useNavigation();
 	const { t } = useTranslation();
-	const { logout, handleMpinSignIn } = useAuth();
+	const queryClient = useQueryClient();
+
+	const params = useLocalSearchParams<{
+		sign_in_key?: string;
+		expires_in_seconds?: string;
+	}>();
+
+	// Keep sign_in_key in React state; replaced on resend
+	const [signInKey, setSignInKey] = useState<string | undefined>(
+		params.sign_in_key ? String(params.sign_in_key) : undefined,
+	);
+	const [isLocked, setIsLocked] = useState(false);
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [timer, setTimer] = useState(53);
 	const [modalVisible, setModalVisible] = useState(false);
@@ -49,25 +61,24 @@ export default function EnterOTP() {
 
 	// Verify OTP and Sign Mutation
 	const { mutate: verifyOtpAndSignMutation, isPending: isVerifying } = useNetworkAwareMutation({
-		mutationFn: verifyOtpAndSign,
+		mutationFn: (payload: KfsSignRequest) => signKfs(payload),
 		onSuccess: (data) => {
-			console.log("Verify OTP and Sign API Response:", data);
-			console.log("Digital Signing Success:", JSON.stringify(data, null, 2));
+			Logger.debug("KFS signing response received", {
+				signed: data?.signed,
+				status: data?.status,
+			});
 
-			if (data?.status === "signed") {
-				Toast.show({
-					type: "success",
-					text1: t("documentsSignedSuccessfully"),
-					text2: data?.message || t("allDocumentsDigitallySigned"),
-				});
+			if (data?.signed === true) {
+				Logger.debug("KFS signed successfully");
+				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+				setIsLocked(false);
 
 				// Show success modal
 				scaleAnim.setValue(0);
 				setModalVisible(true);
 
 				setTimeout(() => {
-					console.log("Navigating to auto-debit-setup");
-					router.push("/auto-debit-setup");
+					router.replace("/auto-debit-setup");
 
 					setTimeout(() => {
 						setModalVisible(false);
@@ -76,96 +87,109 @@ export default function EnterOTP() {
 			} else {
 				Toast.show({
 					type: "error",
-					text1: t("otpVerificationFailed"),
-					text2: data?.message || t("invalidOTPTryAgain"),
+					text1: t("otpVerificationFailed") || "OTP verification failed",
+					text2: data?.message || t("invalidOTPTryAgain") || "Invalid OTP, please try again",
 				});
 			}
 		},
-		onError: (err: any, variables, ctx) => {
-			console.log("❌ Verify OTP and Sign API Error:", err);
-			console.log("📤 Request payload that failed:", JSON.stringify(variables, null, 2));
+		onError: (err: any) => {
+			const info = getApiErrorInfo(err);
+			const text = errorText(info);
+			Logger.debug("KFS signing verification error", { status: info.status });
 
-			const { error, errorType } = errorHandler(err, variables, ctx);
+			if (info.status === 400) {
+				if (text.includes("already signed")) {
+					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+					router.replace("/auto-debit-setup");
+					return;
+				}
+				setOtp(["", "", "", ""]);
+				inputRefs.current[0]?.focus();
+				Toast.show({
+					type: "error",
+					text1: t("otpVerificationFailed") || "OTP verification failed",
+					text2: info.detail || info.message || t("invalidOTPTryAgain") || "Invalid OTP, please try again",
+				});
+				return;
+			}
 
-			console.log("🔥 Processed Error:", error);
-			console.log("🔥 Error Type:", errorType);
+			if (info.status === 429) {
+				setIsLocked(true);
+				Toast.show({
+					type: "error",
+					text1: t("alert") || "Notice",
+					text2: info.detail || info.message || "Too many attempts. Please wait or tap Resend.",
+				});
+				return;
+			}
 
-			// Show detailed error message
-			let errorMessage = t("pleaseLoginAgain");
-			if (err?.response?.data?.message) {
-				errorMessage = err.response.data.message;
-			} else if (err?.response?.data?.detail) {
-				errorMessage =
-					typeof err.response.data.detail === "string"
-						? err.response.data.detail
-						: JSON.stringify(err.response.data.detail);
-			} else if (error?.message) {
-				errorMessage = error.message;
+			if (info.status === 409) {
+				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+				router.replace("/(tabs)");
+				return;
 			}
 
 			Toast.show({
 				type: "error",
-				text1: t("otpVerificationFailed"),
-				text2: errorMessage,
+				text1: t("otpVerificationFailed") || "OTP verification failed",
+				text2: info.detail || info.message || t("pleaseTryAgain") || "Please try again",
 			});
 		},
 	});
 
 	// Resend OTP Mutation
 	const { mutate: resendOtpMutation, isPending: isResending } = useNetworkAwareMutation({
-		mutationFn: initiateDigitalSigning,
-onSuccess: (data) => {
-	console.log("Resend OTP API Response:", data);
+		mutationFn: () => resendKfsOtp(),
+		onSuccess: (data) => {
+			Logger.debug("KFS OTP resent", { otp_sent: data?.otp_sent });
 
-	if (data?.message) {
-		Toast.show({
-			type: "success",
-			text1: t("otpResentSuccessfully"),
-			text2: data.message,
-		});
+			if (data?.sign_in_key) {
+				setSignInKey(data.sign_in_key);
+			}
+			setIsLocked(false);
+			setOtp(["", "", "", ""]);
+			inputRefs.current[0]?.focus();
+			setTimer(53);
+			startOtpListener();
 
-		setTimer(53);               // reset timer
-		setOtp(["", "", "", ""]);   // clear inputs
-		inputRefs.current[0]?.focus();
-		startOtpListener();
-	} else {
-		Toast.show({
-			type: "error",
-			text1: t("failedToResendOTP"),
-			text2: t("pleaseLoginAgain"),
-		});
-	}
-},
+			if (__DEV__ && data?.test_otp) {
+				Toast.show({
+					type: "info",
+					text1: `Test OTP: ${data.test_otp}`,
+					visibilityTime: 10000,
+				});
+			}
 
-		onError: (err: any, variables, ctx) => {
-			console.log("❌ Resend OTP API Error:", err);
-
-			const { error } = errorHandler(err, variables, ctx);
+			Toast.show({
+				type: "success",
+				text1: t("otpResentSuccessfully") || "OTP Resent Successfully",
+				text2: data?.message || t("checkRegisteredMobile") || "Please check your registered mobile number",
+			});
+		},
+		onError: (err: any) => {
+			const info = getApiErrorInfo(err);
+			Logger.debug("KFS OTP resend error", { status: info.status });
 
 			Toast.show({
 				type: "error",
-				text1: t("failedToResendOTP"),
-				text2: error?.message ?? t("pleaseLoginAgain"),
+				text1: t("failedToResendOTP") || "Failed to resend OTP",
+				text2: info.detail || info.message || t("pleaseTryAgain") || "Please try again",
 			});
 		},
 	});
 
-	// FIX: Remove exit alert - allow direct back navigation to sanction letter
+	// Back navigation handler
 	useEffect(() => {
-		// Prevent any navigation alert by intercepting beforeRemove event
 		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
-			// If the action would show an alert, prevent it
-			if (e.data.action.type === 'GO_BACK') {
-				e.preventDefault(); // Prevent the alert
-				// Allow the navigation to proceed
+			if (e.data.action.type === "GO_BACK") {
+				e.preventDefault();
 				navigation.dispatch(e.data.action);
 			}
 		});
 
-		// Handle hardware back button - go back directly to sanction letter without alert
 		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
 			router.back();
-			return true; // Prevent default behavior
+			return true;
 		});
 
 		return () => {
@@ -174,76 +198,35 @@ onSuccess: (data) => {
 		};
 	}, [navigation, router]);
 
-	// OLD CODE - Back handler with exit confirmation (COMMENTED OUT)
-	// useEffect(() => {
-	// 	const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
-	// 		Alert.alert(
-	// 			t("exitApp"),
-	// 			t("areYouSureExitApp"),
-	// 			[
-	// 				{
-	// 					text: t("cancel"),
-	// 					style: "cancel",
-	// 				},
-	// 				{
-	// 					text: t("exit"),
-	// 					onPress: async () => {
-	// 						// Clear all temporary/session data
-	// 						await removeMultipleStorageItems(TempKeys);
-	// 						
-	// 						// Logout user and clear auth session
-	// 						handleMpinSignIn(false); // Clear mpin session
-	// 						logout(); // Clear all auth data
-	// 						
-	// 						// Exit the app
-	// 						BackHandler.exitApp();
-	// 					},
-	// 				},
-	// 			],
-	// 			{ cancelable: false }
-	// 		);
-	// 		return true; // Prevent default back behavior
-	// 	});
-
-	// 	return () => {
-	// 		backHandler.remove();
-	// 	};
-	// }, [t, logout, handleMpinSignIn]);
-
 	const autoVerify = (otpCode: string) => {
-		console.log("🚀 [Auto-OTP] Auto-verifying with OTP code:", otpCode);
-		const apiData: VerifyOtpAndSignRequestType = {
+		Logger.debug("Auto-verifying OTP from SMS");
+		verifyOtpAndSignMutation({
 			otp: otpCode,
-		};
-		verifyOtpAndSignMutation(apiData);
+			sign_in_key: signInKey,
+		});
 	};
 
 	const startOtpListener = () => {
 		if (Platform.OS !== "android") return;
 
-		console.log("📱 [Auto-OTP] Starting/Restarting OTP listener...");
 		RNOtpVerify.getOtp()
-			.then((p) => {
-				console.log("📱 [Auto-OTP] Listener registered:", p);
+			.then(() => {
 				RNOtpVerify.addListener((message) => {
-					console.log("📥 [Auto-OTP] Incoming SMS received:", message);
 					try {
 						const parsedOtp = /(\d{4})/.exec(message)?.[1];
 						if (parsedOtp && parsedOtp.length === 4) {
-							console.log("✅ [Auto-OTP] OTP parsed successfully:", parsedOtp);
+							Logger.debug("Valid 4-digit OTP parsed from SMS");
 							setOtp([parsedOtp[0], parsedOtp[1], parsedOtp[2], parsedOtp[3]]);
 							RNOtpVerify.removeListener();
 							autoVerify(parsedOtp);
-						} else {
-							console.log("⚠️ [Auto-OTP] No valid 4-digit OTP parsed");
 						}
-					} catch (err) {
-						console.error("❌ [Auto-OTP] Error handling SMS parsing:", err);
+					} catch (err: any) {
+						Logger.debug("Error handling SMS parsing", { message: err?.message });
 					}
 				});
 			})
-			.catch((err) => {
-				console.error("❌ [Auto-OTP] Failed to start SMS retriever:", err);
+			.catch((err: any) => {
+				Logger.debug("Failed to start SMS retriever", { message: err?.message });
 			});
 	};
 
@@ -258,7 +241,13 @@ onSuccess: (data) => {
 
 	useEffect(() => {
 		const interval = setInterval(() => {
-			setTimer((prev) => (prev > 0 ? prev - 1 : 0));
+			setTimer((prev) => {
+				if (prev <= 1) {
+					setIsLocked(false);
+					return 0;
+				}
+				return prev - 1;
+			});
 		}, 1000);
 
 		return () => clearInterval(interval);
@@ -278,18 +267,15 @@ onSuccess: (data) => {
 	}, [modalVisible, scaleAnim]);
 
 	const handleOtpChange = (value: string, index: number) => {
-		// Only allow numeric characters
 		const numericValue = value.replace(/[^0-9]/g, "");
 
 		const newOtp = [...otp];
 		newOtp[index] = numericValue;
 		setOtp(newOtp);
 
-		// Move to next input if value is entered
 		if (numericValue && index < 3) {
 			inputRefs.current[index + 1]?.focus();
 		} else if (numericValue && index === 3) {
-			// Dismiss keyboard after last digit is entered
 			Keyboard.dismiss();
 		}
 	};
@@ -297,17 +283,14 @@ onSuccess: (data) => {
 	const handleKeyPress = (e: any, index: number) => {
 		if (e.nativeEvent.key === "Backspace") {
 			if (otp[index] !== "") {
-				// Current field has content, clear it
 				const newOtp = [...otp];
 				newOtp[index] = "";
 				setOtp(newOtp);
 			} else if (index > 0) {
-				// Current field is empty, clear previous field and move focus
 				const newOtp = [...otp];
 				newOtp[index - 1] = "";
 				setOtp(newOtp);
 
-				// Use setTimeout to ensure state update happens before focus change
 				setTimeout(() => {
 					inputRefs.current[index - 1]?.focus();
 				}, 0);
@@ -317,42 +300,19 @@ onSuccess: (data) => {
 
 	const handleContinue = () => {
 		const otpString = otp.join("");
-		console.log("🔍 Verifying OTP and signing documents:", otpString);
-
-		// Validate OTP length
-		if (otpString.length !== 4) {
-			Toast.show({
-				type: "error",
-				text1: t("invalidOTP"),
-				text2: t("pleaseEnter4DigitOTP"),
-			});
+		if (otpString.length !== 4 || isVerifying || isLocked) {
 			return;
 		}
 
-		// Prepare API payload
-		const apiData: VerifyOtpAndSignRequestType = {
+		verifyOtpAndSignMutation({
 			otp: otpString,
-		};
-
-		console.log("📋 Verifying OTP and signing with payload:", JSON.stringify(apiData, null, 2));
-		verifyOtpAndSignMutation(apiData);
+			sign_in_key: signInKey,
+		});
 	};
 
-	const handleResend = async () => {
+	const handleResend = () => {
 		if (timer > 0 || isResending) return;
-
-		console.log("🔄 Resending OTP for digital signing...");
-		let appHash = "";
-		try {
-			const hashes = await RNOtpVerify.getHash();
-			if (hashes && hashes.length > 0) {
-				appHash = hashes[0];
-				console.log("🔑 [EnterOtp] Retrieved App Hash for OTP Auto-Fetch:", appHash);
-			}
-		} catch (hashError) {
-			console.error("❌ [EnterOtp] Failed to get app hash:", hashError);
-		}
-		resendOtpMutation(appHash || undefined);
+		resendOtpMutation();
 	};
 
 	const formatTime = (seconds: number) => {
@@ -361,21 +321,23 @@ onSuccess: (data) => {
 		return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}s`;
 	};
 
+	const isOtpComplete = otp.every((digit) => Boolean(digit && digit.length === 1));
+	const isContinueDisabled = !isOtpComplete || isVerifying || isLocked;
+
 	return (
 		<View style={styles.container}>
 			{/* Header */}
-		<View style={styles.header}>
-			<TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-				<Ionicons name="arrow-back" size={24} color={dark} />
-			</TouchableOpacity>
-		</View>
+			<View style={styles.header}>
+				<TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+					<Ionicons name="arrow-back" size={24} color={dark} />
+				</TouchableOpacity>
+			</View>
 
-<ScrollView
-  contentContainerStyle={{ paddingBottom: height(10) }} 
-  keyboardShouldPersistTaps="handled"
-  showsVerticalScrollIndicator={false}
->			
-	{/* Phone OTP Image */}
+			<ScrollView
+				contentContainerStyle={{ paddingBottom: height(10) }}
+				keyboardShouldPersistTaps="handled"
+				showsVerticalScrollIndicator={false}>
+				{/* Phone OTP Image */}
 				<View style={styles.imageContainer}>
 					<Image source={PHONE_OTP} style={styles.phoneImage} contentFit="contain" />
 				</View>
@@ -443,18 +405,17 @@ onSuccess: (data) => {
 
 					{/* Warning Text */}
 					<TranslatedText style={styles.warningText} translationKey="warningIgnoreCode" />
+
 					{/* Continue Button */}
 					<View style={styles.bottomContainer}>
 						<TouchableOpacity
 							style={[
 								styles.continueButton,
-								otp.every((digit) => digit) &&
-									!isVerifying &&
-									styles.continueButtonActive,
-								isVerifying && styles.continueButtonDisabled,
+								!isContinueDisabled && styles.continueButtonActive,
+								isContinueDisabled && styles.continueButtonDisabled,
 							]}
 							onPress={handleContinue}
-							disabled={!otp.every((digit) => digit) || isVerifying}>
+							disabled={isContinueDisabled}>
 							{isVerifying ? (
 								<ActivityIndicator size="small" color="#333" />
 							) : (
@@ -522,7 +483,6 @@ const styles = StyleSheet.create({
 	phoneImage: {
 		width: width(60),
 		height: height(25),
-
 		bottom: -height(1),
 	},
 	content: {
@@ -604,7 +564,7 @@ const styles = StyleSheet.create({
 		opacity: 1,
 	},
 	continueButtonDisabled: {
-		opacity: 0.6,
+		opacity: 0.5,
 	},
 	continueButtonText: {
 		fontSize: 18,

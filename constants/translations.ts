@@ -1,5 +1,14 @@
 export const translations = {
 	english: {
+		takingLongerThanUsual: "Taking longer than usual. Please keep the app open.",
+		couldNotCompleteSearch: "We couldn't complete the search. Please check your connection and try again.",
+		// Consent document
+		consentDocumentTitle: "Customer Consent",
+		consentDocumentSubtitle: "Please read and sign the consent document to continue your loan application.",
+		consentViewDocument: "View consent document",
+		consentAgreeText: "I have read and agree to the consent document",
+		consentAgreeAndSign: "Agree & Sign",
+		consentSignFailed: "Could not sign the consent document",
 		// 5 Sec Delay
 		weAreReviewing: "We are",
 		reviewingWord: "reviewing",
@@ -1095,6 +1104,8 @@ export const translations = {
 		pleaseCompleteYourLoanApplicationBankDetails:
 			"Please complete your loan application to see your bank account details",
 		accountHolderName: "Account Holder's Name",
+		accountHolderNameRequired: "Account holder name is required",
+		pleaseCompleteProfileFirst: "Please complete your profile details first",
 		verificationStatus: "Verification Status",
 		verified: "Verified",
 
@@ -1396,6 +1407,15 @@ export const translations = {
 	},
 
 	hindi: {
+		takingLongerThanUsual: "सामान्य से ज़्यादा समय लग रहा है। कृपया ऐप खुला रखें।",
+		couldNotCompleteSearch: "हम खोज पूरी नहीं कर सके। कृपया अपना कनेक्शन जाँचें और दोबारा प्रयास करें।",
+		// Consent document
+		consentDocumentTitle: "ग्राहक सहमति",
+		consentDocumentSubtitle: "अपना लोन आवेदन जारी रखने के लिए कृपया सहमति दस्तावेज़ पढ़ें और हस्ताक्षर करें।",
+		consentViewDocument: "सहमति दस्तावेज़ देखें",
+		consentAgreeText: "मैंने सहमति दस्तावेज़ पढ़ लिया है और मैं सहमत हूँ",
+		consentAgreeAndSign: "सहमत हूँ और हस्ताक्षर करें",
+		consentSignFailed: "सहमति दस्तावेज़ पर हस्ताक्षर नहीं हो सके",
 		// 5 Sec Delay
 		weAreReviewing: "हम आपका",
 		reviewingWord: " आवेदन देख रहे हैं",
@@ -2470,6 +2490,8 @@ export const translations = {
 		pleaseCompleteYourLoanApplicationBankDetails:
 			"अपने बैंक खाते का विवरण देखने के लिए कृपया अपना लोन आवेदन पूरा करें",
 		accountHolderName: "खाता धारक का नाम",
+		accountHolderNameRequired: "खाता धारक का नाम आवश्यक है",
+		pleaseCompleteProfileFirst: "कृपया पहले अपना प्रोफ़ाइल विवरण पूरा करें",
 		verificationStatus: "सत्यापन स्थिति",
 		verified: "सत्यापित",
 

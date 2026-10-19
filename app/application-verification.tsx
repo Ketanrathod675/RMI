@@ -94,7 +94,8 @@ export default function ApplicationVerification() {
 
 		if (data.status === "approved" || data.can_proceed) {
 			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-			router.replace("/loan-approved");
+			// Always show the real "searching for best loan" loader before the offer screen.
+			router.replace("/search-loan");
 			return;
 		}
 

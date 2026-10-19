@@ -113,6 +113,7 @@ export const useAssessmentFeePayment = ({
 	const gatewayOpenRef = useRef(false);
 	const windowSecRef = useRef(0);
 	const mountedRef = useRef(true);
+	const retriedInProgressRef = useRef(false);
 	const onSuccessRef = useRef(onPaymentSuccess);
 	onSuccessRef.current = onPaymentSuccess;
 	const urlHook = Linking.useLinkingURL();
@@ -275,7 +276,9 @@ export const useAssessmentFeePayment = ({
 			const r = await checkOnce(pendingTxn);
 			if (r.kind === "SUCCESS") return finishSuccess(pendingTxn, r.res);
 			if (["FAILED", "CANCELLED", "EXPIRED"].includes(r.kind)) await clearStoredPayment();
-			// PENDING / ERROR: leave it; the user will either pay again (server guards double payment) or recheck.
+			// The user never reached the gateway / never paid: forget this attempt so no stale state is carried over.
+			if (r.kind === "PENDING" && r.notStarted) await clearStoredPayment();
+			// Other PENDING / ERROR: leave it; the server supersedes abandoned attempts when the user pays again.
 		})();
 	}, []);
 
@@ -436,6 +439,26 @@ export const useAssessmentFeePayment = ({
 				return;
 			}
 
+			// An older attempt is still open on the server (e.g. app was closed mid-payment).
+			// Check it once; if it is not paid the backend retires it, so one silent retry is safe.
+			if (typeof rawDetail === "string" && /already in progress/i.test(rawDetail) && !retriedInProgressRef.current) {
+				retriedInProgressRef.current = true;
+				(async () => {
+					const storedTxn = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
+					if (storedTxn) {
+						const r = await checkOnce(storedTxn);
+						if (r.kind === "SUCCESS") return finishSuccess(storedTxn, r.res);
+						await clearStoredPayment();
+					}
+					setTimeout(() => {
+						retriedInProgressRef.current = false;
+						initiatePayment();
+					}, 1200);
+				})();
+				return;
+			}
+			retriedInProgressRef.current = false;
+
 			if (rawDetail && /coupon/i.test(String(rawDetail))) onCouponRejected?.();
 			const displayMessage = typeof rawDetail === "string" ? rawDetail : error?.message ?? t("pleaseRetryPayment");
 			Toast.show({ type: "error", text1: t("errorInitiatingPayment"), text2: displayMessage });
@@ -473,6 +496,7 @@ export const useAssessmentFeePayment = ({
 		dismissPaymentOutcome,
 		simulateDeepLinkReturn,
 		clearTimer,
+		clearStoredPayment,
 	};
 };
 

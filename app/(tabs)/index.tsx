@@ -181,10 +181,8 @@ export default function Home() {
 		}
 	}, [delayVisible, delayStageKey, showJourneyLoader, hideJourneyLoader, t]);
 
-	const [isPaymentPolling, setIsPaymentPolling] = useState(false);
 	const [modalVisible, setModalVisible] = useState(false);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
-	const paymentPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const isMountedRef = useRef(true);
 
 	useEffect(() => {
@@ -194,10 +192,6 @@ export default function Home() {
 			if (pollIntervalRef.current) {
 				clearInterval(pollIntervalRef.current);
 				pollIntervalRef.current = null;
-			}
-			if (paymentPollIntervalRef.current) {
-				clearInterval(paymentPollIntervalRef.current);
-				paymentPollIntervalRef.current = null;
 			}
 		};
 	}, []);
@@ -229,101 +223,7 @@ export default function Home() {
 		}
 	}, [modalVisible]);
 
-	const startPaymentPolling = (txnId: string) => {
-		if (paymentPollIntervalRef.current) {
-			clearInterval(paymentPollIntervalRef.current);
-		}
 
-		setDelayStageKey("verifyingPaymentWait");
-		setIsPaymentPolling(true);
-		setDelayVisible(true);
-
-		const pollStartTime = Date.now();
-
-		const checkStatus = async () => {
-			if (!isMountedRef.current) return false;
-			try {
-				console.log(`[Dashboard] Checking Easebuzz status for transaction ${txnId}...`);
-				// New backend: POST /payment/verify-status/{txnid} -> { success, data: { status } }
-				const res = await checkPaymentStatus(txnId);
-				Logger.debug("Dashboard payment status response", res);
-				const gatewayStatus = String(res?.data?.status ?? "").toUpperCase();
-
-				if (gatewayStatus === "COMPLETED" || gatewayStatus === "SUCCESS") {
-					if (paymentPollIntervalRef.current) clearInterval(paymentPollIntervalRef.current);
-					setIsPaymentPolling(false);
-					setDelayVisible(false);
-
-					// Clear transaction ID from state and storage since it succeeded
-					dispatch(clearTransactionId());
-					await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
-					await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-
-					// Refresh dashboard data
-					refetch();
-
-					// Show success modal
-					setModalVisible(true);
-					return true;
-				}
-
-				if (["FAILED", "FAILURE", "CANCELLED", "EXPIRED"].includes(gatewayStatus)) {
-					if (paymentPollIntervalRef.current) clearInterval(paymentPollIntervalRef.current);
-					setIsPaymentPolling(false);
-					setDelayVisible(false);
-
-					// Clear transaction ID from state and storage since it failed
-					dispatch(clearTransactionId());
-					await removeStorageItem(STORAGE_KEYS["@transaction-id"]);
-					await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-
-					// Show failure toast
-					setTimeout(() => {
-						Toast.show({
-							type: "error",
-							text1: t("transactionFailed"),
-							text2: t("pleaseRetryPayment"),
-							visibilityTime: 7000,
-						});
-					}, 500);
-					return true;
-				}
-			} catch (err) {
-				Logger.error("Dashboard payment status check failed", err);
-			}
-			return false;
-		};
-
-		// Run immediately
-		checkStatus();
-
-		// Poll every 5 seconds
-		paymentPollIntervalRef.current = setInterval(async () => {
-			const elapsed = Date.now() - pollStartTime;
-			if (elapsed >= 120000) { // 2 minutes
-				if (paymentPollIntervalRef.current) clearInterval(paymentPollIntervalRef.current);
-				const isResolved = await checkStatus();
-				if (!isResolved) {
-					console.log("[Dashboard] Easebuzz status polling timed out (2 min). Stopping polling...");
-					setIsPaymentPolling(false);
-					setDelayVisible(false);
-
-					// We do NOT clear the transaction ID from storage, so they can retry later.
-					// Just show a Toast informing them.
-					setTimeout(() => {
-						Toast.show({
-							type: "info",
-							text1: t("verifyingPaymentWait"),
-							text2: t("pleaseRetryPayment"),
-							visibilityTime: 5000,
-						});
-					}, 500);
-				}
-			} else {
-				await checkStatus();
-			}
-		}, 5000);
-	};
 
 	const queryClient = useQueryClient();
 
@@ -494,9 +394,6 @@ export default function Home() {
 		return () => {
 			if (pollIntervalRef.current) {
 				clearInterval(pollIntervalRef.current);
-			}
-			if (paymentPollIntervalRef.current) {
-				clearInterval(paymentPollIntervalRef.current);
 			}
 		};
 	}, []);
@@ -717,13 +614,6 @@ export default function Home() {
 	};
 
 	const handleContinueJourney = async () => {
-
-		// Check if there is an active payment transaction first
-		const transactionId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
-		if (transactionId) {
-			startPaymentPolling(transactionId);
-			return;
-		}
 		const progress = data?.workflow_progress?.current_step;
 		const overallStatus = data?.workflow_progress?.overall_status;
 		const breStatus = data?.workflow_progress?.bre_status;

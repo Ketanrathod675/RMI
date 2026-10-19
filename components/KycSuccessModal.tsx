@@ -24,6 +24,7 @@ interface KycSuccessModalProps {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const IMAGE_SIZE = Math.min(width(50), 205);
+const AUTO_CLOSE_MS = 2800;
 
 export const KycSuccessModal: React.FC<KycSuccessModalProps> = ({
 	visible,
@@ -68,10 +69,10 @@ export const KycSuccessModal: React.FC<KycSuccessModalProps> = ({
 				]).start();
 			}, 200);
 
-			// Auto-continue safety fallback after 6 seconds if user hasn't pressed the button
+			// Auto-close like the other success screens (confetti + spring finish first).
 			const autoTimer = setTimeout(() => {
 				handleContinue();
-			}, 6000);
+			}, AUTO_CLOSE_MS);
 
 			return () => {
 				clearTimeout(springTimer);
@@ -133,24 +134,8 @@ export const KycSuccessModal: React.FC<KycSuccessModalProps> = ({
 					</Animated.Text>
 				</View>
 
-				{/* Bottom Action Area */}
-				<View
-					style={[
-						styles.bottomContainer,
-						{ paddingBottom: Math.max(insets.bottom, 24) },
-					]}
-				>
-					<TouchableOpacity
-						style={styles.continueButton}
-						onPress={handleContinue}
-						activeOpacity={0.85}
-						testID="kyc-success-continue-button"
-					>
-						<Text style={styles.continueButtonText}>
-							{t("continueToProcess", "Continue to process")}
-						</Text>
-					</TouchableOpacity>
-				</View>
+				{/* No button: this screen closes by itself, like the payment success screen. */}
+				<View style={{ height: Math.max(insets.bottom, 24) }} />
 			</View>
 		</Modal>
 	);

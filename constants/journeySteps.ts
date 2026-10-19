@@ -102,7 +102,7 @@ export const JOURNEY_STEPS: JourneyStep[] = [
 		titleKey: "sanctionApprovalStepTitle",
 		title: "Sanction letter & approval",
 		activeSubtitle: "Generating sanction offer",
-		nextRoute: "/loan-agreement",
+		nextRoute: "/sanction-letter",
 	},
 	{
 		id: "agreement_signing",

@@ -48,9 +48,11 @@ function handleApiError(err: any, actionName: string): never {
 /**
  * Fetches the approved loan offer and KFS summary for the current borrower.
  */
-export async function getLoanOffer(): Promise<LoanOffer> {
+export async function getLoanOffer(amount?: number): Promise<LoanOffer> {
 	try {
-		const res = await axios.get(URLS.loan_offer.offer);
+		const res = await axios.get(URLS.loan_offer.offer, {
+			params: amount ? { amount } : undefined,
+		});
 		return unwrapResponse<LoanOffer>(res, "getLoanOffer");
 	} catch (err: any) {
 		handleApiError(err, "getLoanOffer");

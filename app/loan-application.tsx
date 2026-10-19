@@ -834,7 +834,10 @@ export default function LoanApplication() {
 	return (
 		<KeyboardAvoidingView
 			style={styles.container}
-			behavior={Platform.OS === "ios" ? "padding" : undefined}
+			// The app is edge-to-edge (Expo 57 / RN 0.86): Android does NOT resize the window for the keyboard,
+			// so KeyboardAvoidingView must pad on Android too. It pads only by the real overlap
+			// (frame bottom minus keyboard top), so it never double-counts if a device does resize.
+			behavior="padding"
 			keyboardVerticalOffset={0}>
 			<ScrollView
 				ref={scrollRef}
@@ -844,9 +847,8 @@ export default function LoanApplication() {
 					styles.scrollContent,
 					{
 						paddingTop: insets.top + height(2),
-						paddingBottom: isKeyboardVisible
-							? (keyboardHeight > 0 ? keyboardHeight : 320) + 40
-							: height(14),
+						// Keyboard spacing is handled only by KeyboardAvoidingView above. Do not add keyboard height here.
+						paddingBottom: height(14),
 					},
 				]}
 				showsVerticalScrollIndicator={false}>

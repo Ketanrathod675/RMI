@@ -7,8 +7,10 @@ import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { hasLoanSearchRun } from "@/utils/loanSearchSession";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Logger } from "@/utils/logger";
+import { errorText, getApiErrorInfo } from "@/utils/api/errors";
 import {
 	generateSanctionLetter,
 	getLoanOffer,
@@ -16,7 +18,7 @@ import {
 import type { LoanOffer } from "@/utils/api/types/loan.types";
 import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
-import { useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { useNavigation, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -53,6 +55,12 @@ export default function LoanApproved() {
 	const router = useRouter();
 	const navigation = useNavigation();
 	const queryClient = useQueryClient();
+
+	// This screen must never appear without the real search loader having run first.
+	const searchAlreadyRan = hasLoanSearchRun();
+	useEffect(() => {
+		if (!searchAlreadyRan) router.replace("/search-loan");
+	}, [searchAlreadyRan]);
 
 	// Track this screen in the journey
 	useJourneyTracker("/loan-approved");
@@ -116,26 +124,26 @@ export default function LoanApproved() {
 		data: offer,
 		error: queryError,
 		isPending: isLoading,
+		isFetching,
 		refetch: refetchLoanOffer,
 	} = useNetworkAwareQuery<LoanOffer>({
-		queryKey: ["loan", "offer"],
+		queryKey: ["loan", "offer", selectedAmount || "default"],
 		queryFn: async () => {
-			Logger.debug("Fetching loan offer");
-			const result = await getLoanOffer();
+			Logger.debug("Fetching loan offer", { selectedAmount: selectedAmount || undefined });
+			const result = await getLoanOffer(selectedAmount || undefined);
 			Logger.debug("Loan offer loaded");
 			return result;
 		},
+		placeholderData: keepPreviousData,
 		staleTime: 30000,
 	});
 
 	// Handle query errors
 	useEffect(() => {
 		if (queryError) {
-			const err: any = queryError;
-			const status = err?.response?.status;
-			const detail = err?.response?.data?.detail;
-			const message = err?.response?.data?.message || err?.message || "";
-			const combinedMsg = `${typeof detail === "string" ? detail : ""} ${typeof message === "string" ? message : ""}`.toLowerCase();
+			const info = getApiErrorInfo(queryError);
+			const { status, detail } = info;
+			const combinedMsg = errorText(info);
 
 			Logger.debug("Loan offer query error", { status });
 
@@ -160,12 +168,7 @@ export default function LoanApproved() {
 			}
 
 			if (status === 400) {
-				const displayErr =
-					typeof detail === "string"
-						? detail
-						: typeof message === "string"
-							? message
-							: "Invalid request";
+				const displayErr = detail || info.message || t("failedToLoadLoanTerms");
 				Toast.show({
 					type: "error",
 					text1: t("error") || "Error",
@@ -174,15 +177,25 @@ export default function LoanApproved() {
 				return;
 			}
 
-			setError(t("failedToLoadLoanTerms"));
+			setError(detail || t("failedToLoadLoanTerms"));
 		} else {
 			setError(null);
 		}
 	}, [queryError, router, queryClient, t]);
 
-	// Initialize / default selected amount to sanctioned_amount
+	const hasInitializedAmount = useRef(false);
+
+	// Initialize selected amount from the FIRST response's sanctioned_amount
 	useEffect(() => {
-		if (offer?.sanctioned_amount && (!selectedAmount || !offer.amount_options?.includes(selectedAmount))) {
+		if (offer?.sanctioned_amount && !hasInitializedAmount.current) {
+			hasInitializedAmount.current = true;
+			setSelectedAmount(offer.sanctioned_amount);
+		} else if (
+			offer?.sanctioned_amount &&
+			selectedAmount > 0 &&
+			offer.amount_options &&
+			!offer.amount_options.includes(selectedAmount)
+		) {
 			setSelectedAmount(offer.sanctioned_amount);
 		}
 	}, [offer?.sanctioned_amount, offer?.amount_options, selectedAmount]);
@@ -280,26 +293,33 @@ export default function LoanApproved() {
 	const amountToRepay = selectedDueDateOption?.amount_to_repay ?? offer?.amount_to_repay ?? 0;
 	const netDisbursalAmount = offer?.net_disbursal_amount ?? 0;
 
+	const isRequoteLoading = Boolean(
+		isFetching &&
+		selectedAmount > 0 &&
+		offer?.quoted_amount !== undefined &&
+		offer.quoted_amount !== selectedAmount
+	);
+
 	// Mutation for generating digital sanction letter and moving to OTP
 	const { mutate: generateSanctionMutation, isPending: isSubmitting } =
 		useNetworkAwareMutation({
 			mutationFn: generateSanctionLetter,
 			onSuccess: (result) => {
-				Logger.debug("Sanction letter generated successfully");
-				router.push({
-					pathname: "/loan-enter-otp",
-					params: {
-						sanction_number: result.sanction_number,
-						accepted_amount: String(result.sanctioned_amount),
-						selected_due_date: result.due_date,
-					},
+				Logger.debug("Sanction letter generated successfully, proceeding to bank details");
+				queryClient.invalidateQueries({
+					queryKey: ["user", "dashboard"],
 				});
+				Toast.show({
+					type: "success",
+					text1: t("loanApplicationSubmittedSuccessfully"),
+					text2: t("proceedingToNextStep"),
+				});
+				router.replace("/verify-bank-details");
 			},
 			onError: (err: any) => {
-				const status = err?.response?.status;
-				const detail = err?.response?.data?.detail;
-				const message = err?.response?.data?.message || err?.message || "";
-				const combinedMsg = `${typeof detail === "string" ? detail : ""} ${typeof message === "string" ? message : ""}`.toLowerCase();
+				const info = getApiErrorInfo(err);
+				const { status, detail } = info;
+				const combinedMsg = errorText(info);
 
 				Logger.debug("Generate sanction letter error", { status });
 
@@ -323,12 +343,23 @@ export default function LoanApproved() {
 					return;
 				}
 
-				const displayErr =
-					typeof detail === "string"
-						? detail
-						: typeof message === "string"
-							? message
-							: t("pleaseRefreshAndTryAgain");
+				if (
+					status === 400 &&
+					(combinedMsg.includes("refresh") ||
+						combinedMsg.includes("offer has changed") ||
+						combinedMsg.includes("invalid due date"))
+				) {
+					queryClient.invalidateQueries({ queryKey: ["loan", "offer"] });
+					setSelectedDueDate("");
+					Toast.show({
+						type: "error",
+						text1: t("error") || "Error",
+						text2: detail || "Offer has changed. Please review the updated offer.",
+					});
+					return;
+				}
+
+				const displayErr = detail || info.message || t("pleaseRefreshAndTryAgain");
 
 				Toast.show({
 					type: "error",
@@ -339,6 +370,11 @@ export default function LoanApproved() {
 		});
 
 	const handleAccept = () => {
+		if (offer?.quoted_amount !== undefined && selectedAmount > 0 && offer.quoted_amount !== selectedAmount) {
+			refetchLoanOffer();
+			return;
+		}
+
 		if (!selectedDueDate) {
 			Toast.show({
 				type: "error",
@@ -415,6 +451,10 @@ export default function LoanApproved() {
 	}, [rejectionModalVisible, rejectionScaleAnim, router]);
 
 	// Show loading state while fetching loan offer
+	if (!searchAlreadyRan) {
+		return null;
+	}
+
 	if (isLoading) {
 		return (
 			<SafeAreaView style={{ flex: 1, backgroundColor: white }}>
@@ -539,7 +579,7 @@ export default function LoanApproved() {
 								style={styles.subText}
 								translationKey="yourLoanIsApprovedFor"
 							/>
-							<Text style={styles.amountText}>
+							<Text style={[styles.amountText, isRequoteLoading && { opacity: 0.5 }]}>
 								{formatAmount(displayBannerAmount)}/-
 							</Text>
 						</View>
@@ -586,7 +626,7 @@ export default function LoanApproved() {
 								style={styles.detailLabel}
 								translationKey="processingFee"
 							/>
-							<Text style={styles.detailValue}>
+							<Text style={[styles.detailValue, isRequoteLoading && { opacity: 0.5 }]}>
 								₹ {(offer?.processing_fee ?? 0).toLocaleString("en-IN")}
 								{gstLabel ? ` + ${gstLabel}` : ""}
 							</Text>
@@ -631,7 +671,9 @@ export default function LoanApproved() {
 								style={styles.detailLabel}
 								translationKey="interestRate"
 							/>
-							<Text style={styles.detailValue}>{interestRate}</Text>
+							<Text style={[styles.detailValue, isRequoteLoading && { opacity: 0.5 }]}>
+								{interestRate}
+							</Text>
 						</View>
 
 						<View style={styles.separator} />
@@ -641,7 +683,7 @@ export default function LoanApproved() {
 								style={styles.detailLabel}
 								translationKey="netDisbursalAmount"
 							/>
-							<Text style={styles.detailValue}>
+							<Text style={[styles.detailValue, isRequoteLoading && { opacity: 0.5 }]}>
 								{netDisbursalAmount > 0
 									? formatAmount(netDisbursalAmount)
 									: "-"}
@@ -655,7 +697,7 @@ export default function LoanApproved() {
 								style={styles.detailLabel}
 								translationKey="amountToRepay"
 							/>
-							<Text style={styles.detailValue}>
+							<Text style={[styles.detailValue, isRequoteLoading && { opacity: 0.5 }]}>
 								{amountToRepay > 0
 									? formatAmount(amountToRepay)
 									: "-"}
@@ -665,10 +707,10 @@ export default function LoanApproved() {
 						<TouchableOpacity
 							style={[
 								styles.proceedButton,
-								isSubmitting && styles.proceedButtonDisabled,
+								(isSubmitting || isRequoteLoading) && styles.proceedButtonDisabled,
 							]}
 							onPress={handleAccept}
-							disabled={isSubmitting}>
+							disabled={isSubmitting || isRequoteLoading}>
 							{isSubmitting ? (
 								<ActivityIndicator size="small" color="#333" />
 							) : (

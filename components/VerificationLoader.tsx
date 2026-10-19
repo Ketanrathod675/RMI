@@ -654,7 +654,8 @@ export function VerificationLoaderContent({
 				<View style={[styles.card, { width: m.cardWidth }]}>
 					<View style={{ height: m.windowHeight, overflow: "hidden" }}>
 						<Animated.View style={[styles.stepsContainer, animatedListStyle]}>
-							{steps.length > 1 && (
+							{/* The vertical connector is only drawn while a step is still running; once every step is done it must disappear. */}
+							{steps.length > 1 && activeIndex >= 0 && (
 								<View
 									pointerEvents="none"
 									style={[

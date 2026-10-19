@@ -9,7 +9,9 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
-import { errorHandler } from "@/utils/api";
+import { errorHandler, getUserProfile } from "@/utils/api";
+import { getApiErrorInfo } from "@/utils/api/errors";
+import Logger from "@/utils/logger";
 import {
     getBankAccounts,
     getBankDetailsHbPartner,
@@ -70,6 +72,22 @@ export default function VerifyBankDetails() {
 
 	const { applicantFrom } = useAuth();
 
+	// Fetch user profile data to get account holder name
+	const {
+		data: userProfile,
+		isLoading: isLoadingProfile,
+	} = useNetworkAwareQuery({
+		queryKey: ["userProfile"],
+		queryFn: getUserProfile,
+		staleTime: 300000,
+	});
+
+	const cachedDashboard = queryClient.getQueryData<any>(["user", "dashboard"]);
+	const dashboardName = (cachedDashboard?.user_summary?.name || "").trim();
+	const accountHolderName =
+		(userProfile?.personal_details?.full_name || "").trim() ||
+		(dashboardName !== "Applicant" ? dashboardName : "");
+
 	// HB Partner API
 	const {
 		data: hbBankData,
@@ -87,7 +105,7 @@ export default function VerifyBankDetails() {
 
 	useEffect(() => {
 		if (hbBankData) {
-			console.log("📥 HB Bank Data Received:", JSON.stringify(hbBankData, null, 2));
+			Logger.debug("HB Bank Data Received");
 
 			const ifsc = (hbBankData.ifsc_code || "").trim();
 			const bName = (hbBankData.bank_name || "").trim();
@@ -108,7 +126,7 @@ export default function VerifyBankDetails() {
 				setIsIFSCValid(true);
 			} else if (ifsc.length === 11 && (!bName || !brName)) {
 				// Trigger lookup if IFSC is provided but bank/branch is missing
-				console.log("🔍 HB Data missing bank/branch, triggering lookup for IFSC:", ifsc);
+				Logger.debug("HB Data missing bank/branch, triggering lookup for IFSC");
 				lookupIFSCMutation(ifsc);
 			}
 		}
@@ -122,12 +140,12 @@ export default function VerifyBankDetails() {
 
 	useEffect(() => {
 		if (hbBankError) {
-			console.log("❌ HB Bank Data Error:", hbBankError);
-			const status = (hbBankError as any)?.response?.status;
+			const info = getApiErrorInfo(hbBankError);
+			Logger.error("HB Bank Data Error", { status: info.status });
 			const message =
-				(hbBankError as any)?.response?.data?.message || t("failedToFetchDetails");
+				info.detail || info.message || t("failedToFetchDetails");
 
-			if (status === 404) {
+			if (info.status === 404) {
 				Toast.show({
 					type: "error",
 					text1: t("detailsNotFound"),
@@ -138,10 +156,10 @@ export default function VerifyBankDetails() {
 	}, [hbBankError, t]);
 
 	useEffect(() => {
-		console.log("🔄 Fetching existing bank accounts...");
+		Logger.debug("Fetching existing bank accounts");
 		getBankAccounts()
 			.then((accounts) => {
-				console.log("fetched accounts", accounts);
+				Logger.debug("Bank accounts fetched", { count: accounts?.length });
 				if (Array.isArray(accounts) && accounts.length > 0) {
 					// Use the first account (or primary if available)
 					const account = accounts.find((a) => a.is_primary) || accounts[0];
@@ -160,11 +178,11 @@ export default function VerifyBankDetails() {
 						setIsIFSCValid(true);
 					}
 				} else {
-					console.log("No existing bank accounts found. User can enter manually.");
+					Logger.debug("No existing bank accounts found");
 				}
 			})
 			.catch((err) => {
-				console.error("Error fetching bank accounts:", err);
+				Logger.error("Error fetching bank accounts", { message: err?.message });
 			});
 	}, []);
 
@@ -193,7 +211,7 @@ export default function VerifyBankDetails() {
 	const { mutate: lookupIFSCMutation, isPending: isLookingUpIFSC } = useNetworkAwareMutation({
 		mutationFn: lookupIFSC,
 		onSuccess: (data: Partial<IFSCLookupResponseType>) => {
-			console.log("IFSC Lookup API Response:", data);
+			Logger.debug("IFSC Lookup API Response", { success: data?.success });
 
 			if (data?.success && data?.bank_details) {
 				setFormData((prev) => ({
@@ -224,7 +242,7 @@ export default function VerifyBankDetails() {
 			}
 		},
 		onError: (err, variables, ctx) => {
-			console.log("IFSC Lookup API Error:", err);
+			Logger.error("IFSC Lookup API Error");
 			const { error, errorType } = errorHandler(err, variables, ctx);
 
 			setIsIFSCValid(false);
@@ -246,15 +264,12 @@ export default function VerifyBankDetails() {
 	const { mutate: submitBankDetailsMutation, isPending: isSubmitting } = useNetworkAwareMutation({
 		mutationFn: submitBankDetails,
 		onSuccess: (data) => {
-			console.log("=== BANK DETAILS SUBMISSION SUCCESS ===");
-			console.log("Bank Details Submission API Response:", JSON.stringify(data, null, 2));
-			console.log("Response Success:", data?.success);
-			console.log("Response Message:", data?.message);
-			console.log("Response Verified:", data?.verified);
-			console.log("Response Bank Details:", data?.bank_details);
-			console.log("=====================================");
+			Logger.debug("Bank details submitted successfully");
 
-			// Invalidate bank accounts query to refetch fresh data
+			// Invalidate user dashboard and bank accounts query to refetch fresh data
+			queryClient.invalidateQueries({
+				queryKey: ["user", "dashboard"],
+			});
 			queryClient.invalidateQueries({
 				queryKey: ["bankAccounts"],
 			});
@@ -268,14 +283,14 @@ export default function VerifyBankDetails() {
 			// Navigate to next screen
 			router.push("/verifying-bank");
 		},
-		onError: (err, variables, ctx) => {
-			console.log("Bank Details Submission API Error:", err);
-			const { error, errorType } = errorHandler(err, variables, ctx);
+		onError: (err) => {
+			const info = getApiErrorInfo(err);
+			Logger.error("Bank details submission failed", { status: info.status });
 
 			Toast.show({
 				type: "error",
 				text1: t("bankSubmissionFailed"),
-				text2: error?.message ?? t("pleaseCheckYourBankDetails"),
+				text2: info.detail || info.message || t("pleaseCheckYourBankDetails"),
 			});
 		},
 	});
@@ -300,7 +315,7 @@ export default function VerifyBankDetails() {
 
 		// Auto-lookup IFSC when user enters 11 characters
 		if (field === "ifscCode" && processedValue.length === 11) {
-			console.log("🔍 Looking up IFSC:", processedValue);
+			Logger.debug("Looking up IFSC");
 			lookupIFSCMutation(processedValue);
 		} else if (field === "ifscCode" && processedValue.length !== 11) {
 			// Clear bank details if IFSC is not 11 characters
@@ -391,18 +406,26 @@ export default function VerifyBankDetails() {
 	};
 
 	const handleProceed = () => {
+		if (!accountHolderName) {
+			Toast.show({
+				type: "error",
+				text1: t("accountHolderNameRequired"),
+				text2: t("pleaseCompleteProfileFirst"),
+			});
+			return;
+		}
+
 		if (!validateForm()) return;
 
 		const apiData: BankDetailsSubmitRequestType = {
+			account_holder_name: accountHolderName,
 			account_number: formData.bankAccountNumber.trim(),
-			confirm_account_number: formData.confirmBankAccountNumber.trim(),
 			ifsc_code: formData.ifscCode.toUpperCase().trim(),
 			bank_name: formData.bankName.trim(),
 			branch_name: formData.branchName.trim(),
-			account_type: formData.accountType.trim(),
+			account_type: formData.accountType.trim().toLowerCase(),
 		};
 
-		console.log("📋 Submitting bank details:", apiData);
 		submitBankDetailsMutation(apiData);
 	};
 
@@ -443,6 +466,18 @@ export default function VerifyBankDetails() {
 
 				{/* Form Section */}
 				<View style={styles.formSection}>
+				{/* Account Holder Name (Read-only) */}
+				<Input
+					label={t("accountHolderName")}
+					placeholder={t("accountHolderName")}
+					value={accountHolderName}
+					onChangeText={() => {}}
+					containerStyle={styles.inputContainer}
+					disabled={true}
+					editable={false}
+					style={[styles.disabledInput, styles.inputStyle]}
+				/>
+
 				<Input
 					label={t("bankAccountNumber")}
 					placeholder={t("bankAccountNumberPlaceholder")}

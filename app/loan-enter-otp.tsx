@@ -3,6 +3,7 @@ import { dark, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Logger } from "@/utils/logger";
+import { getApiErrorInfo } from "@/utils/api/errors";
 import {
 	sendSanctionOtp,
 	verifySanctionOtp,
@@ -79,9 +80,8 @@ export default function LoanEnterOTP() {
 				});
 			}
 		} catch (err: any) {
-			const status = err?.response?.status;
-			const detail = err?.response?.data?.detail;
-			const message = err?.response?.data?.message || err?.message || "";
+			const info = getApiErrorInfo(err);
+			const { status, detail } = info;
 			Logger.debug("Send sanction OTP error", { status });
 
 			if (status === 429) {
@@ -90,7 +90,6 @@ export default function LoanEnterOTP() {
 					text1: t("pleaseTryAgain"),
 					text2:
 						detail ||
-						message ||
 						"Too many requests. Please wait before retrying.",
 				});
 				setResendCooldown(30);
@@ -100,7 +99,6 @@ export default function LoanEnterOTP() {
 					text1: t("error") || "Error",
 					text2:
 						detail ||
-						message ||
 						t("failedToResendOTP"),
 				});
 			}
@@ -203,9 +201,8 @@ export default function LoanEnterOTP() {
 				router.replace("/verify-bank-details");
 			}, 1500);
 		} catch (err: any) {
-			const status = err?.response?.status;
-			const detail = err?.response?.data?.detail;
-			const message = err?.response?.data?.message || err?.message || "";
+			const info = getApiErrorInfo(err);
+			const { status, detail } = info;
 			Logger.debug("Verify sanction OTP error", { status });
 
 			if (status === 400) {
@@ -214,7 +211,7 @@ export default function LoanEnterOTP() {
 				Toast.show({
 					type: "error",
 					text1: t("error") || "Error",
-					text2: detail || message || "Invalid OTP entered",
+					text2: detail || "Invalid OTP entered",
 				});
 				return;
 			}
@@ -226,7 +223,6 @@ export default function LoanEnterOTP() {
 					text1: t("error") || "Error",
 					text2:
 						detail ||
-						message ||
 						"Too many attempts. Please resend OTP.",
 				});
 				return;
@@ -243,7 +239,7 @@ export default function LoanEnterOTP() {
 				text1: t("error") || "Error",
 				text2:
 					detail ||
-					message ||
+					info.message ||
 					"Verification failed. Please try again.",
 			});
 		} finally {

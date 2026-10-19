@@ -33,6 +33,7 @@ export type LoanOffer = {
 	lender_nbfc_info: string;
 	max_loan_amount: number;
 	sanctioned_amount: number;
+	quoted_amount?: number;
 	amount_options: number[];
 	processing_fee: number;
 	gst: number;

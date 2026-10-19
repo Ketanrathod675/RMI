@@ -1,4 +1,3 @@
-// LEGACY — old backend, disabled during in-house rebuild
 import { URLS, axios } from ".";
 import Logger from "@/utils/logger";
 
@@ -31,15 +30,12 @@ export type IFSCLookupResponseType = {
 /**
  * Lookup IFSC code to get bank details
  * Uses public IFSC API directly (no backend required)
- * 
- * @param ifscCode - 11 character IFSC code
- * @returns Promise with bank details
  */
 export const lookupIFSC = async (ifscCode: string) => {
 	try {
-		// Use public IFSC API directly
+		Logger.debug("Looking up IFSC code");
 		const response = await fetch(`https://ifsc.razorpay.com/${ifscCode}`);
-		
+
 		if (!response.ok) {
 			return {
 				success: false,
@@ -49,10 +45,8 @@ export const lookupIFSC = async (ifscCode: string) => {
 		}
 
 		const data = await response.json();
+		Logger.debug("IFSC lookup completed", { bank: data.BANK, branch: data.BRANCH });
 
-		console.log("IFSC Lookup Response:", data);
-
-		// Transform the response to match expected format
 		return {
 			success: true,
 			ifsc_code: ifscCode,
@@ -77,7 +71,7 @@ export const lookupIFSC = async (ifscCode: string) => {
 			message: "IFSC details fetched successfully",
 		};
 	} catch (error: any) {
-		console.error("IFSC lookup error:", error);
+		Logger.error("IFSC lookup failed", { message: error?.message });
 		return {
 			success: false,
 			ifsc_code: ifscCode,
@@ -104,24 +98,17 @@ export type PincodeLookupResponseType = {
 
 /**
  * Lookup pincode to get city and state information
- * Uses India Post public API directly (no backend required)
- * 
- * @param pincode - 6 digit Indian pincode
- * @returns Promise with location details including city, state, district
+ * Uses India Post public API directly
  */
 export const lookupPincode = async (pincode: string) => {
 	try {
-		console.log("🔍 Looking up pincode using India Post API:", pincode);
-		
-		// Use axios for automatic dev mock interception & network management
+		Logger.debug("Looking up pincode");
 		const response = await axios.get<any>(`https://api.postalpincode.in/pincode/${pincode}`);
 		const data = response.data;
 
-		console.log("📍 Pincode Lookup Response:", data);
-
 		if (data && data[0]?.Status === "Success" && data[0]?.PostOffice?.length > 0) {
 			const postOffice = data[0].PostOffice[0];
-			
+
 			const result = {
 				success: true,
 				pincode: pincode,
@@ -133,11 +120,11 @@ export const lookupPincode = async (pincode: string) => {
 				},
 				message: "Pincode details fetched successfully",
 			};
-			
-			console.log("✅ Pincode lookup successful:", result);
+
+			Logger.debug("Pincode lookup successful");
 			return result;
 		} else {
-			console.log("❌ Invalid pincode or no data found");
+			Logger.debug("Invalid pincode or no data found");
 			return {
 				success: false,
 				pincode: pincode,
@@ -151,7 +138,7 @@ export const lookupPincode = async (pincode: string) => {
 			};
 		}
 	} catch (error: any) {
-		console.error("❌ Pincode lookup error:", error);
+		Logger.error("Pincode lookup failed", { message: error?.message });
 		return {
 			success: false,
 			pincode: pincode,
@@ -171,49 +158,57 @@ export const lookupPincode = async (pincode: string) => {
 // region: BANK DETAILS SUBMISSION
 
 export type BankDetailsSubmitRequestType = {
+	account_holder_name?: string;
 	account_number: string;
-	confirm_account_number: string;
+	confirm_account_number?: string;
 	ifsc_code: string;
 	bank_name: string;
 	branch_name: string;
 	account_type: string;
+	city?: string;
+	state?: string;
+	district?: string;
 };
 
 export type BankDetailsSubmitResponseType = {
 	success: boolean;
 	message: string;
 	verified: boolean;
-	bank_details?: {
-		account_number: string;
-		ifsc_code: string;
-		bank_name: string;
-		branch_name: string;
-		account_type: string;
-		account_holder_name?: string;
-	};
+	bank_details?: any;
 };
 
 export const submitBankDetails = async (data: BankDetailsSubmitRequestType) => {
 	try {
-		console.log("=== SUBMITTING BANK DETAILS ===");
-		console.log("Endpoint:", URLS.bank_details.submit);
-		Logger.debug("Submitting bank details", data);
-		console.log("==============================");
+		Logger.debug("Submitting bank details");
+		const payload: Record<string, any> = {
+			account_holder_name: data.account_holder_name,
+			account_number: data.account_number,
+			ifsc_code: data.ifsc_code,
+			bank_name: data.bank_name,
+			branch_name: data.branch_name,
+			account_type: data.account_type ? data.account_type.toLowerCase() : "savings",
+		};
+		if (data.city) payload.city = data.city;
+		if (data.state) payload.state = data.state;
+		if (data.district) payload.district = data.district;
 
-		const response = await axios.post<Partial<BankDetailsSubmitResponseType>>(
+		const response = await axios.post(
 			URLS.bank_details.submit,
-			data,
+			payload,
 		);
 
-		console.log("=== BANK DETAILS SUBMIT RESPONSE ===");
-		console.log("Status:", response.status);
-		Logger.debug("Bank details submission response", response.data);
-		console.log("===================================");
+		Logger.debug("Bank details submitted", { status: response.status });
+		const raw = response.data;
+		const innerData = raw && typeof raw === "object" && "data" in raw ? raw.data : raw;
 
-		return response.data;
+		return {
+			success: raw?.success ?? true,
+			message: raw?.message ?? "Bank details submitted successfully",
+			verified: true,
+			bank_details: innerData,
+		};
 	} catch (error: any) {
-		console.error("❌ Bank details submission API error:", error);
-		console.error("Error Response:", error?.response?.data);
+		Logger.error("Bank details submission failed", { status: error?.response?.status });
 		throw error;
 	}
 };
@@ -243,44 +238,33 @@ export type GetBankAccountsResponseType = BankAccount[];
 
 export const getBankAccounts = async (): Promise<GetBankAccountsResponseType> => {
 	try {
-		console.log("🔍 Fetching bank accounts from:", URLS.bank_details.get_accounts);
-		const response = await axios.get<any>(
+		Logger.debug("Fetching bank accounts");
+		const response = await axios.get(
 			URLS.bank_details.get_accounts,
 		);
 
-		console.log("=== GET BANK ACCOUNTS API RESPONSE ===");
-		console.log("Status:", response.status);
-		Logger.debug("Bank accounts response", response.data);
-		console.log("Response Data Type:", typeof response.data);
-		console.log("Is Array:", Array.isArray(response.data));
-		console.log("Array Length:", Array.isArray(response.data) ? response.data.length : "N/A");
-		console.log("Response Keys:", Object.keys(response.data || {}));
-		console.log("Has 'data' property:", 'data' in (response.data || {}));
-		console.log("Has 'bank_accounts' property:", 'bank_accounts' in (response.data || {}));
-		console.log("Has 'accounts' property:", 'accounts' in (response.data || {}));
-		console.log("=====================================");
+		Logger.debug("Bank accounts fetched", { status: response.status });
+		const raw = response.data;
+		const list: any[] = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
 
-		// Check if response is wrapped in an object
-		if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
-			// Try common wrapper keys
-			if (response.data.bank_accounts) {
-				console.log("⚠️ Found bank_accounts in response.data.bank_accounts");
-				return response.data.bank_accounts;
-			}
-			if (response.data.accounts) {
-				console.log("⚠️ Found accounts in response.data.accounts");
-				return response.data.accounts;
-			}
-			if (response.data.data) {
-				console.log("⚠️ Found data in response.data.data");
-				return response.data.data;
-			}
-		}
-
-		return response.data;
+		return list.map((item, index) => ({
+			id: String(item.id || item.uuid || ""),
+			user_id: String(item.user_id || ""),
+			account_holder_name: String(item.account_holder_name || ""),
+			account_number: String(item.account_number || ""),
+			account_number_masked: String(item.account_number_masked || item.account_number || ""),
+			ifsc_code: String(item.ifsc_code || ""),
+			bank_name: String(item.bank_name || ""),
+			branch_name: String(item.branch_name || ""),
+			city: String(item.city || ""),
+			state: String(item.state || ""),
+			account_type: String(item.account_type || "savings"),
+			is_primary: index === 0,
+			verified_by_lender: false,
+			submitted_at: String(item.created_at || item.updated_at || ""),
+		}));
 	} catch (error: any) {
-		console.error("❌ Get bank accounts API error:", error);
-		console.error("Error Response:", error?.response?.data);
+		Logger.error("Get bank accounts failed", { status: error?.response?.status });
 		throw error;
 	}
 };
@@ -307,11 +291,11 @@ export type BankDetailsHbPartnerResponseType = {
 };
 
 export const getBankDetailsHbPartner = async () => {
-	console.log("🚀 Calling GET /users/bank-details-hb-partner");
+	Logger.debug("Calling getBankDetailsHbPartner");
 	const response = await axios.get<BankDetailsHbPartnerResponseType>(
 		URLS.bank_details.hb_partner,
 	);
-	Logger.debug("HB partner bank details response", response.data);
+	Logger.debug("HB partner bank details response received", { status: response.status });
 
 	return response.data;
 };

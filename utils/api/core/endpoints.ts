@@ -115,9 +115,9 @@ export const URLS = {
 	},
 	loan_offer: {
 		offer: "loan/offer",
-		sanction_letter: "loan/sanction-letter",
-		sanction_otp_send: "loan/sanction-otp/send",
-		sanction_otp_verify: "loan/sanction-otp/verify",
+		sanction_letter: "sanction-letter",
+		sanction_otp_send: "sanction-otp/send",
+		sanction_otp_verify: "sanction-otp/verify",
 		status: "loan/status",
 	},
 	loans: {
@@ -134,21 +134,22 @@ export const URLS = {
 		// NOT IN NEW BACKEND
 		check_approval: "lender-approval/check-approval",
 	},
-	loan_agreement: {
-		// NOT IN NEW BACKEND
-		generate: "loan-agreement/generate",
-		// NOT IN NEW BACKEND
-		initiate_signing: "loan-agreement/initiate-signing",
-		// NOT IN NEW BACKEND
-		sign: "loan-agreement/sign",
-		// NOT IN NEW BACKEND
-		download: (loanNumber: string) => `loan-agreement/${loanNumber}/download`,
+	// KFS / agreement signing (OTP e-sign). Matches backend app/api/v1/kfs.py
+	kfs: {
+		initiate: "kfs/initiate",
+		sign: "kfs/sign",
+		resend_otp: "kfs/resend-otp",
+		file: "kfs/document/file",
+	},
+	consent_document: {
+		status: "consent-document/status",
+		preview: "consent-document/preview",
+		sign: "consent-document/sign",
+		signed: "consent-document/signed",
 	},
 	bank_details: {
-		// NOT IN NEW BACKEND
-		submit: "bank-details/submit",
-		// NOT IN NEW BACKEND
-		get_accounts: "bank-details/bank-accounts",
+		submit: "bank-details",
+		get_accounts: "bank-details",
 		// NOT IN NEW BACKEND
 		hb_partner: "users/bank-details-hb-partner",
 	},
@@ -195,21 +196,24 @@ export const URLS = {
 		list: "general-info",
 	},
 	sanction_letter: {
-		// NOT IN NEW BACKEND
 		generate: "sanction-letter/generate",
-		// NOT IN NEW BACKEND
-		kfs_document: "sanction-letter/kfs-document",
+		status: "sanction-letter/status",
+		download: "sanction-letter/download/file",
+		download_file: "sanction-letter/download/file",
+		regenerate: "sanction-letter/regenerate",
 	},
 	loan_status: {
-		// NOT IN NEW BACKEND
-		simple_loan_status: "loan-status/simple-loan-status",
+		simple_loan_status: "loan/status",
 	},
 	loan_reapplication: {
 		can_reapply: "loan-reapplication/can-reapply",
 		reapply: "loan-reapplication/reapply",
 	},
 	autocollect: {
-		// NOT IN NEW BACKEND
+		upi_mandate: "autocollect/upi/mandate",
+		enach_mandate: "autocollect/enach/mandate",
+		mandate_status: "autocollect/mandate/status",
+		// NOT IN NEW BACKEND (legacy; only used by loan-congratulations)
 		check_mandate: (txnId: string) => `autocollect/mandate/check/${txnId}`,
 	},
 	videos: {

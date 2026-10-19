@@ -557,7 +557,7 @@ export default function ProfessionalDetails() {
 		<>
 			<KeyboardAvoidingView
 				style={styles.container}
-				behavior={Platform.OS === "ios" ? "padding" : undefined}
+				behavior="padding"
 				keyboardVerticalOffset={0}>
 				<StatusBar style={isDark ? "light" : "dark"} />
 
@@ -588,9 +588,8 @@ export default function ProfessionalDetails() {
 					contentContainerStyle={[
 						styles.scrollContent,
 						{
-							paddingBottom: isKeyboardVisible
-								? (keyboardHeight > 0 ? keyboardHeight : 320) + 40
-								: Math.max(insets.bottom + 14, 28) + 24,
+							// Keyboard spacing is handled only by KeyboardAvoidingView. Do not add keyboard height here.
+							paddingBottom: Math.max(insets.bottom + 14, 28) + 24,
 						},
 					]}
 					showsVerticalScrollIndicator={false}>

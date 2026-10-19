@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
 	BackHandler,
 	Dimensions,
 	StatusBar,
 	StyleSheet,
 	Text,
+	TouchableOpacity,
 	View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,7 +24,10 @@ import { dark, primary } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
-import { axios, getBreFixRoute, getUserDashboardData, StepHref } from "@/utils/api";
+import { getBreFixRoute, getLoanOffer, getUserDashboardData, StepHref } from "@/utils/api";
+import { getApiErrorInfo } from "@/utils/api/errors";
+import { markLoanSearchDone } from "@/utils/loanSearchSession";
+import { useQueryClient } from "@tanstack/react-query";
 import { height, width } from "@/utils/dimensions";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -45,6 +49,12 @@ export default function SearchLoan() {
 	const [showProgress, setShowProgress] = useState(false);
 	const [currentStage, setCurrentStage] = useState(0);
 	const [isCompleted, setIsCompleted] = useState(false);
+	const [slowNetwork, setSlowNetwork] = useState(false);
+	const [searchFailed, setSearchFailed] = useState(false);
+	const [attempt, setAttempt] = useState(0);
+	const queryClient = useQueryClient();
+	// Back gestures are blocked while searching; navigation is allowed only when the search itself finishes.
+	const allowLeaveRef = useRef(false);
 
 	// Three concentric rings rotating in the same clockwise direction at faster speeds:
 	// Inner: Fastest (2.2s)
@@ -72,11 +82,12 @@ export default function SearchLoan() {
 	// Intercept hardware and gesture back navigation
 	useEffect(() => {
 		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
+			if (allowLeaveRef.current) return; // our own router.replace after the search finished
 			e.preventDefault();
 		});
 
 		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
-			return true;
+			return !allowLeaveRef.current;
 		});
 
 		return () => {
@@ -152,135 +163,152 @@ export default function SearchLoan() {
 		return () => clearTimeout(timer);
 	}, []);
 
-	// Background lender approval check
+	// REAL search: the loader stays on screen for exactly as long as the API work takes.
+	// It always runs before /loan-approved (credit queue on or off) and never gives up silently on a slow server.
 	useEffect(() => {
-		const checkLenderApproval = async () => {
-			try {
-				const response = await axios.post("lender-approval/check-approval");
-				console.log("Lender approval check status:", response.status);
-			} catch (error: any) {
-				console.error("Lender approval check error:", error?.message || error);
-			}
+		if (!showProgress) return;
+
+		let cancelled = false;
+		const startedAt = Date.now();
+		const MIN_STAGE_MS = 3000; // avoid a flash when the server answers instantly
+		const POLL_MS = 3000;
+		const SLOW_AFTER_MS = 20_000;
+		const GIVE_UP_AFTER_MS = 90_000;
+		const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+		setSlowNetwork(false);
+		setSearchFailed(false);
+		setIsCompleted(false);
+		setCurrentStage(0);
+
+		const finish = async (navigate: () => void) => {
+			const elapsed = Date.now() - startedAt;
+			if (elapsed < MIN_STAGE_MS) await wait(MIN_STAGE_MS - elapsed);
+			if (cancelled) return;
+			setCurrentStage(2);
+			setIsCompleted(true);
+			await wait(400);
+			if (cancelled) return;
+			allowLeaveRef.current = true;
+			navigate();
 		};
 
-		checkLenderApproval();
-	}, []);
+		// Decide where the workflow wants the borrower. "OFFER" means: fetch the loan offer, then show it.
+		const resolveDestination = (dashboardData: any): "OFFER" | string | { pathname: string; params?: any } => {
+			const workflowProgress = dashboardData?.workflow_progress;
+			const currentStep = workflowProgress?.current_step;
+			const overallStatus = workflowProgress?.overall_status;
+			const breStatus = workflowProgress?.bre_status;
+			const breFailedRule = workflowProgress?.bre_failed_rule;
 
-	// Stage timeline and workflow routing
-	useEffect(() => {
-		if (showProgress && !isCompleted) {
-			setCurrentStage(0);
+			if (
+				overallStatus === "rejected" ||
+				overallStatus === "application_rejected" ||
+				overallStatus === "no_approved_amount"
+			) {
+				if (breStatus === "rejected") {
+					const fixRoute = getBreFixRoute(breFailedRule);
+					if (fixRoute) return fixRoute;
+				}
+				return "/(tabs)";
+			}
+			if (!currentStep) return "/(tabs)";
 
-			const stageTimer1 = setTimeout(() => {
-				setCurrentStage(1);
-			}, 2500);
+			if (currentStep === "pan_verification" || currentStep === "professional_details") {
+				if (breStatus === "rejected") {
+					const fixRoute = getBreFixRoute(breFailedRule);
+					if (fixRoute) return fixRoute;
+				}
+				if (breStatus === "pending" || breStatus === "error") {
+					return { pathname: "/new-assessment-fee", params: { resumeChecks: "true" } };
+				}
+			}
+			if (currentStep === "selfie_match") {
+				return { pathname: "/ckyc-instructions", params: { startSelfie: "true" } };
+			}
+			if (currentStep === "address_submission") {
+				return { pathname: "/aadhaar-kyc", params: { startFromAddress: "true" } };
+			}
 
-			const stageTimer2 = setTimeout(() => {
-				setCurrentStage(2);
-			}, 5000);
+			let targetStep = currentStep;
+			if (targetStep === "credit_queue" && isRepeatUser) {
+				targetStep = params.next_step || workflowProgress?.next_required_step || "loan_application";
+			}
+			if (targetStep === "digilocker") return "/digilocker-kyc";
+			if (targetStep === "credit_queue" || targetStep === "loan_application") return "OFFER";
 
-			const completeTimer = setTimeout(async () => {
-				setIsCompleted(true);
+			return StepHref[targetStep as keyof typeof StepHref] ?? "/(tabs)";
+		};
+
+		const run = async () => {
+			while (!cancelled) {
+				const elapsed = Date.now() - startedAt;
+				if (elapsed > SLOW_AFTER_MS) setSlowNetwork(true);
+				if (elapsed > GIVE_UP_AFTER_MS) {
+					setSearchFailed(true);
+					return;
+				}
 
 				try {
 					const dashboardData = await getUserDashboardData();
-					const workflowProgress = dashboardData?.workflow_progress;
-					const currentStep = workflowProgress?.current_step;
-					const overallStatus = workflowProgress?.overall_status;
+					if (cancelled) return;
+					const destination = resolveDestination(dashboardData);
 
-					console.log("Search Loan Completed. Step:", currentStep, "Status:", overallStatus);
-
-					const breStatus = workflowProgress?.bre_status;
-					const breFailedRule = workflowProgress?.bre_failed_rule;
-
-					if (
-						overallStatus === "rejected" ||
-						overallStatus === "application_rejected" ||
-						overallStatus === "no_approved_amount"
-					) {
-						if (breStatus === "rejected") {
-							const fixRoute = getBreFixRoute(breFailedRule);
-							if (fixRoute) {
-								router.push(fixRoute as any);
-								return;
-							}
-						}
-						router.push("/(tabs)");
+					if (destination !== "OFFER") {
+						await finish(() => router.replace(destination as any));
 						return;
 					}
 
-					if (currentStep) {
-						if (
-							currentStep === "pan_verification" || currentStep === "professional_details"
-						) {
-							if (breStatus === "rejected") {
-								const fixRoute = getBreFixRoute(breFailedRule);
-								if (fixRoute) {
-									router.push(fixRoute as any);
-									return;
-								}
-							}
-							if (breStatus === "pending" || breStatus === "error") {
-								router.push({
-									pathname: "/new-assessment-fee" as any,
-									params: { resumeChecks: "true" },
-								});
-								return;
-							}
-						}
-
-						if (currentStep === "selfie_match") {
-							router.push({
-								pathname: "/ckyc-instructions",
-								params: { startSelfie: "true" },
-							});
+					// The real work: the loan offer API. Its answer also tells us about the credit queue.
+					setCurrentStage(1);
+					try {
+						await queryClient.fetchQuery({
+							queryKey: ["loan", "offer", "default"],
+							queryFn: () => getLoanOffer(),
+							staleTime: 0,
+						});
+					} catch (offerError) {
+						const info = getApiErrorInfo(offerError);
+						const text = `${info.detail ?? ""} ${info.message ?? ""}`.toLowerCase();
+						if (info.status === 403) {
+							// Underwriting / credit queue still running: show the review screen, it returns here when approved.
+							await finish(() =>
+								router.replace(
+									(text.includes("underwriting") ? "/application-verification" : "/no-approved-amount") as any,
+								),
+							);
 							return;
 						}
-
-						if (currentStep === "address_submission") {
-							router.push({
-								pathname: "/aadhaar-kyc",
-								params: { startFromAddress: "true" },
-							});
+						if (info.status === 404 && text.includes("no lender product allocated")) {
+							await finish(() => router.replace("/no-lenders-available" as any));
 							return;
 						}
-
-						let targetStep = currentStep;
-						if (targetStep === "credit_queue" && isRepeatUser) {
-							targetStep =
-								params.next_step ||
-								workflowProgress?.next_required_step ||
-								"loan_application";
-						}
-
-						if (targetStep === "digilocker") {
-							router.push("/digilocker-kyc" as any);
+						if (info.status === 409) {
+							queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+							await finish(() => router.replace("/(tabs)"));
 							return;
 						}
-
-						const nextRoute = StepHref[targetStep as keyof typeof StepHref];
-						if (nextRoute) {
-							router.push(nextRoute as any);
-						} else {
-							console.warn("Unknown step in search-loan:", targetStep);
-							router.push("/(tabs)");
-						}
-					} else {
-						router.push("/(tabs)");
+						// Network error / slow server / 5xx: keep searching, do not skip the loader.
+						await wait(POLL_MS);
+						continue;
 					}
-				} catch (error) {
-					console.error("Error fetching dashboard data in search-loan:", error);
-					router.push("/(tabs)");
-				}
-			}, 8000);
 
-			return () => {
-				clearTimeout(stageTimer1);
-				clearTimeout(stageTimer2);
-				clearTimeout(completeTimer);
-			};
-		}
-	}, [showProgress, isCompleted, isRepeatUser, params.next_step]);
+					markLoanSearchDone();
+					await finish(() => router.replace("/loan-approved"));
+					return;
+				} catch {
+					// Dashboard call failed (offline / slow): retry until the give-up limit.
+					await wait(POLL_MS);
+				}
+			}
+		};
+
+		run();
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [showProgress, attempt, isRepeatUser, params.next_step]);
 
 	const innerRingAnimatedStyle = useAnimatedStyle(() => ({
 		transform: [{ rotate: `${innerRingRotation.value}deg` }],
@@ -388,6 +416,23 @@ export default function SearchLoan() {
 							{t("thisMayTakeAWhile", "This may take a")}{" "}
 							<Text style={styles.whileText}>{t("while", "While")}</Text>
 						</Text>
+
+						{slowNetwork && !searchFailed && (
+							<Text style={styles.slowText}>
+								{t("takingLongerThanUsual", "Taking longer than usual. Please keep the app open.")}
+							</Text>
+						)}
+
+						{searchFailed && (
+							<View style={styles.retryBox}>
+								<Text style={styles.slowText}>
+									{t("couldNotCompleteSearch", "We couldn't complete the search. Please check your connection and try again.")}
+								</Text>
+								<TouchableOpacity style={styles.retryButton} onPress={() => setAttempt((n) => n + 1)}>
+									<Text style={styles.retryButtonText}>{t("retry", "Retry")}</Text>
+								</TouchableOpacity>
+							</View>
+						)}
 					</View>
 				)}
 			</View>
@@ -526,6 +571,22 @@ const styles = StyleSheet.create({
 		backgroundColor: "rgba(255, 255, 255, 0.45)",
 		borderRadius: 3,
 	},
+	slowText: {
+		marginTop: 14,
+		fontSize: width(3.6),
+		color: "#6B7280",
+		textAlign: "center",
+		maxWidth: 290,
+	},
+	retryBox: { alignItems: "center", marginTop: 6 },
+	retryButton: {
+		marginTop: 14,
+		backgroundColor: primary,
+		borderRadius: 14,
+		paddingVertical: 12,
+		paddingHorizontal: 32,
+	},
+	retryButtonText: { fontSize: width(4), fontWeight: "700", color: dark },
 	connectingText: {
 		fontSize: width(6.2),
 		color: "#1F2937",

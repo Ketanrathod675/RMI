@@ -2503,25 +2503,6 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	// ─── 36. Endpoint: loan-agreement download ────────────────────────────────
-	if (url.includes("loan-agreement") && url.includes("download") && method === "get") {
-		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for loan agreement download");
-
-		return {
-			data: {
-				success: true,
-				download_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-				message: "Loan agreement ready for download [MOCK MODE]",
-			},
-			status: 200,
-			statusText: "OK",
-			headers: {},
-			config,
-		};
-	}
-
 	// ─── 37. Endpoint: insurance/download-my-policy ───────────────────────────
 	if (url.includes("insurance/download-my-policy") && method === "post") {
 		await delay(300);
@@ -2794,35 +2775,20 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	// ─── 44. Endpoint: loan-agreement/generate & sanction-letter/generate ────
-	if ((url.includes("loan-agreement/generate") || url.includes("sanction-letter/generate")) && method === "post") {
+	// ─── 44. Endpoint: sanction-letter/generate (KFS PDF) ─────────────────────
+	if (url.includes("sanction-letter/generate") && method === "post") {
 		await delay(600);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for generate sanction letter");
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for generate sanction letter (KFS)");
+		// NOTE: the PDF itself is fetched with FileSystem.downloadAsync, which bypasses
+		// this mock. Run against a real backend to see the document.
 		return {
 			data: {
-				success: true,
 				message: "Sanction letter generated successfully [MOCK MODE]",
-				file_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-				data: {
-					loan_number: "LN_MOCK_98765",
-					kfs_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
-				},
-			},
-			status: 200,
-			statusText: "OK",
-			headers: {},
-			config,
-		};
-	}
-
-	// ─── 45. Endpoint: loan-agreement/download (GET) ─────────────────────────
-	if (url.includes("loan-agreement") && url.includes("download") && method === "get") {
-		await delay(400);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loan-agreement download");
-		return {
-			data: {
-				success: true,
-				download_url: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+				status: "generated",
+				sanction_number: "SL_MOCK_98765",
+				file_url: "/api/v1/sanction-letter/download/file",
+				download_url: "/api/v1/sanction-letter/download/file",
+				next_step: "accept_sanction_letter",
 			},
 			status: 200,
 			statusText: "OK",
@@ -2853,15 +2819,17 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	// ─── 47. Endpoint: Digital Signing Initiate & Verify ─────────────────────
-	if ((url.includes("loan-agreement/initiate-signing") || url.includes("sanction-letter/initiate-digital-signing")) && method === "post") {
+	// ─── 47. Endpoint: KFS signing initiate / resend / verify ─────────────────
+	if ((url.includes("loan/kfs/signing/initiate") || url.includes("loan/kfs/signing/resend")) && method === "post") {
 		await delay(400);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for initiate digital signing");
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for KFS signing OTP");
 		return {
 			data: {
 				success: true,
 				otp_sent: true,
-				message: "OTP sent to your registered mobile number [MOCK MODE]",
+				message: "OTP sent for KFS signature verification [MOCK MODE]",
+				expires_in_seconds: 300,
+				sign_in_key: `kfs_signing:mock-${Date.now()}`,
 			},
 			status: 200,
 			statusText: "OK",
@@ -2870,16 +2838,47 @@ export async function handleDevMockRequest(
 		};
 	}
 
-	if ((url.includes("loan-agreement/sign") || url.includes("sanction-letter/verify-otp-and-sign")) && method === "post") {
+	if (url.includes("loan/kfs/signing/verify") && method === "post") {
 		await delay(600);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for verify OTP and sign");
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for KFS verify OTP and sign");
 		return {
 			data: {
 				success: true,
 				signed: true,
-				status: "signed",
-				message: "Sanction letter signed successfully [MOCK MODE]",
-				documents_signed: ["sanction_letter.pdf", "loan_agreement.pdf"],
+				message: "KFS document signed successfully [MOCK MODE]",
+				status: "sanction_letter_accepted",
+				signed_at: new Date().toISOString(),
+				current_step: "enach_mandate",
+				next_step: "pdq_check",
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 47a. Endpoint: consent-document status / sign ────────────────────────
+	if (url.includes("consent-document/status") && method === "get") {
+		await delay(200);
+		return {
+			data: { success: true, signed: false },
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	if (url.includes("consent-document/sign") && method === "post") {
+		await delay(500);
+		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for consent document sign");
+		return {
+			data: {
+				success: true,
+				signed: true,
+				message: "Consent document signed successfully [MOCK MODE]",
+				signed_at: new Date().toISOString(),
 			},
 			status: 200,
 			statusText: "OK",
