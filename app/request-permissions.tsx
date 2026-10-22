@@ -238,8 +238,7 @@ export default function RequestPermissions() {
 					currentStep,
 					dashboardType,
 				});
-				console.log("🔍 [FOWS-DIAG][request-permissions] Full loginResponse at check time:", JSON.stringify(loginResponse));
-				console.log("🔍 [FOWS-DIAG][request-permissions] loginResponse?.user_exists:", loginResponse?.user_exists);
+				console.log("🔍 [FOWS-DIAG][request-permissions] loginResponse user_exists:", loginResponse?.user_exists);
 			}
 
 			setIsLoading(false);

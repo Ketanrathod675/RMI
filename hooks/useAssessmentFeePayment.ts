@@ -101,6 +101,7 @@ export const useAssessmentFeePayment = ({
 	const [isPaymentCompleted, setIsPaymentCompleted] = useState(false);
 	const [delayVisible, setDelayVisible] = useState(false);
 	const [paymentOutcome, setPaymentOutcome] = useState<PaymentOutcome>(null);
+	const [outcomePending, setOutcomePending] = useState(false);
 	const [paymentStatus, setPaymentStatus] = useState({
 		paymentPending: false,
 		paymentTimer: 0,
@@ -116,6 +117,8 @@ export const useAssessmentFeePayment = ({
 	const retriedInProgressRef = useRef(false);
 	const onSuccessRef = useRef(onPaymentSuccess);
 	onSuccessRef.current = onPaymentSuccess;
+	const successHandledRef = useRef<Set<string>>(new Set());
+	const outcomeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const urlHook = Linking.useLinkingURL();
 
 	const clearTimer = async () => {
@@ -133,6 +136,10 @@ export const useAssessmentFeePayment = ({
 		return () => {
 			mountedRef.current = false;
 			runIdRef.current += 1; // stop any running loop
+			if (outcomeTimerRef.current) {
+				clearTimeout(outcomeTimerRef.current);
+				outcomeTimerRef.current = null;
+			}
 		};
 	}, []);
 
@@ -166,14 +173,40 @@ export const useAssessmentFeePayment = ({
 		}
 	};
 
+	const POST_FEE_STEPS = [
+		"pan_verification",
+		"customer_consent_step",
+		"professional_details",
+		"ekyc_ckyc",
+		"selfie_match",
+		"address_submission",
+		"loan_application",
+		"bank_details",
+		"kfs_signing",
+		"enach_mandate",
+		"agreement_signing",
+		"disbursement",
+		"credit_queue",
+		"digilocker",
+		"ckyc",
+	];
+
 	/** Safety net: did the workflow already move past the fee step on the server? */
 	const workflowAdvanced = async (): Promise<boolean> => {
 		try {
 			const dash: any = await getUserDashboardData();
 			const step = String(
 				dash?.current_step || dash?.workflow_progress?.current_step || dash?.current_step_info?.step || "",
-			).toLowerCase();
-			return !!step && step !== "assessment_fee" && step !== "assessment_fee_payment" && step !== "basic_details";
+			).toLowerCase().trim();
+			const status = String(
+				dash?.workflow_progress?.overall_status || dash?.kyc_status || ""
+			).toLowerCase().trim();
+
+			if (status === "rejected" || status === "failed" || step.includes("reject") || step.includes("fail")) {
+				return false;
+			}
+
+			return POST_FEE_STEPS.includes(step);
 		} catch {
 			return false;
 		}
@@ -181,12 +214,19 @@ export const useAssessmentFeePayment = ({
 
 	const finishSuccess = async (txnId: string, res?: any) => {
 		const canonicalTxnId = res?.data?.txnid || txnId;
-		await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], canonicalTxnId);
-		await clearStoredPayment();
 		gatewayOpenRef.current = false;
 		activeRef.current = null;
 		resetPendingUi();
 		setIsPaymentCompleted(true);
+		setOutcomePending(false);
+
+		if (successHandledRef.current.has(canonicalTxnId)) {
+			return;
+		}
+		successHandledRef.current.add(canonicalTxnId);
+
+		await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], canonicalTxnId);
+		await clearStoredPayment();
 		const paymentRef = res?.data?.payment_id || res?.data?.easepayid || canonicalTxnId;
 		trackAssessmentFeePaid(processingFeeAmount, paymentRef).catch(() => { });
 		queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
@@ -202,9 +242,16 @@ export const useAssessmentFeePayment = ({
 		gatewayOpenRef.current = false;
 		activeRef.current = null;
 		resetPendingUi();
+		setOutcomePending(true);
 		// Give the full-screen loader a moment to close before presenting another modal (iOS drops stacked modals).
-		setTimeout(() => {
-			if (mountedRef.current) setPaymentOutcome({ type, txnId });
+		if (outcomeTimerRef.current) {
+			clearTimeout(outcomeTimerRef.current);
+		}
+		outcomeTimerRef.current = setTimeout(() => {
+			if (mountedRef.current) {
+				setPaymentOutcome({ type, txnId });
+				setOutcomePending(false);
+			}
 		}, 450);
 	};
 
@@ -236,6 +283,7 @@ export const useAssessmentFeePayment = ({
 
 		const isStale = () => runIdRef.current !== runId || !mountedRef.current;
 		let notStartedHits = 0;
+		let consecutiveErrors = 0;
 
 		while (!isStale()) {
 			const r = await checkOnce(txnId);
@@ -246,7 +294,14 @@ export const useAssessmentFeePayment = ({
 			if (r.kind === "CANCELLED") return finishWithOutcome("cancelled", txnId);
 			if (r.kind === "EXPIRED") return finishWithOutcome("expired", txnId);
 
-			if (r.kind === "ERROR" && (await workflowAdvanced())) return finishSuccess(txnId);
+			if (r.kind === "ERROR") {
+				consecutiveErrors += 1;
+				if (consecutiveErrors >= 2 && (await workflowAdvanced())) {
+					return finishSuccess(txnId);
+				}
+			} else {
+				consecutiveErrors = 0;
+			}
 
 			// The user left the gateway and the server has no payment attempt at all -> they backed out.
 			if (source === "browser_closed" && r.kind === "PENDING" && r.notStarted) {
@@ -297,10 +352,20 @@ export const useAssessmentFeePayment = ({
 
 	// ---- User came back to the app (app switcher / back) while the gateway was open ----
 	useEffect(() => {
-		const sub = AppState.addEventListener("change", async (state) => {
+		const sub = AppState.addEventListener("change", (state) => {
 			if (state !== "active" || !gatewayOpenRef.current || activeRef.current) return;
-			const txnId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
-			if (txnId) verifyPayment(txnId, "browser_closed");
+			// Set verifying state synchronously FIRST to avoid visible assessment screen gap
+			setIsPaymentPolling(true);
+			setDelayVisible(true);
+			setPaymentStatus((prev) => ({ ...prev, paymentPending: true }));
+			(async () => {
+				const txnId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
+				if (txnId) {
+					verifyPayment(txnId, "browser_closed");
+				} else {
+					resetPendingUi();
+				}
+			})();
 		});
 		return () => sub.remove();
 	}, []);
@@ -338,7 +403,7 @@ export const useAssessmentFeePayment = ({
 
 			let resolvedPhone = "";
 			let resolvedName = "Applicant";
-			let resolvedEmail = "applicant@rapidmoney.in";
+			let resolvedEmail = "";
 			try {
 				const rawPhone = await getStorageItem(STORAGE_KEYS["@phone-number"]);
 				if (rawPhone) {
@@ -351,13 +416,22 @@ export const useAssessmentFeePayment = ({
 			} catch { }
 			try {
 				const profile = await getUserProfile();
-				const full = profile?.personal_details?.full_name;
+				const full = profile?.personal_details?.full_name || (profile as any)?.profile?.full_name || (profile as any)?.name;
 				if (full) resolvedName = full.split(" ")[0].trim() || "Applicant";
 				if (profile?.email) resolvedEmail = profile.email.trim();
+				if (!resolvedEmail && (profile as any)?.personal_details?.email) {
+					resolvedEmail = (profile as any).personal_details.email.trim();
+				}
 				if (!resolvedPhone && (profile as any)?.phone_number)
 					resolvedPhone = String((profile as any).phone_number).replace(/\D/g, "").slice(-10);
 			} catch { }
-			if (!resolvedPhone || resolvedPhone.length < 10) resolvedPhone = "9999999999";
+
+			if (!resolvedPhone || resolvedPhone.length < 10) {
+				throw new Error("Valid 10-digit mobile number required. Please complete your profile before proceeding.");
+			}
+			if (!resolvedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resolvedEmail)) {
+				throw new Error("Valid email address required. Please complete your profile before proceeding.");
+			}
 
 			return await initiateAssessmentFee({
 				lead_id: targetLeadId,
@@ -411,6 +485,11 @@ export const useAssessmentFeePayment = ({
 				try {
 					const result: any = await WebBrowser.openAuthSessionAsync(url, PAYMENT_RETURN_SCHEME);
 					Logger.debug("Payment browser session closed", result?.type);
+
+					// Set verifying state synchronously immediately upon browser return
+					setIsPaymentPolling(true);
+					setDelayVisible(true);
+					setPaymentStatus((prev) => ({ ...prev, paymentPending: true }));
 
 					if (result?.type === "success" && result?.url) {
 						const { queryParams } = Linking.parse(result.url);
@@ -492,6 +571,7 @@ export const useAssessmentFeePayment = ({
 		setDelayVisible,
 		paymentStatus,
 		paymentOutcome,
+		outcomePending,
 		recheckPayment,
 		dismissPaymentOutcome,
 		simulateDeepLinkReturn,

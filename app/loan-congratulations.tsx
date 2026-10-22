@@ -6,7 +6,7 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
 import { setApplicationComplete, useDispatch } from "@/store";
 import { trackDisbursement } from "@/utils/analytics";
-import { axios, URLS } from "@/utils/api";
+import { getMandateStatus, getUserDashboardData } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { encode } from "@/utils/encode_decode";
 import { clearLastVisitedScreen } from "@/utils/journey-tracker";
@@ -18,16 +18,29 @@ import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	BackHandler,
-	Modal,
 	StyleSheet,
 	Text,
-	TextInput,
 	TouchableOpacity,
 	View,
 } from "react-native";
 
 const COINS_GROUPED = Images.COINS_GROUPED;
 const GREEN_CHECKMARK = Images.GREEN_CHECKMARK;
+
+const normalizeMandateStatus = (s?: string | null): string =>
+	String(s ?? "").trim().toLowerCase().replace(/[^a-z]/g, "");
+
+const isSuccessStatus = (s?: string | null): boolean => {
+	if (!s) return false;
+	const lower = normalizeMandateStatus(s);
+	return ["true", "success", "successful", "authorized", "authorised", "completed", "complete", "active", "activated"].includes(lower);
+};
+
+const isFailureStatus = (s?: string | null): boolean => {
+	if (!s) return false;
+	const lower = String(s).trim().toLowerCase();
+	return ["false", "failure", "failed", "usercancelled", "usercanceled", "dropped", "bounced"].includes(lower);
+};
 
 export default function LoanCongratulations() {
 	useJourneyTracker("/loan-congratulations");
@@ -36,13 +49,8 @@ export default function LoanCongratulations() {
 	const { t } = useTranslation();
 	const dispatch = useDispatch();
 
-	const [modalVisible, setModalVisible] = useState(false);
-	const [rating, setRating] = useState(0);
-	const [feedback, setFeedback] = useState("");
-	const [status, setStatus] = useState<"success" | "failure" | null>(null);
+	const [status, setStatus] = useState<"success" | "failure" | "in_progress" | null>(null);
 	const [apiMessage, setApiMessage] = useState<string | null>(null);
-	const [redirectModalVisible, setRedirectModalVisible] = useState(false);
-	const [redirectCountdown, setRedirectCountdown] = useState(15);
 	const [showFinalScreen, setShowFinalScreen] = useState(false);
 
 	const urlHook = Linking.useLinkingURL();
@@ -78,14 +86,17 @@ export default function LoanCongratulations() {
 				await checkMandateStatus(txnid, params.status as string);
 			} else if (params?.status) {
 				const paramStatus = params.status as string;
-				if (paramStatus === "failure") {
-					setStatus("failure");
-				} else if (paramStatus === "success") {
-					setStatus("success");
-				} else {
-					setStatus("failure");
-				}
 				processedRef.current = true;
+				if (isSuccessStatus(paramStatus)) {
+					setStatus("success");
+				} else if (isFailureStatus(paramStatus)) {
+					setStatus("failure");
+				} else {
+					await checkMandateStatus(undefined, paramStatus);
+				}
+			} else {
+				// No params: verify mandate status with server
+				await checkMandateStatus();
 			}
 		};
 
@@ -114,10 +125,12 @@ export default function LoanCongratulations() {
 					} else if (parsed?.queryParams?.status) {
 						processedRef.current = true;
 						const parsedStatus = parsed.queryParams.status as string;
-						if (parsedStatus === "success") {
+						if (isSuccessStatus(parsedStatus)) {
 							setStatus("success");
-						} else {
+						} else if (isFailureStatus(parsedStatus)) {
 							setStatus("failure");
+						} else {
+							await checkMandateStatus(undefined, parsedStatus);
 						}
 					}
 				} catch (error) {
@@ -152,10 +165,12 @@ export default function LoanCongratulations() {
 				} else if (parsed?.queryParams?.status) {
 					processedRef.current = true;
 					const parsedStatus = parsed.queryParams.status as string;
-					if (parsedStatus === "success") {
+					if (isSuccessStatus(parsedStatus)) {
 						setStatus("success");
-					} else {
+					} else if (isFailureStatus(parsedStatus)) {
 						setStatus("failure");
+					} else {
+						await checkMandateStatus(undefined, parsedStatus);
 					}
 				}
 			} catch (error) {
@@ -167,53 +182,93 @@ export default function LoanCongratulations() {
 		processDeepLink();
 	}, [urlHook]);
 
-	const checkMandateStatus = async (txnId: string, clientStatus?: string) => {
+	const checkMandateStatus = async (txnId?: string, clientStatus?: string) => {
 		if (verifiedTxnIdRef.current) {
 			return;
 		}
 
-		let apiVerifiedSuccess = false;
+		// 1. Client status confirmed success (e.g. status=true or status=success)
+		if (isSuccessStatus(clientStatus)) {
+			console.log("✅ [LoanCongrats] Client indicated mandate success:", clientStatus);
+			verifiedTxnIdRef.current = txnId || "confirmed";
+			setStatus("success");
+			trackDisbursement(txnId || "").catch(() => {});
+			return;
+		}
 
+		// 2. Client status confirmed failure
+		if (isFailureStatus(clientStatus)) {
+			console.log("❌ [LoanCongrats] Client indicated mandate failure:", clientStatus);
+			setStatus("failure");
+			return;
+		}
+
+		// 3. Verify against backend mandate status endpoint
 		try {
 			console.log("🔍 [LoanCongrats] Checking mandate status with server");
-			const response = await axios.get(URLS.autocollect.check_mandate(txnId));
+			const response = await getMandateStatus(txnId || undefined);
+			const data = response?.data;
 
-			if (response.data) {
-				const msg = response.data.message;
-				if (msg) {
-					setApiMessage(msg);
+			if (data) {
+				const rawStatus = normalizeMandateStatus(data?.status);
+				if (isSuccessStatus(rawStatus)) {
+					console.log("✅ [LoanCongrats] Server confirmed mandate is active/authorized");
+					verifiedTxnIdRef.current = txnId || data.txnid || "confirmed";
+					setStatus("success");
+					trackDisbursement(txnId || data.txnid || "").catch(() => {});
+					return;
 				}
 
-				if (response.data.status === "success" || response.data.success === true) {
-					apiVerifiedSuccess = true;
-				} else if (response.data.status === "failure") {
-					apiVerifiedSuccess = false;
+				if (isFailureStatus(rawStatus)) {
+					console.log("❌ [LoanCongrats] Server confirmed mandate failure");
+					setStatus("failure");
+					return;
+				}
+
+				if ((data as any)?.is_complete === true) {
+					console.log("✅ [LoanCongrats] Backend confirmed mandate completion");
+					verifiedTxnIdRef.current = txnId || data.txnid || "confirmed";
+					setStatus("success");
+					trackDisbursement(txnId || data.txnid || "").catch(() => {});
+					return;
+				}
+
+				if (
+					["pending", "initiated", "preinitiated", "inprogress", "inprocess", "processing", "awaiting"].includes(rawStatus) ||
+					data?.is_active === true
+				) {
+					setApiMessage(t("mandateRegistrationInProgressDesc"));
+					setStatus("in_progress");
+					return;
 				}
 			}
 		} catch (error) {
-			console.error("❌ [LoanCongrats] Error checking mandate status side-effect");
+			console.error("❌ [LoanCongrats] Error checking mandate status with server", error);
 		}
 
-		// Fail-safe logic: clientStatus must be success AND not flagged as API failure
-		if (clientStatus === "success") {
-			console.log("✅ [LoanCongrats] Mandate verification successful");
-			verifiedTxnIdRef.current = txnId;
-			setStatus("success");
-
-			// Analytics: Disbursement tracking
-			trackDisbursement(txnId).catch(() => {});
-		} else if (clientStatus === "failure") {
-			console.log("❌ [LoanCongrats] Mandate status reported failure");
-			setStatus("failure");
-		} else if (apiVerifiedSuccess) {
-			console.log("✅ [LoanCongrats] Server confirmed mandate success");
-			verifiedTxnIdRef.current = txnId;
-			setStatus("success");
-			trackDisbursement(txnId).catch(() => {});
-		} else {
-			console.log("⚠️ [LoanCongrats] No success status confirmed. Defaulting to failure.");
-			setStatus("failure");
+		// 4. Fallback check: verify user dashboard workflow progress
+		try {
+			const dashboard: any = await getUserDashboardData();
+			const currentStep = String(
+				dashboard?.workflow_progress?.current_step || dashboard?.current_step || "",
+			).toLowerCase().trim();
+			if (currentStep === "pdq_check") {
+				setApiMessage(t("mandateRegistrationInProgressDesc"));
+				setStatus("in_progress");
+				return;
+			}
+			if (currentStep && currentStep !== "enach_mandate" && currentStep !== "auto_debit_setup") {
+				console.log("✅ [LoanCongrats] Workflow step moved past mandate:", currentStep);
+				verifiedTxnIdRef.current = txnId || "confirmed";
+				setStatus("success");
+				return;
+			}
+		} catch {
+			// ignore
 		}
+
+		// Default to failure only if all checks are exhausted
+		setStatus("failure");
 	};
 
 	// Back handler and gesture navigation lock
@@ -251,44 +306,9 @@ export default function LoanCongratulations() {
 		});
 
 		await setStorageItem(STORAGE_KEYS["@completion-date"], encode(formattedDate));
-		setModalVisible(true);
 		dispatch(setApplicationComplete(true));
-	};
-
-	const handleStarPress = (starIndex: number) => {
-		setRating(starIndex + 1);
-	};
-
-	const handleSubmit = () => {
-		console.log("📝 [LoanCongrats] Feedback submitted, rating:", rating);
-		setModalVisible(false);
-		setRedirectModalVisible(true);
-	};
-
-	useEffect(() => {
-		let interval: ReturnType<typeof setInterval>;
-		if (redirectModalVisible) {
-			interval = setInterval(() => {
-				setRedirectCountdown((prev) => {
-					if (prev <= 1) {
-						clearInterval(interval);
-						allowNavigationRef.current = true;
-						router.push("/(tabs)");
-						return 0;
-					}
-					return prev - 1;
-				});
-			}, 1000);
-		}
-		return () => {
-			if (interval) clearInterval(interval);
-		};
-	}, [redirectModalVisible, router]);
-
-	const handleCloseModal = () => {
-		setModalVisible(false);
 		allowNavigationRef.current = true;
-		router.push("/(tabs)");
+		router.replace("/(tabs)");
 	};
 
 	const handleRetryMandate = () => {
@@ -304,6 +324,44 @@ export default function LoanCongratulations() {
 	const handleContinue = () => {
 		setShowFinalScreen(true);
 	};
+
+	if (status === "in_progress") {
+		return (
+			<View style={styles.failureContainer}>
+				<View style={styles.failureContent}>
+					<ActivityIndicator size="large" color="#15803d" />
+					<Text style={styles.failureTitle}>{t("mandateRegistrationInProgress")}</Text>
+					<Text style={styles.failureSubtitle}>
+						{apiMessage || t("mandateRegistrationInProgressDesc")}
+					</Text>
+					<TouchableOpacity
+						style={styles.retryButton}
+						onPress={() => {
+							setStatus(null);
+						setApiMessage(null);
+						const txnid = typeof params?.txnid === "string" ? params.txnid : undefined;
+						void checkMandateStatus(txnid);
+						}}>
+						<Text style={styles.retryButtonText}>{t("checkAgain")}</Text>
+					</TouchableOpacity>
+					<TouchableOpacity style={styles.dashboardButton} onPress={handleBackToDashboard}>
+						<Text style={styles.dashboardButtonText}>{t("goToDashboard")}</Text>
+					</TouchableOpacity>
+				</View>
+			</View>
+		);
+	}
+
+	if (status === null) {
+		return (
+			<View style={styles.failureContainer}>
+				<View style={styles.failureContent}>
+					<ActivityIndicator size="large" color="#15803d" />
+					<Text style={styles.failureSubtitle}>{t("mandateVerifyingSubtitle")}</Text>
+				</View>
+			</View>
+		);
+	}
 
 	if (status === "failure") {
 		return (
@@ -404,102 +462,7 @@ export default function LoanCongratulations() {
 					</TouchableOpacity>
 				</View>
 
-				{/* Review & Feedback Modal */}
-				<Modal
-					visible={modalVisible}
-					transparent={true}
-					animationType="slide"
-					onRequestClose={handleCloseModal}>
-					<TouchableOpacity
-						style={styles.modalOverlay}
-						activeOpacity={1}
-						onPress={handleCloseModal}>
-						<TouchableOpacity
-							style={styles.modalContent}
-							activeOpacity={1}
-							onPress={(e) => e.stopPropagation()}>
-							{/* Modal Header Line */}
-							<View style={styles.modalHeaderLine} />
 
-							{/* Title */}
-							<TranslatedText
-								style={styles.modalTitle}
-								translationKey="reviewFeedback"
-							/>
-
-							{/* Rating Section */}
-							<TranslatedText
-								style={styles.ratingQuestion}
-								translationKey="howWouldYouRate"
-							/>
-							<View style={styles.starsContainer}>
-								{[...Array(5)].map((_, index) => (
-									<TouchableOpacity
-										key={index}
-										onPress={() => handleStarPress(index)}
-										style={styles.starButton}>
-										<Text
-											style={[
-												styles.star,
-												index < rating
-													? styles.filledStar
-													: styles.emptyStar,
-											]}>
-											★
-										</Text>
-									</TouchableOpacity>
-								))}
-							</View>
-
-							{/* Feedback Section */}
-							<TranslatedText
-								style={styles.feedbackLabel}
-								translationKey="tellUsWhatYourLoansAbout"
-							/>
-
-							{/* Text Input */}
-							<TextInput
-								style={styles.feedbackInput}
-								placeholder={t("enterFeedback")}
-								placeholderTextColor="#999"
-								multiline={true}
-								numberOfLines={4}
-								value={feedback}
-								onChangeText={setFeedback}
-								textAlignVertical="top"
-							/>
-
-							{/* Submit Button */}
-							<TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-								<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-									<TranslatedText
-										style={styles.submitButtonText}
-										translationKey="submit"
-									/>
-									<IconSymbol name="arrow.right" size={20} color="#000000" />
-								</View>
-							</TouchableOpacity>
-						</TouchableOpacity>
-					</TouchableOpacity>
-				</Modal>
-
-				{/* Redirect Modal */}
-				<Modal
-					visible={redirectModalVisible}
-					transparent={true}
-					animationType="fade"
-					onRequestClose={() => {}}>
-					<View style={styles.redirectModalOverlay}>
-						<View style={styles.redirectModalContent}>
-							<ActivityIndicator size="large" color="#000000" style={styles.loader} />
-							<TranslatedText
-								style={styles.redirectText}
-								translationKey="redirectingToDashboardIn"
-								values={{ seconds: redirectCountdown.toString() }}
-							/>
-						</View>
-					</View>
-				</Modal>
 			</View>
 		</>
 	);
@@ -574,84 +537,7 @@ const styles = StyleSheet.create({
 		fontWeight: "600",
 		color: "#000000",
 	},
-	modalOverlay: {
-		flex: 1,
-		backgroundColor: "rgba(0, 0, 0, 0.5)",
-		justifyContent: "flex-end",
-	},
-	modalContent: {
-		backgroundColor: "white",
-		borderTopLeftRadius: 20,
-		borderTopRightRadius: 20,
-		paddingHorizontal: width(6),
-		paddingTop: height(2),
-		paddingBottom: height(4),
-		minHeight: height(60),
-	},
-	modalHeaderLine: {
-		width: width(12),
-		height: 4,
-		backgroundColor: "#E0E0E0",
-		borderRadius: 2,
-		alignSelf: "center",
-		marginBottom: height(3),
-	},
-	modalTitle: {
-		fontSize: 20,
-		fontWeight: "600",
-		color: "#333",
-		textAlign: "center",
-		marginBottom: height(4),
-	},
-	ratingQuestion: {
-		fontSize: 16,
-		color: "#333",
-		marginBottom: height(2),
-	},
-	starsContainer: {
-		flexDirection: "row",
-		marginBottom: height(4),
-	},
-	starButton: {
-		marginRight: width(2),
-	},
-	star: {
-		fontSize: 32,
-	},
-	emptyStar: {
-		color: "#E0E0E0",
-	},
-	filledStar: {
-		color: "#FFD700",
-	},
-	feedbackLabel: {
-		fontSize: 14,
-		color: "#333",
-		marginBottom: height(2),
-		lineHeight: 20,
-	},
-	feedbackInput: {
-		borderWidth: 1,
-		borderColor: "#E0E0E0",
-		borderRadius: 8,
-		padding: width(4),
-		fontSize: 14,
-		color: "#333",
-		minHeight: height(12),
-		marginBottom: height(4),
-	},
-	submitButton: {
-		backgroundColor: "#A4E65E",
-		borderRadius: 25,
-		paddingVertical: height(2),
-		alignItems: "center",
-		width: "100%",
-	},
-	submitButtonText: {
-		fontSize: 18,
-		fontWeight: "600",
-		color: "#000000",
-	},
+
 	failureContainer: {
 		flex: 1,
 		backgroundColor: white,
@@ -721,36 +607,5 @@ const styles = StyleSheet.create({
 		fontSize: font(1.9),
 		fontWeight: "600",
 	},
-	redirectModalOverlay: {
-		flex: 1,
-		backgroundColor: "rgba(0, 0, 0, 0.7)",
-		justifyContent: "center",
-		alignItems: "center",
-	},
-	redirectModalContent: {
-		backgroundColor: "white",
-		borderRadius: 16,
-		padding: width(8),
-		alignItems: "center",
-		width: width(85),
-		elevation: 5,
-		shadowColor: "#000",
-		shadowOffset: {
-			width: 0,
-			height: 2,
-		},
-		shadowOpacity: 0.25,
-		shadowRadius: 3.84,
-	},
-	loader: {
-		marginBottom: height(3),
-		transform: [{ scale: 1.5 }],
-	},
-	redirectText: {
-		fontSize: 18,
-		fontWeight: "600",
-		color: "#000",
-		textAlign: "center",
-		lineHeight: 26,
-	},
+
 });

@@ -193,7 +193,7 @@ export default function LoanApplication() {
 	const navigation = useNavigation();
 	const dispatch = useAppDispatch();
 	const { userId, accessToken, logout, applicantFrom } = useAuth(true);
-	const { runStep, resetJourney } = useJourneyLoader();
+	const { runStep, runStepThenNavigate, resetJourney } = useJourneyLoader();
 	const hasAllocatedInSessionRef = useRef(false);
 
 	useEffect(() => {
@@ -295,97 +295,98 @@ export default function LoanApplication() {
 				console.log("✅ [KYC Submit] Submitted successfully to FastAPI backend");
 			}
 
-			await runStep("basic_details", async () => {
-				const leadId = response?.data?.lead_id ? String(response.data.lead_id) : "";
-				const rawAf = response?.data?.aftype ?? response?.data?.af ?? "yes";
-				const afFlag = typeof rawAf === "string" ? rawAf : Number(rawAf) === 0 ? "no" : "yes";
-
-				const feeAmount = response?.data?.assessment_fee ?? response?.data?.af_amount ?? response?.data?.af ?? 826;
-
-				if (leadId) {
-					await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], leadId);
-				}
-				if (afFlag) {
-					await AsyncStorage.setItem(STORAGE_KEYS["@af-flag"], String(afFlag));
-				}
-				if (feeAmount) {
-					await AsyncStorage.setItem(STORAGE_KEYS["@assessment-fee-amount"], String(feeAmount));
-				}
-
-				queryClient.invalidateQueries({
-					queryKey: ["user", "dashboard"],
-				});
-
-				// Use allocation from KYC submit response, or fallback to adapter once
-				let allocatedId = response?.data?.allocated_lender_id ?? null;
-				let allocatedName = response?.data?.lender_name ?? null;
-
-				let effectiveUserId: string | null | undefined = userId;
-				if (!effectiveUserId) {
-					const token: string | null | undefined =
-						accessToken ||
-						(await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]));
-					effectiveUserId = getUserIdFromToken(token);
-					if (effectiveUserId) {
-						dispatch(setAuthUserId(effectiveUserId));
-						await setStorageItem(STORAGE_KEYS["@user-id"], encode(effectiveUserId));
-					}
-				}
-
-				if (!allocatedId && !hasAllocatedInSessionRef.current) {
-					hasAllocatedInSessionRef.current = true;
-					try {
-						const allocation = await triggerPostKycAllocationAdapter();
-						allocatedId = allocation?.allocated_lender_id ?? null;
-						allocatedName = allocation?.lender_name ?? null;
-					} catch {
-						/* user proceeds without an allocated lender */
-					}
-				}
-
-				if (allocatedId) {
-					await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-id"], allocatedId);
-					if (allocatedName) {
-						await AsyncStorage.setItem(
-							STORAGE_KEYS["@allocated-lender-name"],
-							allocatedName,
-						);
-					}
-				} else {
-					await AsyncStorage.multiRemove([
-						STORAGE_KEYS["@allocated-lender-id"],
-						STORAGE_KEYS["@allocated-lender-name"],
-					]);
-				}
-			}, { minDurationMs: BASIC_DETAILS_LOADER_MS });
-
-			Toast.show({
-				type: "success",
-				text1: t("personalDetailsSubmittedSuccessfully", "Personal Details Submitted"),
-				text2: t("proceedingToNextStep", "Proceeding to next step..."),
-			});
-
 			const leadId = response?.data?.lead_id ? String(response.data.lead_id) : "";
 			const rawAf = response?.data?.aftype ?? response?.data?.af ?? "yes";
 			const afFlag = typeof rawAf === "string" ? rawAf : Number(rawAf) === 0 ? "no" : "yes";
 			const feeAmount = response?.data?.assessment_fee ?? response?.data?.af_amount ?? response?.data?.af ?? 826;
 
-			// If af is "no", assessment-fee is skipped completely
-			if (afFlag === "no") {
-				router.replace({
-					pathname: "/professional-details" as any,
-					params: { disableBack: "true" },
-				});
-			} else {
-				router.replace({
-					pathname: "/new-assessment-fee",
-					params: {
-						af: String(afFlag),
-						lead_id: leadId,
-						fee_amount: String(feeAmount),
+			await runStepThenNavigate(
+				"basic_details",
+				async () => {
+					if (leadId) {
+						await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], leadId);
+					}
+					if (afFlag) {
+						await AsyncStorage.setItem(STORAGE_KEYS["@af-flag"], String(afFlag));
+					}
+					if (feeAmount) {
+						await AsyncStorage.setItem(STORAGE_KEYS["@assessment-fee-amount"], String(feeAmount));
+					}
+
+					queryClient.invalidateQueries({
+						queryKey: ["user", "dashboard"],
+					});
+
+					// Use allocation from KYC submit response, or fallback to adapter once
+					let allocatedId = response?.data?.allocated_lender_id ?? null;
+					let allocatedName = response?.data?.lender_name ?? null;
+
+					let effectiveUserId: string | null | undefined = userId;
+					if (!effectiveUserId) {
+						const token: string | null | undefined =
+							accessToken ||
+							(await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]));
+						effectiveUserId = getUserIdFromToken(token);
+						if (effectiveUserId) {
+							dispatch(setAuthUserId(effectiveUserId));
+							await setStorageItem(STORAGE_KEYS["@user-id"], encode(effectiveUserId));
+						}
+					}
+
+					if (!allocatedId && !hasAllocatedInSessionRef.current) {
+						hasAllocatedInSessionRef.current = true;
+						try {
+							const allocation = await triggerPostKycAllocationAdapter();
+							allocatedId = allocation?.allocated_lender_id ?? null;
+							allocatedName = allocation?.lender_name ?? null;
+						} catch {
+							/* user proceeds without an allocated lender */
+						}
+					}
+
+					if (allocatedId) {
+						await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-id"], allocatedId);
+						if (allocatedName) {
+							await AsyncStorage.setItem(
+								STORAGE_KEYS["@allocated-lender-name"],
+								allocatedName,
+							);
+						}
+					} else {
+						await AsyncStorage.multiRemove([
+							STORAGE_KEYS["@allocated-lender-id"],
+							STORAGE_KEYS["@allocated-lender-name"],
+						]);
+					}
+
+					Toast.show({
+						type: "success",
+						text1: t("personalDetailsSubmittedSuccessfully", "Personal Details Submitted"),
+						text2: t("proceedingToNextStep", "Proceeding to next step..."),
+					});
+				},
+				{
+					minDurationMs: BASIC_DETAILS_LOADER_MS,
+					navigate: () => {
+						// If af is "no", assessment-fee is skipped completely
+						if (afFlag === "no") {
+							router.replace({
+								pathname: "/professional-details" as any,
+								params: { disableBack: "true" },
+							});
+						} else {
+							router.replace({
+								pathname: "/new-assessment-fee",
+								params: {
+									af: String(afFlag),
+									lead_id: leadId,
+									fee_amount: String(feeAmount),
+								},
+							});
+						}
 					},
-				});
-			}
+				}
+			);
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);

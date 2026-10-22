@@ -74,6 +74,11 @@ export const TOKENS = {
 	failedRed: "#EF4444",
 	failedText: "#DC2626",
 	failedPillBg: "#FEE2E2",
+	attentionBg: "#FFFBEB",
+	attentionBorder: "#FDE68A",
+	attentionAmber: "#F59E0B",
+	attentionText: "#B45309",
+	attentionPillBg: "#FEF3C7",
 } as const;
 
 export interface VerificationLoaderStep {
@@ -88,6 +93,8 @@ export interface VerificationLoaderProps {
 	completedIds: string[];
 	activeId: string | null;
 	failedId?: string | null;
+	attentionId?: string | null;
+	attentionBadgeLabel?: string | null;
 	progressPercent: number;
 	headingText?: string;
 	slaText?: string | null;
@@ -306,6 +313,22 @@ function FailedIcon() {
 	);
 }
 
+// 28x28 Attention Icon with SVG Exclamation
+function AttentionIcon() {
+	return (
+		<View style={styles.attentionIconCircle} accessibilityElementsHidden={true} importantForAccessibility="no">
+			<Svg width={14} height={14} viewBox="0 0 14 14">
+				<Path
+					d="M7 3V8M7 10.5V11"
+					stroke={TOKENS.white}
+					strokeWidth={2}
+					strokeLinecap="round"
+				/>
+			</Svg>
+		</View>
+	);
+}
+
 // Strikethrough Text with 320ms animated underline/strike
 function StrikethroughText({ text }: { text: string }) {
 	const reducedMotion = useReducedMotion();
@@ -407,6 +430,8 @@ export function VerificationLoaderContent({
 	completedIds,
 	activeId,
 	failedId,
+	attentionId,
+	attentionBadgeLabel,
 	progressPercent,
 	headingText,
 	slaText,
@@ -471,7 +496,8 @@ export function VerificationLoaderContent({
 		steps.forEach((step, idx) => {
 			const isActiveRow =
 				(activeId === step.id && !completedIds.includes(step.id)) ||
-				failedId === step.id;
+				failedId === step.id ||
+				attentionId === step.id;
 			if (isActiveRow && activeIdx === -1) activeIdx = idx;
 			const h = isActiveRow ? ROW_H_ACTIVE : ROW_H;
 			tops.push(top);
@@ -485,7 +511,7 @@ export function VerificationLoaderContent({
 			totalListHeight: Math.max(0, top - ROW_GAP),
 			activeIndex: activeIdx,
 		};
-	}, [steps, activeId, failedId, completedIds]);
+	}, [steps, activeId, failedId, attentionId, completedIds]);
 
 	// Keep the active row in the 3rd slot (5 rows) or 2nd slot (3-4 rows)
 	const centerSlot = m.visibleRows >= 5 ? 2 : 1;
@@ -669,8 +695,9 @@ export function VerificationLoaderContent({
 							{steps.map((step, idx) => {
 								const isCompleted = completedIds.includes(step.id);
 								const isFailed = failedId === step.id;
-								const isActive = activeId === step.id && !isCompleted && !isFailed;
-								const slotHeight = isActive || isFailed ? ROW_H_ACTIVE : ROW_H;
+								const isAttention = attentionId === step.id && !isCompleted;
+								const isActive = activeId === step.id && !isCompleted && !isFailed && !isAttention;
+								const slotHeight = isActive || isFailed || isAttention ? ROW_H_ACTIVE : ROW_H;
 
 								const a11yLabel = isCompleted
 									? `${step.title}, completed`
@@ -678,7 +705,9 @@ export function VerificationLoaderContent({
 										? `${step.title}, in progress`
 										: isFailed
 											? `${step.title}, failed`
-											: `${step.title}, pending`;
+											: isAttention
+												? `${step.title}, ${attentionBadgeLabel || t("stepActionNeeded", "Action needed")}`
+												: `${step.title}, pending`;
 
 								let row: React.ReactNode;
 
@@ -719,6 +748,29 @@ export function VerificationLoaderContent({
 											<View style={styles.failedBadge}>
 												<Text style={styles.failedBadgeText}>
 													{t("stepFailed", "Failed")}
+												</Text>
+											</View>
+										</View>
+									);
+								} else if (isAttention) {
+									row = (
+										<View style={styles.attentionRow} accessible accessibilityLabel={a11yLabel}>
+											<View style={styles.rowLeft}>
+												<AttentionIcon />
+												<View style={styles.rowText}>
+													<Text style={styles.attentionTitleText} numberOfLines={1}>
+														{step.title}
+													</Text>
+													{step.subtitle ? (
+														<Text style={styles.attentionSubtitleText} numberOfLines={1}>
+															{step.subtitle}
+														</Text>
+													) : null}
+												</View>
+											</View>
+											<View style={styles.attentionBadge}>
+												<Text style={styles.attentionBadgeText}>
+													{attentionBadgeLabel || t("stepActionNeeded", "Action needed")}
 												</Text>
 											</View>
 										</View>
@@ -813,6 +865,8 @@ export default function VerificationLoader({
 	completedIds,
 	activeId,
 	failedId,
+	attentionId,
+	attentionBadgeLabel,
 	progressPercent,
 	headingText,
 	slaText,
@@ -833,6 +887,8 @@ export default function VerificationLoader({
 					completedIds={completedIds}
 					activeId={activeId}
 					failedId={failedId}
+					attentionId={attentionId}
+					attentionBadgeLabel={attentionBadgeLabel}
 					progressPercent={progressPercent}
 					headingText={headingText}
 					slaText={slaText}
@@ -1170,6 +1226,52 @@ const styles = StyleSheet.create({
 		fontSize: 11,
 		lineHeight: 16,
 		color: TOKENS.failedText,
+	},
+
+	// attention
+	attentionRow: {
+		flex: 1,
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		paddingHorizontal: 9,
+		borderRadius: 12,
+		backgroundColor: TOKENS.attentionBg,
+		borderWidth: 1,
+		borderColor: TOKENS.attentionBorder,
+		gap: 8,
+	},
+	attentionIconCircle: {
+		width: 28,
+		height: 28,
+		borderRadius: 14,
+		backgroundColor: TOKENS.attentionAmber,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	attentionTitleText: {
+		fontFamily: JAKARTA.semibold,
+		fontSize: 14,
+		lineHeight: 20,
+		color: TOKENS.attentionText,
+	},
+	attentionSubtitleText: {
+		fontFamily: JAKARTA.medium,
+		fontSize: 10,
+		lineHeight: 14,
+		color: TOKENS.attentionText,
+	},
+	attentionBadge: {
+		backgroundColor: TOKENS.attentionPillBg,
+		borderRadius: 6,
+		paddingVertical: 2,
+		paddingHorizontal: 8,
+	},
+	attentionBadgeText: {
+		fontFamily: JAKARTA.semibold,
+		fontSize: 11,
+		lineHeight: 16,
+		color: TOKENS.attentionText,
 	},
 
 	// D) pill

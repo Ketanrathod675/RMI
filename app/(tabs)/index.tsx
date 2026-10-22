@@ -1,6 +1,6 @@
 import FAQ from "@/components/FAQ";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
-import { PushNotificationDebugger } from "@/components/PushNotificationDebugger";
+const PushNotificationDebugger = __DEV__ ? require("@/components/PushNotificationDebugger").PushNotificationDebugger : () => null;
 import TestimonialCarousel from "@/components/TestimonialCarousel";
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
@@ -230,8 +230,7 @@ export default function Home() {
 	const { data, isPending, refetch } = useNetworkAwareQuery({
 		queryKey: ["user", "dashboard"],
 		queryFn: getUserDashboardData,
-		staleTime: 3000,
-		retry: 2,
+		staleTime: 30_000,
 	});
 
 	const startVerifyLeadFlow = (isPostPayment = true) => {
@@ -347,14 +346,20 @@ export default function Home() {
 				RNStatusBar.setBackgroundColor("transparent");
 				RNStatusBar.setTranslucent(true);
 			}
-			refetch();
-			refetchReviews();
+			const refreshIfStale = (queryKey: readonly unknown[], staleTime: number, refresh: () => unknown) => {
+				const queryState = queryClient.getQueryState(queryKey);
+				const hasData = queryState?.dataUpdatedAt !== undefined && queryState.dataUpdatedAt > 0;
+				const isStale = !hasData || queryState?.isInvalidated || Date.now() - queryState.dataUpdatedAt >= staleTime;
+				if (isStale && queryClient.isFetching({ queryKey }) === 0) void refresh();
+			};
+			refreshIfStale(["user", "dashboard"], 30_000, refetch);
+			refreshIfStale(["publicReviews"], 60_000, refetchReviews);
 			try {
 				console.log("FB _ dashboard_viewed");
 			} catch (error) {
 				console.error("🔥 [Analytics] FB Dashboard event error:", error);
 			}
-		}, [refetch, refetchReviews])
+		}, [queryClient, refetch, refetchReviews])
 	);
 
 	Logger.debug("Dashboard response", data);
@@ -1026,7 +1031,7 @@ export default function Home() {
 					{/* Greeting Block */}
 					<View style={styles.greetingBlock}>
 						<Text style={styles.userName}>
-							Hi {data?.user_summary?.name ? (data.user_summary.name.length > 20 ? data.user_summary.name.slice(0, 20) + "..." : data.user_summary.name) : "Dev"}
+							Hi {data?.user_summary?.name ? (data.user_summary.name.length > 20 ? data.user_summary.name.slice(0, 20) + "..." : data.user_summary.name) : isPending ? "…" : "there"}
 						</Text>
 						<Text style={styles.subAction}>
 							{data?.dashboard_type === "loan_dashboard"

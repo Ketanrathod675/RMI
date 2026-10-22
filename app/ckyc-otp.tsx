@@ -25,7 +25,7 @@ import {
 
 export default function CKYCOTP() {
 	const { t } = useTranslation();
-	const { runStep } = useJourneyLoader();
+	const { runStep, runStepThenNavigate } = useJourneyLoader();
 	const queryClient = useQueryClient();
 	useJourneyTracker("/ckyc-otp");
 
@@ -155,44 +155,58 @@ export default function CKYCOTP() {
 			if (__DEV__) {
 				console.log("📤 [CKYC] Validating 6-digit OTP...");
 			}
-			await runStep("ekyc_ckyc", async () => {
-				const response = await validateCkycOtp({
-					otp: otpString,
-					session_id: sessionId,
-				});
-
-				if (response.success) {
-					if (__DEV__) {
-						console.log("✅ [CKYC] OTP validated successfully");
-					}
-					setAttemptCount(0);
-					setErrorMessage(null);
-					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-
-					router.replace({
-						pathname: "/ckyc-instructions",
-						params: { startSelfie: "true" },
+			let navTarget: (() => void) | null = null;
+			await runStepThenNavigate(
+				"ekyc_ckyc",
+				async () => {
+					const response = await validateCkycOtp({
+						otp: otpString,
+						session_id: sessionId,
 					});
-					return;
+
+					if (response.success) {
+						if (__DEV__) {
+							console.log("✅ [CKYC] OTP validated successfully");
+						}
+						setAttemptCount(0);
+						setErrorMessage(null);
+						queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+
+						navTarget = () => {
+							router.replace({
+								pathname: "/ckyc-instructions",
+								params: { startSelfie: "true" },
+							});
+						};
+						return;
+					}
+
+					// If validate-otp returned HTTP 200 with success: false
+					const data = response.data;
+					if (data?.switch_to_digilocker) {
+						navTarget = () => {
+							router.replace("/digilocker-kyc" as any);
+						};
+						return;
+					}
+
+					const newAttemptCount = data?.ckyc_attempts ?? (attemptCount + 1);
+					setAttemptCount(newAttemptCount);
+
+					const msg =
+						response.message ||
+						t("invalidOtpEnteredPleaseTryAgain", "Invalid OTP entered. Please try again.");
+					setErrorMessage(msg);
+					setOtp(["", "", "", "", "", ""]);
+					inputRefs.current[0]?.focus();
+					throw new Error(msg);
+				},
+				{
+					navigate: () => {
+						if (navTarget) navTarget();
+					},
 				}
-
-				// If validate-otp returned HTTP 200 with success: false
-				const data = response.data;
-				if (data?.switch_to_digilocker) {
-					router.replace("/digilocker-kyc" as any);
-					return;
-				}
-
-				const newAttemptCount = data?.ckyc_attempts ?? (attemptCount + 1);
-				setAttemptCount(newAttemptCount);
-
-				setErrorMessage(
-					response.message ||
-						t("invalidOtpEnteredPleaseTryAgain", "Invalid OTP entered. Please try again.")
-				);
-				setOtp(["", "", "", "", "", ""]);
-				inputRefs.current[0]?.focus();
-			});
+			);
 		} catch (error: any) {
 			console.error("❌ [CKYC] OTP validation transport/server error:", error);
 			Toast.show({

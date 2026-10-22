@@ -1,5 +1,5 @@
 import { AnimatedSplashScreen } from "@/components/splash/AnimatedSplashScreen";
-import { DevMockBanner } from "@/components/dev/DevMockBanner";
+const DevMockBanner = __DEV__ ? require("@/components/dev/DevMockBanner").DevMockBanner : () => null;
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ForceUpdateView } from "@/components/splash/ForceUpdateView";
 import { SecurityAlertView } from "@/components/splash/SecurityAlertView";
@@ -127,6 +127,10 @@ function RootLayoutNav() {
 					<Stack.Screen name="no-approved-amount" options={{ headerShown: false }} />
 					<Stack.Screen name="welcome" options={{ headerShown: false }} />
 					<Stack.Screen name="verify-email" options={{ headerShown: false }} />
+					<Stack.Screen
+						name="customer-data-consent"
+						options={{ headerShown: false, gestureEnabled: false }}
+					/>
 					<Stack.Screen name="professional-details" options={{ headerShown: false }} />
 					<Stack.Screen name="professional-details-success" options={{ headerShown: false }} />
 					<Stack.Screen name="ckyc-instructions" options={{ headerShown: false }} />
@@ -173,7 +177,6 @@ function RootLayoutNav() {
 					<Stack.Screen name="user-notifications" options={{ headerShown: false }} />
 					<Stack.Screen name="search-loan" options={{ headerShown: false }} />
 					<Stack.Screen name="aadhaar-kyc-redirect" options={{ headerShown: false }} />
-					<Stack.Screen name="assessment-fee" options={{ headerShown: false }} />
 					<Stack.Screen name="enter-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="language" options={{ headerShown: false }} />
 					<Stack.Screen name="pdf-viewer" options={{ headerShown: false }} />

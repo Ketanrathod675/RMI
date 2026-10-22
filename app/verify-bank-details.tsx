@@ -23,12 +23,13 @@ import {
 import { font, height, width } from "@/utils/dimensions";
 import { useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     BackHandler,
     Image,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -68,7 +69,34 @@ export default function VerifyBankDetails() {
 		accountType: "",
 	});
 
+	const [showAccountNumber, setShowAccountNumber] = useState(false);
+	const [showConfirmAccountNumber, setShowConfirmAccountNumber] = useState(false);
+
 	const [isIFSCValid, setIsIFSCValid] = useState(false);
+
+	const latestValuesRef = useRef({
+		bankAccountNumber: "",
+		confirmBankAccountNumber: "",
+		ifscCode: "",
+		bankName: "",
+		branchName: "",
+		accountType: "",
+	});
+	const ifscDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const requestedIfscRef = useRef<string>("");
+
+	// Keep latestValuesRef in sync with formData so prefilled or programmatic updates aren't treated as massive pastes
+	useEffect(() => {
+		latestValuesRef.current = { ...formData };
+	}, [formData]);
+
+	useEffect(() => {
+		return () => {
+			if (ifscDebounceTimerRef.current) {
+				clearTimeout(ifscDebounceTimerRef.current);
+			}
+		};
+	}, []);
 
 	const { applicantFrom } = useAuth();
 
@@ -111,6 +139,16 @@ export default function VerifyBankDetails() {
 			const bName = (hbBankData.bank_name || "").trim();
 			const brName = (hbBankData.branch_name || "").trim();
 
+			const updated = {
+				bankAccountNumber: hbBankData.account_number || latestValuesRef.current.bankAccountNumber,
+				confirmBankAccountNumber: hbBankData.account_number || latestValuesRef.current.confirmBankAccountNumber,
+				ifscCode: ifsc,
+				bankName: bName,
+				branchName: brName,
+				accountType: (hbBankData.account_type || "").toLowerCase(),
+			};
+			latestValuesRef.current = { ...updated };
+
 			setFormData((prev) => ({
 				...prev,
 				bankAccountNumber: hbBankData.account_number || prev.bankAccountNumber,
@@ -127,6 +165,7 @@ export default function VerifyBankDetails() {
 			} else if (ifsc.length === 11 && (!bName || !brName)) {
 				// Trigger lookup if IFSC is provided but bank/branch is missing
 				Logger.debug("HB Data missing bank/branch, triggering lookup for IFSC");
+				requestedIfscRef.current = ifsc.toUpperCase();
 				lookupIFSCMutation(ifsc);
 			}
 		}
@@ -164,14 +203,16 @@ export default function VerifyBankDetails() {
 					// Use the first account (or primary if available)
 					const account = accounts.find((a) => a.is_primary) || accounts[0];
 
-					setFormData({
+					const prefilled = {
 						bankAccountNumber: String(account.account_number || "").trim(),
 						confirmBankAccountNumber: String(account.account_number || "").trim(),
 						ifscCode: (account.ifsc_code || "").trim(),
 						bankName: (account.bank_name || "").trim(),
 						branchName: (account.branch_name || "").trim(),
 						accountType: (account.account_type || "").toLowerCase(),
-					});
+					};
+					latestValuesRef.current = { ...prefilled };
+					setFormData(prefilled);
 
 					// Mark IFSC as valid since we have details
 					if (account.bank_name && account.ifsc_code) {
@@ -213,13 +254,25 @@ export default function VerifyBankDetails() {
 		onSuccess: (data: Partial<IFSCLookupResponseType>) => {
 			Logger.debug("IFSC Lookup API Response", { success: data?.success });
 
+			// Ignore out-of-order response if user changed IFSC while request was in-flight
+			if (data?.ifsc_code && data.ifsc_code.toUpperCase() !== requestedIfscRef.current) {
+				Logger.debug("Discarding out-of-order IFSC response", {
+					received: data.ifsc_code,
+					current: requestedIfscRef.current,
+				});
+				return;
+			}
+
 			if (data?.success && data?.bank_details) {
 				setFormData((prev) => ({
 					...prev,
 					bankName: data.bank_details?.bank_name || "",
 					branchName: data.bank_details?.branch_name || "",
 				}));
+				latestValuesRef.current.bankName = data.bank_details?.bank_name || "";
+				latestValuesRef.current.branchName = data.bank_details?.branch_name || "";
 				setIsIFSCValid(true);
+				Keyboard.dismiss();
 
 				Toast.show({
 					type: "success",
@@ -233,6 +286,8 @@ export default function VerifyBankDetails() {
 					bankName: "",
 					branchName: "",
 				}));
+				latestValuesRef.current.bankName = "";
+				latestValuesRef.current.branchName = "";
 
 				Toast.show({
 					type: "error",
@@ -298,34 +353,61 @@ export default function VerifyBankDetails() {
 	const handleInputChange = (field: string, value: string) => {
 		let processedValue = value;
 
-		// Only allow numeric characters for bank account number fields
+		// Only allow numeric characters for bank account number fields and block pasting
 		if (field === "bankAccountNumber" || field === "confirmBankAccountNumber") {
 			processedValue = value.replace(/[^0-9]/g, "");
+
+			const prevValue = latestValuesRef.current[field as "bankAccountNumber" | "confirmBankAccountNumber"] || "";
+			// +2 threshold allows rapid typing or double-character entry without false-positive paste detection while blocking pastes (>2 chars at once)
+			if (processedValue.length > prevValue.length + 2) {
+				Toast.show({
+					type: "info",
+					text1: t("copyPasteDisabled"),
+					text2: t("enterAccountNumberManually"),
+				});
+				return;
+			}
+			latestValuesRef.current[field as "bankAccountNumber" | "confirmBankAccountNumber"] = processedValue;
 		}
 
-		// Auto-convert IFSC code to uppercase
+		// Auto-convert IFSC code to uppercase and strip non-alphanumeric
 		if (field === "ifscCode") {
-			processedValue = value.toUpperCase();
+			processedValue = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+			latestValuesRef.current.ifscCode = processedValue;
+
+			if (ifscDebounceTimerRef.current) {
+				clearTimeout(ifscDebounceTimerRef.current);
+			}
+
+			// Debounce IFSC lookup by 300ms
+			if (processedValue.length === 11 && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(processedValue)) {
+				const targetIfsc = processedValue;
+				requestedIfscRef.current = targetIfsc;
+				ifscDebounceTimerRef.current = setTimeout(() => {
+					Logger.debug("Looking up IFSC (debounced)", { ifsc: targetIfsc });
+					lookupIFSCMutation(targetIfsc);
+				}, 300);
+			} else {
+				requestedIfscRef.current = "";
+				setIsIFSCValid(false);
+				setFormData((prev) => ({
+					...prev,
+					bankName: "",
+					branchName: "",
+				}));
+				latestValuesRef.current.bankName = "";
+				latestValuesRef.current.branchName = "";
+			}
+		}
+
+		if (field === "accountType") {
+			latestValuesRef.current.accountType = processedValue;
 		}
 
 		setFormData((prev) => ({
 			...prev,
 			[field]: processedValue,
 		}));
-
-		// Auto-lookup IFSC when user enters 11 characters
-		if (field === "ifscCode" && processedValue.length === 11) {
-			Logger.debug("Looking up IFSC");
-			lookupIFSCMutation(processedValue);
-		} else if (field === "ifscCode" && processedValue.length !== 11) {
-			// Clear bank details if IFSC is not 11 characters
-			setIsIFSCValid(false);
-			setFormData((prev) => ({
-				...prev,
-				bankName: "",
-				branchName: "",
-			}));
-		}
 	};
 
 	const validateForm = () => {
@@ -488,7 +570,22 @@ export default function VerifyBankDetails() {
 					keyboardType="numeric"
 					maxLength={18}
 					required={true}
-					disabled={isSubmitting || isLookingUpIFSC || isAllBankDataLocked}
+					secureTextEntry={!showAccountNumber}
+					contextMenuHidden={true}
+					selectTextOnFocus={false}
+					disabled={isSubmitting || isAllBankDataLocked}
+					rightIcon={
+						<TouchableOpacity
+							onPress={() => setShowAccountNumber((prev) => !prev)}
+							hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+							disabled={isSubmitting || isAllBankDataLocked}>
+							<IconSymbol
+								name={showAccountNumber ? "visibility" : "visibilityOff"}
+								size={22}
+								color="#666"
+							/>
+						</TouchableOpacity>
+					}
 				/>
 
 				<Input
@@ -503,7 +600,22 @@ export default function VerifyBankDetails() {
 					style={styles.inputStyle}
 					maxLength={18}
 					required={true}
-					disabled={isSubmitting || isLookingUpIFSC || isAllBankDataLocked}
+					secureTextEntry={!showConfirmAccountNumber}
+					contextMenuHidden={true}
+					selectTextOnFocus={false}
+					disabled={isSubmitting || isAllBankDataLocked}
+					rightIcon={
+						<TouchableOpacity
+							onPress={() => setShowConfirmAccountNumber((prev) => !prev)}
+							hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+							disabled={isSubmitting || isAllBankDataLocked}>
+							<IconSymbol
+								name={showConfirmAccountNumber ? "visibility" : "visibilityOff"}
+								size={22}
+								color="#666"
+							/>
+						</TouchableOpacity>
+					}
 				/>
 
 					{/* Account Type Field */}
@@ -517,7 +629,7 @@ export default function VerifyBankDetails() {
 						onSelect={(value) => handleInputChange("accountType", value as string)}
 						placeholder={t("selectAccountType")}
 						containerStyle={styles.selectContainer}
-						disabled={isSubmitting || isLookingUpIFSC || isAllBankDataLocked}
+						disabled={isSubmitting || isAllBankDataLocked}
 					/>
 					</View>
 
@@ -531,7 +643,8 @@ export default function VerifyBankDetails() {
 					style={styles.inputStyle}
 					maxLength={11}
 					required={true}
-					disabled={isSubmitting || isLookingUpIFSC || isAllBankDataLocked}
+					disabled={isSubmitting || isAllBankDataLocked}
+					rightIcon={isLookingUpIFSC ? <ActivityIndicator size="small" color="#4D43FE" /> : undefined}
 				/>
 
 					{/* Bank Name Field (Non-editable) */}

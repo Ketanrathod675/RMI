@@ -1,4 +1,6 @@
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { type MandateVerifySource } from "@/hooks/useMandateVerification";
+import { useTranslation } from "@/hooks/useTranslation";
 import {
 	createMandate,
 	getMandateStatus,
@@ -8,7 +10,6 @@ import {
 } from "@/utils/api";
 import { getApiErrorInfo } from "@/utils/api/errors";
 import { font, height, width } from "@/utils/dimensions";
-import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useQueryClient } from "@tanstack/react-query";
@@ -47,53 +48,18 @@ const C = {
 	card: "#176b8b",
 };
 
-const RETURN_URL = Linking.createURL("emandate-status");
+const RETURN_URL = "rapid-money://emandate-status";
 
 const PENDING_MANDATE_MAX_AGE_MS = 30 * 60 * 1000;
 
-const FINISHED_STATUSES = new Set([
-	"success",
-	"authorized",
-	"initiated",
-	"pending",
-	"failure",
-	"failed",
-	"usercancelled",
-	"dropped",
-	"bounced",
-]);
-
-const isMandateFinished = (data?: { current_step?: string | null; status?: string | null }) => {
-	if (!data) return false;
-	const currentStep = data.current_step;
-	if (currentStep && currentStep !== "enach_mandate") {
-		return true;
-	}
-	const rawStatus = (data.status ?? "").toLowerCase().trim();
-	if (FINISHED_STATUSES.has(rawStatus)) {
-		return true;
-	}
-	return false;
-};
-
-const dismissPaymentTab = () => {
-	try {
-		if (typeof WebBrowser.dismissAuthSession === "function") {
-			WebBrowser.dismissAuthSession();
-		}
-	} catch {
-		// Platform might not support dismissAuthSession
-	}
-	try {
-		if (typeof WebBrowser.dismissBrowser === "function") {
-			void WebBrowser.dismissBrowser().catch(() => {});
-		}
-	} catch {
-		// Platform might not support dismissBrowser
-	}
-};
+const Radio = ({ selected }: { selected: boolean }) => (
+	<View style={[styles.radio, selected && styles.radioSelected]}>
+		{selected && <View style={styles.radioDot} />}
+	</View>
+);
 
 export default function AutoDebitSetup() {
+	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
 	const navigation = useNavigation();
@@ -103,66 +69,85 @@ export default function AutoDebitSetup() {
 	const [selectedMethod, setSelectedMethod] = useState<MandateMethod>("upi");
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
-	const pollingRef = useRef<{ stop: () => void } | null>(null);
+	const launchingRef = useRef(false);
 	const { fresh } = useLocalSearchParams<{ fresh?: string }>();
 
-	const stopPolling = () => {
-		if (pollingRef.current) {
-			pollingRef.current.stop();
-			pollingRef.current = null;
-		}
-	};
-
-	useEffect(() => {
-		return () => {
-			stopPolling();
-		};
-	}, []);
-
-	// A mandate attempt was started earlier (app closed / bank tab closed): resume its verification
-	// instead of showing a blank form, exactly like a pending assessment-fee payment.
+	// Single sequential mount check:
+	// 1. Pending mandate recovery (from storage or server check)
+	// 2. Dashboard step redirect if already advanced
 	useEffect(() => {
 		if (fresh === "1") return;
 		let active = true;
-		(async () => {
-			try {
-				const stored = await getStorageItem(STORAGE_KEYS["@mandate-pending"]);
-				if (!stored || !active) return;
-				const pending = JSON.parse(stored) as { txnid?: string; startedAt?: number };
-				if (!pending.startedAt || Date.now() - pending.startedAt > PENDING_MANDATE_MAX_AGE_MS) {
-					await removeStorageItem(STORAGE_KEYS["@mandate-pending"]);
-					return;
-				}
-				router.replace({ pathname: "/emandate-status" as any, params: { txnid: pending.txnid ?? "" } });
-			} catch {
-				// ignore a malformed record
-			}
-		})();
-		return () => {
-			active = false;
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
 
-	// If the mandate is already done (or the borrower is not at this step), do not show the form.
-	useEffect(() => {
-		let active = true;
 		(async () => {
 			try {
-				const dash: any = await getUserDashboardData();
-				const step: string | undefined = dash?.workflow_progress?.current_step;
-				if (!active || !step || step === "enach_mandate") return;
-				const href = StepHref[step as keyof typeof StepHref];
-				if (href && href !== "/auto-debit-setup") router.replace(href as any);
+				// 1. Check storage for pending mandate attempt
+				const stored = await getStorageItem(STORAGE_KEYS["@mandate-pending"]);
+				if (stored && active) {
+					const pending = JSON.parse(stored) as { txnid?: string; startedAt?: number };
+					if (pending.startedAt && Date.now() - pending.startedAt <= PENDING_MANDATE_MAX_AGE_MS) {
+						router.replace({
+							pathname: "/emandate-status" as any,
+							params: { txnid: pending.txnid ?? "", source: "recovered" },
+						});
+						return;
+					}
+					await removeStorageItem(STORAGE_KEYS["@mandate-pending"]);
+				}
+
+				if (!active) return;
+
+				// 2. Check server for an active/pending mandate attempt
+				try {
+					const serverStatus = await getMandateStatus();
+					const statusData = serverStatus?.data;
+					const rawStatus = String(statusData?.status ?? "").toLowerCase().trim();
+					if (
+						statusData?.is_active ||
+						rawStatus === "pending" ||
+						rawStatus === "initiated" ||
+						rawStatus === "preinitiated"
+					) {
+						if (!active) return;
+						const txnid = statusData?.txnid ? String(statusData.txnid) : "";
+						await setStorageItem(
+							STORAGE_KEYS["@mandate-pending"],
+							JSON.stringify({ txnid, startedAt: Date.now() }),
+						);
+						router.replace({
+							pathname: "/emandate-status" as any,
+							params: { txnid, source: "recovered" },
+						});
+						return;
+					}
+				} catch {
+					// Ignore status check errors
+				}
+
+				if (!active) return;
+
+				// 3. Check dashboard step to see if user has already advanced
+				try {
+					const dash: any = await getUserDashboardData();
+					const step: string | undefined = dash?.workflow_progress?.current_step || dash?.current_step;
+					if (!active || !step || step === "enach_mandate" || step === "auto_debit_setup") return;
+					const href = StepHref[step as keyof typeof StepHref];
+					if (href && href !== "/auto-debit-setup") {
+						router.replace(href as any);
+						return;
+					}
+				} catch {
+					// Non-blocking
+				}
 			} catch {
-				// Non-blocking: stay on the form if the workflow cannot be read.
+				// Ignore errors in recovery
 			}
 		})();
+
 		return () => {
 			active = false;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+	}, [fresh, router]);
 
 	useEffect(() => {
 		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
@@ -182,13 +167,13 @@ export default function AutoDebitSetup() {
 	}, [navigation]);
 
 	const handleProceed = async () => {
-		if (isSubmitting || pollingRef.current) return;
+		if (isSubmitting || launchingRef.current) return;
+		launchingRef.current = true;
 		setIsSubmitting(true);
-		stopPolling();
 		try {
 			const mandate = await createMandate(selectedMethod);
 			if (!mandate?.url) {
-				throw new Error("The payment gateway did not return a checkout URL.");
+				throw new Error(t("mandateNoCheckoutUrl"));
 			}
 			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 			await setStorageItem(
@@ -196,97 +181,51 @@ export default function AutoDebitSetup() {
 				JSON.stringify({ txnid: mandate.txnid ?? "", method: selectedMethod, startedAt: Date.now() }),
 			);
 
-			let isStopped = false;
-			let intervalId: ReturnType<typeof setInterval> | null = null;
-			let timeoutId: ReturnType<typeof setTimeout> | null = null;
-			let polledStatus = "";
-			let polledTxnid = "";
+			let source: MandateVerifySource = "browser_closed";
+			let targetTxnid = mandate.txnid ?? "";
 
-			const stop = () => {
-				if (isStopped) return;
-				isStopped = true;
-				if (intervalId) {
-					clearInterval(intervalId);
-					intervalId = null;
-				}
-				if (timeoutId) {
-					clearTimeout(timeoutId);
-					timeoutId = null;
-				}
-			};
-
-			pollingRef.current = { stop };
-
-			const checkStatus = async () => {
-				if (isStopped) return;
-				try {
-					Logger.debug("Checking e-Mandate status in background");
-					const res = await getMandateStatus(mandate.txnid ?? undefined);
-					const data = res?.data;
-					if (data?.status) polledStatus = String(data.status);
-					if (data?.txnid) polledTxnid = String(data.txnid);
-
-					if (isMandateFinished(data)) {
-						Logger.debug("e-Mandate status check detected completion; closing payment tab");
-						stop();
-						dismissPaymentTab();
-					}
-				} catch {
-					// errors while checking are ignored (the next tick tries again); never throw out of the loop
-				}
-			};
-
-			intervalId = setInterval(() => {
-				void checkStatus();
-			}, 3000);
-
-			timeoutId = setTimeout(() => {
-				stop();
-			}, 15 * 60 * 1000);
-
-			let status = "";
-			let txnid = "";
 			try {
 				const result = await WebBrowser.openAuthSessionAsync(mandate.url, RETURN_URL);
 				if (result.type === "success" && result.url) {
 					const { queryParams } = Linking.parse(result.url);
-					status = String(queryParams?.status ?? "");
-					txnid = String(queryParams?.txnid ?? "");
+					const statusParam = String(
+						queryParams?.mandate_status ??
+						queryParams?.payment_status ??
+						queryParams?.status ??
+						(queryParams?.success === "true" ? "true" : queryParams?.success === "false" ? "false" : ""),
+					).trim().toLowerCase();
+					if (queryParams?.txnid) {
+						targetTxnid = String(queryParams.txnid);
+					}
+					if (["true", "success", "successful", "completed", "active", "authorized", "authorised"].includes(statusParam)) {
+						source = "deeplink_success";
+					} else if (["pending", "initiated", "processing", "inprogress", "in_process"].includes(statusParam)) {
+						source = "deeplink_pending";
+					} else if (["false", "failure", "failed", "cancelled", "canceled"].includes(statusParam)) {
+						source = "deeplink_failure";
+					} else {
+						source = "browser_closed";
+					}
+				} else {
+					source = "browser_closed";
 				}
-			} finally {
-				stop();
-				pollingRef.current = null;
+			} catch {
+				source = "browser_closed";
 			}
 
-			if (!status && polledStatus) {
-				status = polledStatus;
-			}
-			if (!txnid && polledTxnid) {
-				txnid = polledTxnid;
-			}
-			if (!txnid && mandate.txnid) {
-				txnid = mandate.txnid;
-			}
-
-			router.replace({ pathname: "/emandate-status" as any, params: { status, txnid } });
+			router.replace({ pathname: "/emandate-status" as any, params: { txnid: targetTxnid, source } });
 		} catch (err) {
-			stopPolling();
 			const info = getApiErrorInfo(err);
 			Toast.show({
 				type: "error",
-				text1: "Unable to start mandate setup",
-				text2: info.detail || info.message || "Please try again.",
+				text1: t("unableToStartMandateSetup"),
+				text2: info.detail || info.message || t("pleaseTryAgain"),
 			});
 		} finally {
 			setIsSubmitting(false);
+			launchingRef.current = false;
 		}
 	};
-
-	const Radio = ({ selected }: { selected: boolean }) => (
-		<View style={[styles.radio, selected && styles.radioSelected]}>
-			{selected && <View style={styles.radioDot} />}
-		</View>
-	);
 
 	return (
 		<View style={[styles.container, { paddingTop: insets.top }]}>

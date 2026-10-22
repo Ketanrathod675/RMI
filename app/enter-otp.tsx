@@ -53,6 +53,7 @@ export default function EnterOTP() {
 		params.sign_in_key ? String(params.sign_in_key) : undefined,
 	);
 	const [isLocked, setIsLocked] = useState(false);
+	const [isConsentChecked, setIsConsentChecked] = useState(false);
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [timer, setTimer] = useState(53);
 	const [modalVisible, setModalVisible] = useState(false);
@@ -300,7 +301,7 @@ export default function EnterOTP() {
 
 	const handleContinue = () => {
 		const otpString = otp.join("");
-		if (otpString.length !== 4 || isVerifying || isLocked) {
+		if (otpString.length !== 4 || isVerifying || isLocked || !isConsentChecked) {
 			return;
 		}
 
@@ -322,7 +323,7 @@ export default function EnterOTP() {
 	};
 
 	const isOtpComplete = otp.every((digit) => Boolean(digit && digit.length === 1));
-	const isContinueDisabled = !isOtpComplete || isVerifying || isLocked;
+	const isContinueDisabled = !isOtpComplete || isVerifying || isLocked || !isConsentChecked;
 
 	return (
 		<View style={styles.container}>
@@ -400,8 +401,18 @@ export default function EnterOTP() {
 						</Text>
 					</TouchableOpacity>
 
-					{/* Consent Text */}
-					<TranslatedText style={styles.consentText} translationKey="consentToSign" />
+					{/* Consent checkbox and text */}
+					<TouchableOpacity
+						style={styles.consentContainer}
+						activeOpacity={0.8}
+						onPress={() => setIsConsentChecked((checked) => !checked)}
+						accessibilityRole="checkbox"
+						accessibilityState={{ checked: isConsentChecked }}>
+						<View style={[styles.consentCheckbox, isConsentChecked && styles.consentCheckboxChecked]}>
+							{isConsentChecked && <Ionicons name="checkmark" size={16} color={white} />}
+						</View>
+						<TranslatedText style={styles.consentText} translationKey="consentToSign" />
+					</TouchableOpacity>
 
 					{/* Warning Text */}
 					<TranslatedText style={styles.warningText} translationKey="warningIgnoreCode" />
@@ -531,13 +542,37 @@ const styles = StyleSheet.create({
 	resendActive: {
 		color: "#22C55E",
 	},
-	consentText: {
-		fontSize: 14,
-		color: dark,
-		textAlign: "center",
-		lineHeight: 20,
+	consentContainer: {
+		width: "100%",
+		marginTop: height(2),
 		marginBottom: height(2),
 		paddingHorizontal: width(4),
+		flexDirection: "row",
+		alignItems: "flex-start",
+		gap: width(3),
+	},
+	consentCheckbox: {
+		width: 24,
+		height: 24,
+		flexShrink: 0,
+		marginTop: 1,
+		backgroundColor: white,
+		borderWidth: 2,
+		borderColor: "#5B6470",
+		borderRadius: 4,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	consentCheckboxChecked: {
+		backgroundColor: "#15803d",
+		borderColor: "#15803d",
+	},
+	consentText: {
+		flex: 1,
+		fontSize: 14,
+		color: dark,
+		textAlign: "left",
+		lineHeight: 20,
 	},
 	warningText: {
 		fontSize: 14,

@@ -1,47 +1,22 @@
-import { useCleanBackHandlers } from "@/hooks/useCleanBackHandlers";
-import * as Linking from "expo-linking";
-import { router } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 
 export default function AssessmentFeeSuccess() {
-	const urlHook = Linking.useLinkingURL();
-
-	// Clear any persistent back handlers
-	useCleanBackHandlers();
+	const router = useRouter();
+	const params = useLocalSearchParams();
 
 	useEffect(() => {
-		const init = async () => {
-			if (!urlHook) {
-				router.replace("/(tabs)");
-				return;
-			}
+		const txnid = params.txnid;
+		if (txnid) {
+			router.replace({
+				pathname: "/new-assessment-fee",
+				params: { ...params },
+			});
+		} else {
+			router.replace("/(tabs)");
+		}
+	}, []);
 
-			const { hostname, queryParams } = Linking.parse(urlHook);
-
-			if (!hostname?.includes("assessment-fee-success") || !queryParams?.txnid) {
-				router.replace("/(tabs)");
-				return;
-			}
-
-			setTimeout(() => {
-				if (router.canGoBack()) {
-					router.back();
-				} else {
-					router.replace("/new-assessment-fee");
-				}
-			}, 100);
-		};
-
-		init();
-	}, [urlHook]);
-
-	return <View style={styles.container} />;
+	return <View style={{ flex: 1, backgroundColor: "#060A0C" }} />;
 }
-
-const styles = StyleSheet.create({
-	container: {
-		flex: 1,
-		backgroundColor: "#ffffff",
-	},
-});

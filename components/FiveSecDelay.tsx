@@ -105,7 +105,8 @@ export default function FiveSecDelay({
 			visible={visible}
 			transparent={false}
 			animationType="fade"
-			statusBarTranslucent={true}>
+			statusBarTranslucent={true}
+			onRequestClose={() => {}}>
 			<StatusBar style="light" />
 			<View style={styles.container}>
 				<ExpoImage

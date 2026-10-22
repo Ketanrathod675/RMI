@@ -112,6 +112,15 @@ export default function RejectionModal({
 							</ImageBackground>
 						</View>
 
+						{/* ── Payment Received Reassurance Card ── */}
+						<View style={styles.paymentReceivedCard}>
+							<Ionicons name="shield-checkmark" size={20} color="#047857" style={{ marginTop: 2 }} />
+							<Text style={styles.paymentReceivedText}>
+								{/* TODO(product): confirm refund policy wording */}
+								<TranslatedText translationKey="rejectionPaymentNote" />
+							</Text>
+						</View>
+
 						{/* ── Tips card ── */}
 						<View style={styles.tipsCard}>
 							<View style={styles.tipsHeader}>
@@ -290,6 +299,26 @@ const styles = StyleSheet.create({
 		textAlign: "center",
 		lineHeight: 20,
 		paddingHorizontal: width(25),
+	},
+	paymentReceivedCard: {
+		flexDirection: "row",
+		alignItems: "flex-start",
+		gap: 10,
+		backgroundColor: "#F0FDF4",
+		borderWidth: 1,
+		borderColor: "#BBF7D0",
+		borderRadius: width(3.5),
+		width: "90%",
+		paddingHorizontal: width(4),
+		paddingVertical: height(1.4),
+		marginTop: height(1.5),
+	},
+	paymentReceivedText: {
+		flex: 1,
+		fontSize: 13,
+		lineHeight: 19,
+		color: "#065F46",
+		fontWeight: "500",
 	},
 	tipsCard: {
 		backgroundColor: "#ECEBFF",

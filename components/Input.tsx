@@ -10,10 +10,25 @@ interface InputProps extends TextInputProps {
 	hideLabel?: boolean;
 	disabled?: boolean;
 	required?: boolean;
+	rightIcon?: React.ReactNode;
 }
 
 const Input = forwardRef<TextInput, InputProps>(
-	({ label, error, style, containerStyle, hideLabel, required = false, disabled = false, ...props }, ref) => {
+	(
+		{
+			label,
+			error,
+			style,
+			containerStyle,
+			hideLabel,
+			required = false,
+			disabled = false,
+			rightIcon,
+			selectTextOnFocus,
+			...props
+		},
+		ref,
+	) => {
 		const hasLabel = !hideLabel && label;
 		return (
 			<View
@@ -28,19 +43,23 @@ const Input = forwardRef<TextInput, InputProps>(
 						{label} {required && <Text style={styles.requiredAsterisk}>*</Text>}
 					</Text>
 				)}
-				<TextInput
-					ref={ref}
-					style={[
-						styles.input,
-						style,
-						disabled && styles.disabledInput,
-						Boolean(error) && styles.errorInput,
-					]}
-					placeholderTextColor={dark + "99"}
-					editable={!disabled}
-					selectTextOnFocus={!disabled}
-					{...props}
-				/>
+				<View style={styles.inputWrapper}>
+					<TextInput
+						ref={ref}
+						style={[
+							styles.input,
+							style,
+							rightIcon ? styles.inputWithRightIcon : undefined,
+							disabled && styles.disabledInput,
+							Boolean(error) && styles.errorInput,
+						]}
+						placeholderTextColor={dark + "99"}
+						editable={!disabled}
+						selectTextOnFocus={selectTextOnFocus ?? !disabled}
+						{...props}
+					/>
+					{rightIcon && <View style={styles.rightIconContainer}>{rightIcon}</View>}
+				</View>
 				{error && <Text style={styles.error}>{error}</Text>}
 			</View>
 		);
@@ -58,6 +77,20 @@ const styles = StyleSheet.create({
 		fontSize: font(1.5),
 		marginBottom: height(0.5),
 		marginLeft: width(1),
+	},
+	inputWrapper: {
+		position: "relative",
+		justifyContent: "center",
+	},
+	inputWithRightIcon: {
+		paddingRight: width(12),
+	},
+	rightIconContainer: {
+		position: "absolute",
+		right: width(3),
+		height: "100%",
+		justifyContent: "center",
+		alignItems: "center",
 	},
 	input: {
 		backgroundColor: white,

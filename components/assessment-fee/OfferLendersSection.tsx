@@ -35,8 +35,8 @@ interface OfferLendersSectionProps {
 	processingFeeAmount: number;
 	originalPrice?: number;
 	discountPercent?: number;
-	offerMinutes: string;
-	offerSeconds: string;
+	offerMinutes?: string;
+	offerSeconds?: string;
 	onBackPress: () => void;
 }
 
@@ -65,15 +65,17 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 	const [isViewAllVisible, setIsViewAllVisible] = useState(false);
 	const [expandedLenders, setExpandedLenders] = useState<Record<string, boolean>>({});
 
-	const actualOriginalPrice = originalPrice || 249;
+	const actualOriginalPrice = originalPrice;
 	const actualDiscountPercent =
 		discountPercent ??
-		Math.max(
-			1,
-			Math.round(
-				((actualOriginalPrice - processingFeeAmount) / actualOriginalPrice) * 100
+		(actualOriginalPrice && actualOriginalPrice > processingFeeAmount
+			? Math.max(
+				1,
+				Math.round(
+					((actualOriginalPrice - processingFeeAmount) / actualOriginalPrice) * 100
+				)
 			)
-		);
+			: 0);
 
 	const viewAllTranslateY = useRef(new Animated.Value(600)).current;
 	const viewAllBackdropOpacity = useRef(new Animated.Value(0)).current;
@@ -238,18 +240,22 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 
 			{/* Assessment Fee Card */}
 			<View style={styles.assessmentFeeContainer}>
-				<View style={styles.discountBadge}>
-					<Text style={styles.discountBadgeText}>{actualDiscountPercent}% Off</Text>
-				</View>
-				<View style={styles.offerEndsContainer}>
-					<Image
-						source={Images.TIMER_ICON}
-						style={{ width: width(4), height: width(4) }}
-					/>
-					<Text style={styles.offerEndsText}>
-						{getLocalText("offerEndsIn", "Offer ends in")} {offerMinutes}:{offerSeconds}
-					</Text>
-				</View>
+				{actualOriginalPrice && actualDiscountPercent > 0 ? (
+					<View style={styles.discountBadge}>
+						<Text style={styles.discountBadgeText}>{actualDiscountPercent}% Off</Text>
+					</View>
+				) : null}
+				{offerMinutes && offerSeconds ? (
+					<View style={styles.offerEndsContainer}>
+						<Image
+							source={Images.TIMER_ICON}
+							style={{ width: width(4), height: width(4) }}
+						/>
+						<Text style={styles.offerEndsText}>
+							{getLocalText("offerEndsIn", "Offer ends in")} {offerMinutes}:{offerSeconds}
+						</Text>
+					</View>
+				) : null}
 				<View style={styles.assessmentFeeRow}>
 					{isLoadingFee ? (
 						<ActivityIndicator size="small" color="#333" />
@@ -259,9 +265,9 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 								{getLocalText("assessmentFee", "Assessment Fee")} :
 							</Text>
 							<View style={styles.assessmentFeePriceRow}>
-								{actualOriginalPrice > processingFeeAmount && (
+								{actualOriginalPrice && actualOriginalPrice > processingFeeAmount ? (
 									<Text style={styles.strikethroughPrice}>₹{actualOriginalPrice}</Text>
-								)}
+								) : null}
 								<Text style={styles.actualPrice}>₹{processingFeeAmount}/-</Text>
 							</View>
 						</>
@@ -332,20 +338,6 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 											</Text>
 											<Text style={[styles.detailValue, { textAlign: "center" }]}>
 												{formatTenureValue(primaryLender.tenure_upto)}
-											</Text>
-										</View>
-										<View style={styles.detailsColumnRight}>
-											<Text style={[styles.detailLabel, { textAlign: "right" }]}>
-												{getLocalText("interestRate", "Interest Rate")}
-											</Text>
-											<Text style={[styles.detailValue, { textAlign: "right" }]}>
-												{primaryLender.interest_rate_starts_at.includes("Starts")
-													? primaryLender.interest_rate_starts_at
-													: `Starts @ ${primaryLender.interest_rate_starts_at}${primaryLender.interest_rate_starts_at.includes("p.m.") ||
-														primaryLender.interest_rate_starts_at.includes("p.a.")
-														? ""
-														: " p.m."
-													}`}
 											</Text>
 										</View>
 									</View>
@@ -484,22 +476,6 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 																	{ textAlign: "center" },
 																]}>
 																{formatTenureValue(lender.tenure_upto)}
-															</Text>
-														</View>
-														<View style={styles.detailsColumnRight}>
-															<Text
-																style={[
-																	styles.detailLabel,
-																	{ textAlign: "right" },
-																]}>
-																{getLocalText("interestRate", "Interest Rate")}
-															</Text>
-															<Text
-																style={[
-																	styles.detailValue,
-																	{ textAlign: "right" },
-																]}>
-																{lender.interest_rate_starts_at}
 															</Text>
 														</View>
 													</View>

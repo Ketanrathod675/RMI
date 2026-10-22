@@ -12,6 +12,7 @@ export const BASIC_DETAILS_LOADER_MS = 3000;
 export type JourneyStepId =
 	| "basic_details"
 	| "assessment_fee"
+	| "verifying_details"
 	| "pan_verification"
 	| "professional_details"
 	| "ekyc_ckyc"
@@ -29,6 +30,7 @@ export interface JourneyStepSubStep {
 export interface JourneyStep {
 	id: JourneyStepId;
 	titleKey: string;
+	completedTitleKey?: string;
 	title: string;
 	activeSubtitleKey?: string;
 	activeSubtitle?: string;
@@ -47,6 +49,7 @@ export const JOURNEY_STEPS: JourneyStep[] = [
 	{
 		id: "assessment_fee",
 		titleKey: "assessmentFeeStepTitle",
+		completedTitleKey: "paymentReceivedStep",
 		title: "Assessment fee",
 		activeSubtitleKey: "verifyingPaymentWait",
 		activeSubtitle: "Confirming fee payment and policy",
@@ -57,6 +60,16 @@ export const JOURNEY_STEPS: JourneyStep[] = [
 				titleKey: "verifyingPaymentWait",
 				title: "Verifying your payment...",
 			},
+		],
+	},
+	{
+		id: "verifying_details",
+		titleKey: "verifyingDetailsStep",
+		title: "Verifying your details",
+		activeSubtitleKey: "evaluatingCreditPolicyCriteria",
+		activeSubtitle: "Evaluating credit policy...",
+		nextRoute: "/professional-details",
+		subSteps: [
 			{
 				id: "confirming_details",
 				titleKey: "paymentConfirmedVerifyingDetails",

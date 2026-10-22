@@ -1,4 +1,5 @@
 import { useAuth } from "@/hooks/useAuth";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAppDispatch } from "@/store";
 import { setStartupCompleted } from "@/store/slices/global";
 import { checkDeviceSecurity, type SecurityBlockReason } from "@/utils/securityCheck";
@@ -30,6 +31,7 @@ export function useSplashController(): SplashControllerState {
 	const [resolvedTarget, setResolvedTarget] = useState<string>("/login");
 
 	const { loadAuth } = useAuth(false);
+	const queryClient = useQueryClient();
 	const dispatch = useAppDispatch();
 	const startTimeRef = useRef<number>(Date.now());
 	const hasHandedOffRef = useRef(false);
@@ -110,15 +112,15 @@ export function useSplashController(): SplashControllerState {
 					targetRoute = "/(tabs)";
 				} else if (authResult) {
 					targetRoute = "/(tabs)";
-					// Pre-hydrate dashboard data & storage in background so dashboard has instant data
-					try {
-						const { getUserDashboardData } = await import("@/utils/api/services/user.service");
-						getUserDashboardData().catch((wfErr) => {
-							console.warn("⚠️ [useSplashController] Pre-fetch dashboard error:", wfErr);
-						});
-					} catch {
-						// Safe fallback
-					}
+					// Start dashboard data behind the splash and share the result with the screen query.
+					// Keep this non-blocking so a slow network never delays splash dismissal.
+					void import("@/utils/api/services/user.service")
+						.then(({ getUserDashboardData }) => queryClient.prefetchQuery({
+							queryKey: ["user", "dashboard"],
+							queryFn: getUserDashboardData,
+							staleTime: 30_000,
+						}))
+						.catch((wfErr) => console.warn("[useSplashController] Dashboard prefetch failed:", wfErr));
 				} else {
 					targetRoute = "/login";
 				}

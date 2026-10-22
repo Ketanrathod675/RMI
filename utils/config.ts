@@ -18,12 +18,39 @@ const getPublicEnv = (key: keyof typeof publicEnvironment, fallback?: string): s
 
 const defaultApiUrl =
 	Platform.OS === "android"
-		? "http://172.16.16.124:8000/api/v1"
+		// ? "http://172.16.16.124:8000/api/v1"
+		? "https://rendering-underuse-viewless.ngrok-free.dev/api/v1"
 		: "http://localhost:8000/api/v1";
 
-const apiBaseUrl = getPublicEnv("API_URL", defaultApiUrl);
+let apiBaseUrl: string;
+if (__DEV__) {
+	apiBaseUrl = getPublicEnv("API_URL", defaultApiUrl);
+} else {
+	const rawUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+	if (!rawUrl) {
+		throw new Error("EXPO_PUBLIC_API_URL is required in release builds");
+	}
+	apiBaseUrl = rawUrl;
+}
+
 if (!/^https?:\/\//i.test(apiBaseUrl)) {
 	throw new Error("EXPO_PUBLIC_API_URL must be an absolute HTTP(S) URL");
+}
+
+const allowUnsafeApiUrl = process.env.EXPO_PUBLIC_ALLOW_UNSAFE_API_URL === "true";
+
+if (!__DEV__ && !allowUnsafeApiUrl) {
+	const host = apiBaseUrl.replace(/^https?:\/\//i, "").split(/[:/?#]/)[0].toLowerCase();
+	if (
+		host.includes("ngrok") ||
+		host === "localhost" ||
+		host.includes("127.0.0.1") ||
+		/^10\./.test(host) ||
+		/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+		/^192\.168\./.test(host)
+	) {
+		throw new Error(`Production API URL cannot use local, private or ngrok address: ${host}`);
+	}
 }
 
 const environment = getPublicEnv("API_ENV", __DEV__ ? "development" : "production") as Environment;

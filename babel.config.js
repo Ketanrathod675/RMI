@@ -17,7 +17,7 @@ module.exports = function (api) {
   if (isProduction) {
     plugins.push([
       "transform-remove-console",
-      { exclude: ["error", "warn"] },
+      { exclude: ["error"] },
     ]);
   }
 

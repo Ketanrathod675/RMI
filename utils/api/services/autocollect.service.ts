@@ -17,6 +17,8 @@ export type MandateStatusResponse = {
 		mandate_type: "UPI" | "ENACH" | null;
 		status: string | null;
 		is_active: boolean;
+		/** Backend completion state; UPI may proceed while bank authorization remains pending. */
+		is_complete?: boolean;
 		/** true once the gateway reported back (return page or webhook); false = nothing received yet */
 		callback_received?: boolean;
 		created_at?: string | null;

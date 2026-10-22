@@ -1,4 +1,4 @@
-import DevPaymentSimulator from "@/components/assessment-fee/DevPaymentSimulator";
+const DevPaymentSimulator = __DEV__ ? require("@/components/assessment-fee/DevPaymentSimulator").default : () => null;
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import OfferLendersSection, {
 	type LenderOffer,
@@ -98,8 +98,7 @@ const DEFAULT_LENDER_OFFERS: LenderOffersResponseType = {
 		},
 	],
 	assessment_fee: {
-		amount: 99,
-		original_amount: 249,
+		amount: 0,
 		gst: 0,
 		currency: "INR",
 	},
@@ -115,7 +114,6 @@ export default function AssessmentFeeScreen() {
 	// Track this screen in journey
 	useJourneyTracker("/new-assessment-fee");
 
-	const [offerTimer, setOfferTimer] = useState(299); // 4:59 = 299 seconds
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 	const [isSuccessModalVisible, setIsSuccessModalVisible] = useState(false);
 	const [isVerifyLeadFlow, setIsVerifyLeadFlow] = useState(false);
@@ -129,12 +127,14 @@ export default function AssessmentFeeScreen() {
 	const activeTxnidRef = useRef<string>("");
 	const lastStatusRef = useRef<string>("");
 	const hasAllocatedRef = useRef(false);
+	const pollingLoaderTokenRef = useRef<number | null>(null);
+	const verifyFlowRunningRef = useRef<string | null>(null);
 
 	const leadPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const shimmerAnim = useRef(new Animated.Value(0)).current;
 
 	const { userId } = useAuth();
-	const { runStep, show, hide } = useJourneyLoader();
+	const { runStep, runStepThenNavigate, show, hide } = useJourneyLoader();
 	const { signal: checksSignal } = useAssessmentChecksController();
 
 	// Allocated lender state
@@ -149,52 +149,61 @@ export default function AssessmentFeeScreen() {
 	const [appliedCouponCode, setAppliedCouponCode] = useState<string>("");
 	const [appliedFinalAmount, setAppliedFinalAmount] = useState<number | null>(null);
 
-	// Assessment fee amount state (loaded from router params or storage, defaults to 826 from backend)
-	const [rawFeeAmount, setRawFeeAmount] = useState<number>(() => {
+	// Assessment fee amount state (loaded from router params or storage or /auth/me; no fake defaults)
+	const [rawFeeAmount, setRawFeeAmount] = useState<number | null>(() => {
 		const paramFee = Number(params.fee_amount);
 		if (!isNaN(paramFee) && paramFee > 0) return paramFee;
-		return 826;
+		return null;
+	});
+	const [isFeeLoading, setIsFeeLoading] = useState<boolean>(() => {
+		const paramFee = Number(params.fee_amount);
+		return !(typeof paramFee === "number" && !isNaN(paramFee) && paramFee > 0);
 	});
 
-	useEffect(() => {
-		const loadFeeAndLead = async () => {
-			try {
-				let existingLeadId = await AsyncStorage.getItem(STORAGE_KEYS["@lead-id"]);
-				const savedFee = await AsyncStorage.getItem(STORAGE_KEYS["@assessment-fee-amount"]);
-				if (savedFee) {
-					const parsed = Number(savedFee);
-					if (!isNaN(parsed) && parsed > 0) {
-						setRawFeeAmount(parsed);
-					}
+	const loadFeeAndLead = useCallback(async () => {
+		setIsFeeLoading(true);
+		try {
+			let existingLeadId = await AsyncStorage.getItem(STORAGE_KEYS["@lead-id"]);
+			const savedFee = await AsyncStorage.getItem(STORAGE_KEYS["@assessment-fee-amount"]);
+			if (savedFee) {
+				const parsed = Number(savedFee);
+				if (!isNaN(parsed) && parsed > 0) {
+					setRawFeeAmount(parsed);
+					setIsFeeLoading(false);
 				}
+			}
 
-				if (!existingLeadId || !savedFee) {
-					try {
-						const profile = await getUserProfile();
-						const meData = (profile as any)?.data || profile;
-						const wf = meData?.current_workflow;
-						const kycResp = wf?.profile_response;
-						const recoveredLeadId = wf?.lead_id || kycResp?.lead_id;
-						if (recoveredLeadId && !existingLeadId) {
-							await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], String(recoveredLeadId));
-						}
-						const fee = kycResp?.af_amount || kycResp?.assessment_fee;
-						if (fee && Number(fee) > 0 && !savedFee) {
-							setRawFeeAmount(Number(fee));
-							await AsyncStorage.setItem(STORAGE_KEYS["@assessment-fee-amount"], String(fee));
-						}
-						if (kycResp?.af) {
-							setAfFlag(String(kycResp.af));
-							await AsyncStorage.setItem(STORAGE_KEYS["@af-flag"], String(kycResp.af));
-						}
-					} catch (profileErr) {
-						console.warn("⚠️ [new-assessment-fee] Failed to recover lead/fee from /auth/me:", profileErr);
+			if (!existingLeadId || !savedFee) {
+				try {
+					const profile = await getUserProfile();
+					const meData = (profile as any)?.data || profile;
+					const wf = meData?.current_workflow;
+					const kycResp = wf?.profile_response;
+					const recoveredLeadId = wf?.lead_id || kycResp?.lead_id;
+					if (recoveredLeadId && !existingLeadId) {
+						await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], String(recoveredLeadId));
 					}
+					const fee = kycResp?.af_amount || kycResp?.assessment_fee;
+					if (fee && Number(fee) > 0) {
+						setRawFeeAmount(Number(fee));
+						await AsyncStorage.setItem(STORAGE_KEYS["@assessment-fee-amount"], String(fee));
+					}
+					if (kycResp?.af) {
+						setAfFlag(String(kycResp.af));
+						await AsyncStorage.setItem(STORAGE_KEYS["@af-flag"], String(kycResp.af));
+					}
+				} catch (profileErr) {
+					console.warn("⚠️ [new-assessment-fee] Failed to recover lead/fee from /auth/me:", profileErr);
 				}
-			} catch { }
-		};
-		loadFeeAndLead();
+			}
+		} catch { } finally {
+			setIsFeeLoading(false);
+		}
 	}, []);
+
+	useEffect(() => {
+		loadFeeAndLead();
+	}, [loadFeeAndLead]);
 
 	useEffect(() => {
 		const loadAllocationAndAf = async () => {
@@ -277,20 +286,6 @@ export default function AssessmentFeeScreen() {
 		setCouponError("");
 	};
 
-	// Offer countdown timer effect
-	useEffect(() => {
-		const interval = setInterval(() => {
-			setOfferTimer((prev) => {
-				if (prev <= 1) {
-					clearInterval(interval);
-					return 0;
-				}
-				return prev - 1;
-			});
-		}, 1000);
-
-		return () => clearInterval(interval);
-	}, []);
 
 	// Intercept back gesture / hardware back press
 	useFocusEffect(
@@ -319,24 +314,14 @@ export default function AssessmentFeeScreen() {
 	const isLoadingLenderOffers = false;
 
 	// Fee calculations
-	const initialFeeAmount =
-		rawFeeAmount ||
-		(lenderOffersData?.assessment_fee?.amount
-			? Math.round(
-				lenderOffersData.assessment_fee.amount +
-				((lenderOffersData.assessment_fee.gst ?? 0) * lenderOffersData.assessment_fee.amount) / 100
-			)
-			: 826);
+	const initialFeeAmount = rawFeeAmount ?? 0;
 	const processingFeeAmount =
-		appliedFinalAmount ?? Math.max(0, initialFeeAmount - appliedDiscount);
-	const originalPrice =
-		lenderOffersData?.assessment_fee?.original_amount ||
-		Math.round(initialFeeAmount * 1.5) ||
-		1249;
-	const discountPercent = Math.max(
-		1,
-		Math.round(((originalPrice - processingFeeAmount) / originalPrice) * 100)
-	);
+		appliedFinalAmount ?? (rawFeeAmount !== null ? Math.max(0, rawFeeAmount - appliedDiscount) : 0);
+	const originalPrice = lenderOffersData?.assessment_fee?.original_amount;
+	const discountPercent =
+		originalPrice && originalPrice > processingFeeAmount
+			? Math.round(((originalPrice - processingFeeAmount) / originalPrice) * 100)
+			: undefined;
 
 	const primaryLender: LenderOffer | undefined = allocatedLender
 		? {
@@ -405,9 +390,6 @@ export default function AssessmentFeeScreen() {
 
 	// Start post-payment verification flow via JourneyLoader
 	const startVerifyLeadFlow = async (txnId?: string) => {
-		setIsSuccessModalVisible(false);
-		setStillCheckingModalVisible(false);
-
 		const activeTxnid =
 			txnId ||
 			(await getStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"])) ||
@@ -415,15 +397,35 @@ export default function AssessmentFeeScreen() {
 
 		if (!activeTxnid) {
 			console.warn("⚠️ [startVerifyLeadFlow] No transaction ID found, redirecting to dashboard");
+			if (pollingLoaderTokenRef.current !== null) {
+				hide(pollingLoaderTokenRef.current);
+				pollingLoaderTokenRef.current = null;
+			}
 			router.replace("/(tabs)");
 			return;
 		}
+
+		if (verifyFlowRunningRef.current === activeTxnid) {
+			console.log("⚠️ [startVerifyLeadFlow] Flow already running for txn:", activeTxnid);
+			if (pollingLoaderTokenRef.current !== null) {
+				hide(pollingLoaderTokenRef.current);
+				pollingLoaderTokenRef.current = null;
+			}
+			return;
+		}
+		verifyFlowRunningRef.current = activeTxnid;
 		activeTxnidRef.current = activeTxnid;
 
+		setIsSuccessModalVisible(false);
+		setStillCheckingModalVisible(false);
+		pollingLoaderTokenRef.current = null; // Loader ownership transferred to runStepThenNavigate
+
+		let navTarget: (() => void) | null = null;
+
 		try {
-			await runStep(
-				"assessment_fee",
-				async ({ advanceSubStep }) => {
+			const result = await runStepThenNavigate(
+				"verifying_details",
+				async ({ advanceSubStep, signal }) => {
 					// Sub-step 1: Payment verified, confirming details
 					advanceSubStep("confirming_details", t("paymentConfirmedVerifyingDetails"));
 
@@ -432,61 +434,69 @@ export default function AssessmentFeeScreen() {
 
 					const res = await pollAssessmentChecks({
 						txnid: activeTxnid,
-						signal: checksSignal,
+						signal: signal || checksSignal,
 						timeoutMs: 60000,
 						intervalMs: 2000,
 					});
 
 					if (res.status === "approved") {
-						return res;
+						navTarget = () => {
+							router.replace({
+								pathname: "/professional-details" as any,
+								params: { disableBack: "true" },
+							});
+						};
+						return { outcome: "approved", checks: res };
 					}
 
 					if (res.status === "rejected") {
-						throw { isRejection: true, checks: res };
+						if (isEmailFixable(res)) {
+							navTarget = () => {
+								router.replace({
+									pathname: "/verify-email" as any,
+									params: { paymentConfirmed: "true", txnid: activeTxnid },
+								});
+							};
+							return { outcome: "needs_email", checks: res };
+						}
+
+						if (isPanFixable(res)) {
+							navTarget = () => {
+								router.replace({
+									pathname: "/verify-pan" as any,
+									params: { paymentConfirmed: "true", txnid: activeTxnid },
+								});
+							};
+							return { outcome: "needs_pan", checks: res };
+						}
+
+						// Final rejection: return non-throwing outcome
+						return { outcome: "final_rejected", checks: res };
 					}
 
-					if (res.status === "error") {
-						throw { isError: true, checks: res };
-					}
-
-					return res;
+					// error or unexpected status
+					throw { isError: true, checks: res };
 				},
-				{ timeoutMs: 65000 }
+				{
+					timeoutMs: 65000,
+					treatErrorAsAttention: true,
+					navigate: () => {
+						if (navTarget) {
+							navTarget();
+						}
+					},
+				}
 			);
 
-			// Successfully approved
-			router.replace({
-				pathname: "/professional-details" as any,
-				params: { disableBack: "true" },
-			});
-		} catch (error: any) {
-			if (error?.isRejection) {
-				const checks: AssessmentChecks = error.checks;
-				const canFixEmail = isEmailFixable(checks);
-				const canFixPan = isPanFixable(checks);
-
-				if (canFixEmail) {
-					hide();
-					router.replace("/verify-email" as any);
-					return;
-				}
-
-				if (canFixPan) {
-					hide();
-					router.replace("/verify-pan" as any);
-					return;
-				}
-
-				// Final rejection: hide loader and show existing RejectionModal (fixed copy, 15s countdown)
-				hide();
+			if (result?.outcome === "final_rejected") {
+				verifyFlowRunningRef.current = null;
 				setRejectionCountdown(15);
 				setRejectionModalVisible(true);
-				return;
 			}
-
+		} catch (error: any) {
+			verifyFlowRunningRef.current = null;
 			// Error or timeout: Fail-closed (NEVER navigate to /professional-details)
 			lastStatusRef.current = error?.isError ? "error" : "timeout";
-			hide();
 			setStillCheckingModalVisible(true);
 		}
 	};
@@ -539,6 +549,7 @@ export default function AssessmentFeeScreen() {
 		setDelayVisible,
 		paymentStatus,
 		paymentOutcome,
+		outcomePending,
 		recheckPayment,
 		dismissPaymentOutcome,
 		simulateDeepLinkReturn,
@@ -549,31 +560,35 @@ export default function AssessmentFeeScreen() {
 		leadId: (params.lead_id as string) || undefined,
 		couponCode: appliedCouponCode || undefined,
 		onPaymentSuccess: (txnId: string) => {
-			setIsSuccessModalVisible(true);
-			setTimeout(() => {
-				startVerifyLeadFlow(txnId);
-			}, 3000);
+			startVerifyLeadFlow(txnId);
 		},
 		onCouponRejected: handleRemoveCoupon,
 	});
 
 	// Sync payment polling stage with loader
-	const hasShownPollingLoaderRef = useRef(false);
 	useEffect(() => {
-		if (isPaymentPolling && !hasShownPollingLoaderRef.current) {
-			hasShownPollingLoaderRef.current = true;
-			show("assessment_fee", t("verifyingPaymentWait"));
-		} else if (!isPaymentPolling && hasShownPollingLoaderRef.current) {
-			// Polling ended (success, failure, cancel or timeout): always release the full-screen loader.
-			hasShownPollingLoaderRef.current = false;
-			hide();
+		if (isPaymentPolling) {
+			if (pollingLoaderTokenRef.current === null) {
+				pollingLoaderTokenRef.current = show("assessment_fee", t("verifyingPaymentWait"));
+			}
+		} else {
+			// Polling ended: only hide if outcome is NOT success.
+			// Dismiss the loader immediately when outcomePending or paymentOutcome is set,
+			// so the loader is already hidden when PaymentStatusModal appears 450ms later (avoids iOS modal drop).
+			if (outcomePending || paymentOutcome) {
+				if (pollingLoaderTokenRef.current !== null) {
+					hide(pollingLoaderTokenRef.current);
+					pollingLoaderTokenRef.current = null;
+				}
+			}
 		}
-	}, [isPaymentPolling]);
+	}, [isPaymentPolling, outcomePending, paymentOutcome]);
+
 	useEffect(() => {
 		return () => {
-			if (hasShownPollingLoaderRef.current) {
-				hasShownPollingLoaderRef.current = false;
-				hide();
+			if (pollingLoaderTokenRef.current !== null) {
+				hide(pollingLoaderTokenRef.current);
+				pollingLoaderTokenRef.current = null;
 			}
 		};
 	}, []);
@@ -609,11 +624,6 @@ export default function AssessmentFeeScreen() {
 		};
 	}, []);
 
-	const offerMinutes = Math.floor(offerTimer / 60)
-		.toString()
-		.padStart(2, "0");
-	const offerSeconds = (offerTimer % 60).toString().padStart(2, "0");
-
 	return (
 		<View style={styles.screenContainer}>
 			<ScrollView
@@ -624,12 +634,10 @@ export default function AssessmentFeeScreen() {
 				<OfferLendersSection
 					primaryLender={primaryLender}
 					eligibleLenders={eligibleLenders}
-					isLoadingFee={isLoadingLenderOffers && !rawFeeAmount}
+					isLoadingFee={isFeeLoading || rawFeeAmount === null}
 					processingFeeAmount={processingFeeAmount}
 					originalPrice={originalPrice}
 					discountPercent={discountPercent}
-					offerMinutes={offerMinutes}
-					offerSeconds={offerSeconds}
 					onBackPress={() => setIsExitModalVisible(true)}
 				/>
 
@@ -706,19 +714,47 @@ export default function AssessmentFeeScreen() {
 					contentFit="cover"
 				/>
 
-				<TouchableOpacity
-					style={[
-						styles.proceedBtn,
-						(isPending ||
-							paymentStatus.paymentPending ||
-							isLoadingLenderOffers) &&
-						styles.proceedBtnDisabled,
-					]}
-					disabled={
-						isPending || paymentStatus.paymentPending || isLoadingLenderOffers
-					}
-					onPress={() => initiatePayment()}
-					activeOpacity={0.85}>
+				{isFeeLoading ? (
+					<View style={[styles.proceedBtn, styles.proceedBtnDisabled]}>
+						<ActivityIndicator size="small" color="#666" />
+						<Text style={[styles.proceedText, { color: "#666", marginLeft: 8 }]}>
+							{t("loadingFee" as any, "Loading fee details...")}
+						</Text>
+					</View>
+				) : rawFeeAmount === null ? (
+					<View style={styles.feeErrorContainer}>
+						<Text style={styles.feeErrorText}>
+							{t("failedToLoadFee" as any, "Unable to load fee details. Please check your connection.")}
+						</Text>
+						<View style={styles.feeErrorActions}>
+							<TouchableOpacity
+								style={styles.retryFeeBtn}
+								onPress={() => loadFeeAndLead()}
+								activeOpacity={0.85}>
+								<Text style={styles.retryFeeBtnText}>{t("tryAgain", "Retry")}</Text>
+							</TouchableOpacity>
+							<TouchableOpacity
+								style={styles.homeLinkBtn}
+								onPress={() => router.replace("/(tabs)")}
+								activeOpacity={0.85}>
+								<Text style={styles.homeLinkBtnText}>{t("backToHome", "Back to Home")}</Text>
+							</TouchableOpacity>
+						</View>
+					</View>
+				) : (
+					<TouchableOpacity
+						style={[
+							styles.proceedBtn,
+							(isPending ||
+								paymentStatus.paymentPending ||
+								isLoadingLenderOffers) &&
+							styles.proceedBtnDisabled,
+						]}
+						disabled={
+							isPending || paymentStatus.paymentPending || isLoadingLenderOffers
+						}
+						onPress={() => initiatePayment()}
+						activeOpacity={0.85}>
 					{/* Subtle Sheen Gradient */}
 					{!(
 						isPending ||
@@ -778,6 +814,7 @@ export default function AssessmentFeeScreen() {
 						</View>
 					)}
 				</TouchableOpacity>
+			)}
 			</View>
 
 			{/* Subsystem 3 & 4 Modals */}
@@ -1079,7 +1116,51 @@ const styles = StyleSheet.create({
 		fontWeight: "600",
 		fontSize: font(1.6),
 	},
-
+	feeErrorContainer: {
+		width: "100%",
+		alignItems: "center",
+		paddingVertical: height(1),
+		gap: height(1),
+	},
+	feeErrorText: {
+		fontSize: font(1.5),
+		color: "#EF4444",
+		textAlign: "center",
+		fontWeight: "500",
+		paddingHorizontal: width(2),
+	},
+	feeErrorActions: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: width(3),
+		width: "100%",
+	},
+	retryFeeBtn: {
+		backgroundColor: "#B7FB52",
+		borderRadius: width(3),
+		paddingVertical: height(1.4),
+		paddingHorizontal: width(6),
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	retryFeeBtnText: {
+		color: dark,
+		fontWeight: "bold",
+		fontSize: font(1.6),
+	},
+	homeLinkBtn: {
+		paddingVertical: height(1.4),
+		paddingHorizontal: width(4),
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	homeLinkBtnText: {
+		color: "#4B5563",
+		fontWeight: "600",
+		fontSize: font(1.5),
+		textDecorationLine: "underline",
+	},
 });
 
 export { RouteErrorBoundary as ErrorBoundary } from "@/components/ErrorBoundary";

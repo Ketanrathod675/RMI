@@ -12,6 +12,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import {
 	getProfessionalDetailsWithMeta,
+	getUserDashboardData,
 	submitProfessionalDetails,
 	type ProfessionalDetailsPayload,
 } from "@/utils/api";
@@ -221,7 +222,7 @@ export default function ProfessionalDetails() {
 		preferredLanguage: "",
 	});
 
-	const [fetchingDetails, setFetchingDetails] = useState(false);
+	const [fetchingDetails, setFetchingDetails] = useState(true);
 	const [backendLanguages, setBackendLanguages] = useState<string[]>([]);
 	const [backendLoanPurposes, setBackendLoanPurposes] = useState<Array<{ value: string; label: string }>>([]);
 
@@ -242,7 +243,7 @@ export default function ProfessionalDetails() {
 			: defaultLoanPurposeOptions;
 
 	const { applicantFrom } = useAuth();
-	const { runStep } = useJourneyLoader();
+	const { runStep, runStepThenNavigate } = useJourneyLoader();
 
 	// HB Partner API prefill
 	const { data: hbEmploymentData } = useNetworkAwareQuery({
@@ -270,8 +271,25 @@ export default function ProfessionalDetails() {
 	}, [hbEmploymentData]);
 
 	useEffect(() => {
+		let isMounted = true;
+
+		// Guard: if current step is customer_consent_step, redirect to customer-data-consent
+		getUserDashboardData()
+			.then((dash) => {
+				if (!isMounted) return;
+				const currentStep = dash?.workflow_progress?.current_step;
+				if (currentStep === "customer_consent_step") {
+					router.replace("/customer-data-consent");
+					return;
+				}
+			})
+			.catch((err) => {
+				console.log("Error checking current step in professional details:", err);
+			});
+
 		getProfessionalDetailsWithMeta()
 			.then((response) => {
+				if (!isMounted) return;
 				const options = response?.options;
 				if (options?.languages && Array.isArray(options.languages) && options.languages.length > 0) {
 					setBackendLanguages(options.languages);
@@ -307,9 +325,15 @@ export default function ProfessionalDetails() {
 				console.log("Error fetching professional details:", err);
 			})
 			.finally(() => {
-				setFetchingDetails(false);
+				if (isMounted) {
+					setFetchingDetails(false);
+				}
 			});
-	}, []);
+
+		return () => {
+			isMounted = false;
+		};
+	}, [router]);
 
 	// Back button handling
 	const handleBack = () => {
@@ -431,15 +455,19 @@ export default function ProfessionalDetails() {
 	const { mutate: submitProfessionalDetailsMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: submitProfessionalDetails,
 		onSuccess: async () => {
-			await runStep("professional_details", async () => {
-				Toast.show({
-					type: "success",
-					text1: t("employmentDetailsSubmittedSuccessfully", "Details submitted successfully"),
-					text2: t("proceedingToNextStep", "Proceeding to next step"),
-				});
-			});
-
-			router.replace("/professional-details-success");
+			await runStepThenNavigate(
+				"professional_details",
+				async () => {
+					Toast.show({
+						type: "success",
+						text1: t("employmentDetailsSubmittedSuccessfully", "Details submitted successfully"),
+						text2: t("proceedingToNextStep", "Proceeding to next step"),
+					});
+				},
+				{
+					navigate: () => router.replace("/professional-details-success"),
+				}
+			);
 		},
 		onError: (err: any) => {
 			const status = err?.status ?? err?.response?.status;

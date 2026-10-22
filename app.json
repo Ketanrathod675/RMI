@@ -34,7 +34,6 @@
       "permissions": [
         "android.permission.CAMERA"
       ],
-      "//": "TODO: If the team ends up creating a brand-new Branch project instead of reusing the old one, these domain names will need to change to whatever Branch assigns the new project",
       "intentFilters": [
         {
           "action": "VIEW",

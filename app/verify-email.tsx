@@ -18,6 +18,7 @@ import {
 } from "@/utils/api";
 import { height, width } from "@/utils/dimensions";
 import { resolveLeadId } from "@/utils/leadId";
+import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
@@ -41,6 +42,7 @@ export default function VerifyEmail() {
 	const params = useLocalSearchParams();
 	const { t } = useTranslation();
 	const { signal, cancel } = useAssessmentChecksController();
+	const { runStepThenNavigate } = useJourneyLoader();
 
 	const [email, setEmail] = useState("");
 	const [emailError, setEmailError] = useState("");
@@ -197,60 +199,105 @@ export default function VerifyEmail() {
 		setIsStillChecking(false);
 		setIsVerifying(true);
 
+		let navTarget: (() => void) | null = null;
 		try {
-			const leadId = await resolveLeadId(params.lead_id as string);
-			if (!leadId) {
-				Toast.show({
-					type: "error",
-					text1: t("detailsNotFound") || "Lead details not found",
-					text2: t("pleaseTryAgain") || "Please try again from dashboard",
-				});
-				setIsVerifying(false);
-				return;
-			}
+			await runStepThenNavigate(
+				"verifying_details",
+				async ({ signal: loaderSignal }) => {
+					const leadId = await resolveLeadId(params.lead_id as string);
+					if (!leadId) {
+						Toast.show({
+							type: "error",
+							text1: t("detailsNotFound") || "Lead details not found",
+							text2: t("pleaseTryAgain") || "Please try again from dashboard",
+						});
+						throw new Error("Lead details not found");
+					}
 
-			try {
-				await retryAssessmentChecks({
-					lead_id: leadId,
-					updated_email: cleanEmail,
-				});
-			} catch (retryErr: any) {
-				const status = retryErr?.status ?? retryErr?.response?.status;
-				const detail =
-					retryErr?.detail ??
-					retryErr?.response?.data?.detail ??
-					retryErr?.message ??
-					"Update failed";
-				const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
+					try {
+						await retryAssessmentChecks({
+							lead_id: leadId,
+							updated_email: cleanEmail,
+						});
+					} catch (retryErr: any) {
+						const status = retryErr?.status ?? retryErr?.response?.status;
+						const detail =
+							retryErr?.detail ??
+							retryErr?.response?.data?.detail ??
+							retryErr?.message ??
+							"Update failed";
+						const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
 
-				if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
-					const checks = await getHandshakeStatus();
-					handleAssessmentOutcome(checks);
-					setIsVerifying(false);
-					return;
+						if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
+							const checks = await getHandshakeStatus();
+							if (checks.status === "approved") {
+								navTarget = () =>
+									router.replace({
+										pathname: "/professional-details" as any,
+										params: { disableBack: "true" },
+									});
+								return { outcome: "approved", checks };
+							}
+							handleAssessmentOutcome(checks);
+							return { outcome: "recheck", checks };
+						}
+
+						Toast.show({
+							type: "error",
+							text1: detailStr,
+						});
+						throw retryErr;
+					}
+
+					// Poll handshake status until terminal state
+					const checks = await pollAssessmentChecks({
+						signal: loaderSignal,
+						timeoutMs: 60000,
+						intervalMs: 2000,
+					});
+
+					if (checks.status === "approved") {
+						navTarget = () =>
+							router.replace({
+								pathname: "/professional-details" as any,
+								params: { disableBack: "true" },
+							});
+						return { outcome: "approved", checks };
+					}
+
+					if (checks.status === "rejected") {
+						if (isPanFixable(checks)) {
+							navTarget = () =>
+								router.replace({
+									pathname: "/verify-pan" as any,
+									params: { paymentConfirmed: "true", txnid: params.txnid || "" },
+								});
+							return { outcome: "needs_pan", checks };
+						}
+						if (isEmailFixable(checks)) {
+							setRemainingAttempts(checks.remaining_email_updates);
+							setServerError(t("emailVerificationFailed"));
+							return { outcome: "needs_email", checks };
+						}
+						// Final rejection (not fixable)
+						setDelayVisible(true);
+						return { outcome: "final_rejected", checks };
+					}
+
+					throw { isError: true, checks };
+				},
+				{
+					timeoutMs: 65000,
+					treatErrorAsAttention: true,
+					navigate: () => {
+						if (navTarget) navTarget();
+					},
 				}
-
-				Toast.show({
-					type: "error",
-					text1: detailStr,
-				});
-				setIsVerifying(false);
-				return;
-			}
-
-			// Poll handshake status until terminal state
-			try {
-				const checks = await pollAssessmentChecks({
-					signal,
-					timeoutMs: 60000,
-					intervalMs: 2000,
-				});
-				handleAssessmentOutcome(checks);
-			} catch (pollErr: any) {
-				if (pollErr?.aborted) return;
-				setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
-				setIsStillChecking(true);
-			}
+			);
+		} catch (pollErr: any) {
+			if (pollErr?.aborted) return;
+			setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
+			setIsStillChecking(true);
 		} finally {
 			setIsVerifying(false);
 		}
@@ -261,22 +308,63 @@ export default function VerifyEmail() {
 		setIsVerifying(true);
 		setServerError("");
 
+		let navTarget: (() => void) | null = null;
 		try {
-			const leadId = await resolveLeadId(params.lead_id as string);
-			if (lastCheckError === "error" && leadId) {
-				try {
-					await retryAssessmentChecks({ lead_id: leadId });
-				} catch {
-					// Continue to poll
-				}
-			}
+			await runStepThenNavigate(
+				"verifying_details",
+				async ({ signal: loaderSignal }) => {
+					const leadId = await resolveLeadId(params.lead_id as string);
+					if (lastCheckError === "error" && leadId) {
+						try {
+							await retryAssessmentChecks({ lead_id: leadId });
+						} catch {
+							// Continue to poll
+						}
+					}
 
-			const checks = await pollAssessmentChecks({
-				signal,
-				timeoutMs: 60000,
-				intervalMs: 2000,
-			});
-			handleAssessmentOutcome(checks);
+					const checks = await pollAssessmentChecks({
+						signal: loaderSignal,
+						timeoutMs: 60000,
+						intervalMs: 2000,
+					});
+
+					if (checks.status === "approved") {
+						navTarget = () =>
+							router.replace({
+								pathname: "/professional-details" as any,
+								params: { disableBack: "true" },
+							});
+						return { outcome: "approved", checks };
+					}
+
+					if (checks.status === "rejected") {
+						if (isPanFixable(checks)) {
+							navTarget = () =>
+								router.replace({
+									pathname: "/verify-pan" as any,
+									params: { paymentConfirmed: "true", txnid: params.txnid || "" },
+								});
+							return { outcome: "needs_pan", checks };
+						}
+						if (isEmailFixable(checks)) {
+							setRemainingAttempts(checks.remaining_email_updates);
+							setServerError(t("emailVerificationFailed"));
+							return { outcome: "needs_email", checks };
+						}
+						setDelayVisible(true);
+						return { outcome: "final_rejected", checks };
+					}
+
+					throw { isError: true, checks };
+				},
+				{
+					timeoutMs: 65000,
+					treatErrorAsAttention: true,
+					navigate: () => {
+						if (navTarget) navTarget();
+					},
+				}
+			);
 		} catch (err: any) {
 			if (err?.aborted) return;
 			setLastCheckError(err?.isTimeout ? "timeout" : "error");
@@ -307,6 +395,14 @@ export default function VerifyEmail() {
 			<SafeAreaView edges={["bottom", "left", "right"]} style={styles.container}>
 				{!isLoadingDetails && (
 					<View style={styles.content}>
+						{params.paymentConfirmed === "true" && (
+							<View style={styles.paymentSafeBanner}>
+								<Ionicons name="shield-checkmark" size={20} color="#047857" />
+								<Text style={styles.paymentSafeBannerText}>
+									{t("paymentSafeEmailBanner", "Your payment is confirmed and safe. We just need to correct your email to continue.")}
+								</Text>
+							</View>
+						)}
 						<TranslatedText style={styles.description} translationKey="weNeedValidEmail" />
 
 						<View style={styles.inputContainer}>
@@ -593,5 +689,24 @@ const styles = StyleSheet.create({
 		marginTop: 16,
 		fontSize: 14,
 		color: "#6B7280",
+	},
+	paymentSafeBanner: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 10,
+		backgroundColor: "#ECFDF5",
+		borderWidth: 1,
+		borderColor: "#A7F3D0",
+		borderRadius: 12,
+		paddingHorizontal: 14,
+		paddingVertical: 12,
+		marginBottom: 16,
+	},
+	paymentSafeBannerText: {
+		flex: 1,
+		fontSize: 13,
+		lineHeight: 18,
+		color: "#065F46",
+		fontWeight: "500",
 	},
 });

@@ -120,14 +120,8 @@ export default function SetMpin() {
 	const { logout, handleMpinSet, handleSetTokens, handleMpinSignIn } = useAuth(false);
 	const { otpVerifyResponse, clearOtpVerifyResponse, clearLoginResponse } = useSignin(true);
 
-	console.log("otp verify response", otpVerifyResponse);
-
 	useEffect(() => {
 		if (isMounting) return;
-
-		console.log("Set MPIN - OTP Verify Response:", otpVerifyResponse);
-		console.log("Set MPIN - User ID:", otpVerifyResponse?.user_id);
-		console.log("Set MPIN - Is submitting successfully:", isSubmittingSuccessfully);
 
 		// Only redirect to login if not in the middle of successful submission
 		if (!isSubmittingSuccessfully && otpVerifyResponse?.user?.user_id == null) {
@@ -154,9 +148,6 @@ export default function SetMpin() {
 	const { mutate: setMpinHandler, isPending } = useNetworkAwareMutation<any, any, any>({
 		mutationFn: setMpinApi,
 		onSuccess: async (data: any) => {
-			console.log("Set MPIN API Response:", data);
-			console.log("Set MPIN Success - Full Response:", JSON.stringify(data, null, 2));
-
 			// Set flag to prevent logout during successful flow
 			setIsSubmittingSuccessfully(true);
 
@@ -207,10 +198,6 @@ export default function SetMpin() {
 		},
 
 		onError: (err, variables, ctx) => {
-			console.log("Set MPIN API Error:", err);
-			console.log("Set MPIN Error Variables:", variables);
-			console.log("Set MPIN Error Context:", ctx);
-
 			const { error } = errorHandler(err, variables, ctx);
 
 			Toast.show({
@@ -334,8 +321,6 @@ export default function SetMpin() {
 
 			return;
 		}
-
-		console.log("mpin", mpin.join(""));
 
 		setMpinHandler({
 			user_id: otpVerifyResponse.user.user_id,

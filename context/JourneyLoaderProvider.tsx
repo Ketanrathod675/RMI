@@ -24,6 +24,7 @@ import React, {
 
 export interface StepRunHelpers {
 	advanceSubStep: (subStepId: string, customSubtitle?: string) => void;
+	signal: AbortSignal;
 }
 
 export interface RunStepOptions {
@@ -31,6 +32,13 @@ export interface RunStepOptions {
 	timeoutMs?: number;
 	keepOpen?: boolean;
 	minDurationMs?: number;
+	treatErrorAsAttention?: boolean;
+	attentionBadgeLabel?: string;
+}
+
+export interface RunStepThenNavigateOptions extends RunStepOptions {
+	navigate: () => void;
+	hideDelayMs?: number;
 }
 
 interface JourneyLoaderContextValue {
@@ -39,12 +47,16 @@ interface JourneyLoaderContextValue {
 		task: (helpers: StepRunHelpers) => Promise<T>,
 		options?: RunStepOptions
 	) => Promise<T>;
-	advance: (subStepId?: string) => Promise<void>;
-	show: (stepId: JourneyStepId, customSubtitle?: string) => void;
-	hide: () => void;
-	setActive: (stepId: JourneyStepId) => void;
+	runStepThenNavigate: <T>(
+		stepId: JourneyStepId,
+		task: (helpers: StepRunHelpers) => Promise<T>,
+		options: RunStepThenNavigateOptions
+	) => Promise<T>;
+	show: (stepId: JourneyStepId, customSubtitle?: string) => number;
+	hide: (token?: number) => void;
 	markCompleted: (stepId: JourneyStepId) => void;
 	markFailed: (stepId: JourneyStepId) => void;
+	markAttention: (stepId: JourneyStepId, label?: string) => void;
 	resetJourney: () => Promise<void>;
 	completedStepIds: JourneyStepId[];
 }
@@ -59,8 +71,12 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 	const [visible, setVisible] = useState(false);
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const [failedId, setFailedId] = useState<string | null>(null);
+	const [attentionId, setAttentionId] = useState<string | null>(null);
+	const [attentionBadgeLabel, setAttentionBadgeLabel] = useState<string | null>(null);
 	const [completedStepIds, setCompletedStepIds] = useState<JourneyStepId[]>([]);
 	const [dynamicSubtitle, setDynamicSubtitle] = useState<string | undefined>(undefined);
+
+	const ownerTokenRef = useRef(0);
 
 	// Load previously saved completed steps from storage on mount
 	useEffect(() => {
@@ -100,43 +116,53 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 	const stepsForDisplay: VerificationLoaderStep[] = useMemo(() => {
 		return JOURNEY_STEPS.map((s) => {
 			const isCurrentActive = s.id === activeId;
+			const isDone = completedStepIds.includes(s.id);
 			const subtitle = isCurrentActive && dynamicSubtitle
 				? dynamicSubtitle
 				: s.activeSubtitleKey
 				? t(s.activeSubtitleKey as any, s.activeSubtitle || "")
 				: s.activeSubtitle;
 
+			const title = isDone && s.completedTitleKey
+				? t(s.completedTitleKey as any, "Payment received")
+				: t(s.titleKey as any, s.title);
+
 			return {
 				id: s.id,
-				title: t(s.titleKey as any, s.title),
+				title,
 				subtitle: subtitle || undefined,
 			};
 		});
-	}, [activeId, dynamicSubtitle, t]);
+	}, [activeId, dynamicSubtitle, completedStepIds, t]);
 
 	const progressPercent = useMemo(() => {
 		return getProgressPercent(completedStepIds, activeId);
 	}, [completedStepIds, activeId]);
 
-	const show = useCallback((stepId: JourneyStepId, customSubtitle?: string) => {
+	const show = useCallback((stepId: JourneyStepId, customSubtitle?: string): number => {
+		const token = ++ownerTokenRef.current;
 		const completedBefore = getCompletedBefore(stepId);
-		setCompletedStepIds(completedBefore);
-		persistCompletedSteps(completedBefore);
 		setActiveId(stepId);
 		setFailedId(null);
+		setAttentionId(null);
+		setAttentionBadgeLabel(null);
 		setDynamicSubtitle(customSubtitle);
 		setVisible(true);
+		setCompletedStepIds(completedBefore);
+		persistCompletedSteps(completedBefore).catch(() => {});
+		return token;
 	}, [persistCompletedSteps]);
 
-	const hide = useCallback(() => {
+	const hide = useCallback((token?: number) => {
+		if (token !== undefined && token !== ownerTokenRef.current) {
+			return;
+		}
 		setVisible(false);
 		setActiveId(null);
 		setFailedId(null);
+		setAttentionId(null);
+		setAttentionBadgeLabel(null);
 		setDynamicSubtitle(undefined);
-	}, []);
-
-	const setActive = useCallback((stepId: JourneyStepId) => {
-		setActiveId(stepId);
 	}, []);
 
 	const markCompleted = useCallback(
@@ -144,28 +170,33 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 			const completedBefore = getCompletedBefore(stepId);
 			const updated = Array.from(new Set([...completedBefore, stepId]));
 			setCompletedStepIds(updated);
-			persistCompletedSteps(updated);
+			persistCompletedSteps(updated).catch(() => {});
 		},
 		[persistCompletedSteps]
 	);
 
 	const markFailed = useCallback((stepId: JourneyStepId) => {
 		setFailedId(stepId);
+		setAttentionId(null);
+		setAttentionBadgeLabel(null);
+	}, []);
+
+	const markAttention = useCallback((stepId: JourneyStepId, label?: string) => {
+		setAttentionId(stepId);
+		setAttentionBadgeLabel(label || null);
+		setFailedId(null);
 	}, []);
 
 	const resetJourney = useCallback(async () => {
+		ownerTokenRef.current += 1;
 		setCompletedStepIds([]);
 		setActiveId(null);
 		setFailedId(null);
+		setAttentionId(null);
+		setAttentionBadgeLabel(null);
 		setDynamicSubtitle(undefined);
 		await persistCompletedSteps([]);
 	}, [persistCompletedSteps]);
-
-	const advance = useCallback(async (subStepId?: string) => {
-		if (subStepId) {
-			setDynamicSubtitle(subStepId);
-		}
-	}, []);
 
 	const runStep = useCallback(
 		async <T,>(
@@ -173,45 +204,51 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 			task: (helpers: StepRunHelpers) => Promise<T>,
 			options?: RunStepOptions
 		): Promise<T> => {
-			// 1. Current step is running, so strictly preceding steps are completed.
-			// The current step itself and any future steps are NOT completed yet.
-			const initialCompleted = getCompletedBefore(stepId);
-			setCompletedStepIds(initialCompleted);
-			await persistCompletedSteps(initialCompleted);
+			const token = ++ownerTokenRef.current;
 
+			// Set UI immediately without awaiting storage
+			const initialCompleted = getCompletedBefore(stepId);
 			setActiveId(stepId);
 			setFailedId(null);
+			setAttentionId(null);
+			setAttentionBadgeLabel(null);
 			setDynamicSubtitle(undefined);
 			setVisible(true);
+			setCompletedStepIds(initialCompleted);
+			persistCompletedSteps(initialCompleted).catch(() => {});
 
 			const startTime = Date.now();
-			const minActiveTime = 600; // ms minimum visible active time
+			const minActiveTime = 600;
 
 			const advanceSubStep = (id: string, customSubtitle?: string) => {
-				if (customSubtitle) {
+				if (ownerTokenRef.current === token && customSubtitle) {
 					setDynamicSubtitle(customSubtitle);
 				}
 			};
 
+			const abortController = new AbortController();
+			const timeoutMs = options?.timeoutMs ?? 60000;
+
+			let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				timeoutHandle = setTimeout(() => {
+					abortController.abort();
+					reject(new Error(`Operation timed out after ${timeoutMs}ms`));
+				}, timeoutMs);
+			});
+
 			try {
-				const timeoutMs = options?.timeoutMs ?? 60000;
-
-				let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-				const timeoutPromise = new Promise<never>((_, reject) => {
-					timeoutHandle = setTimeout(() => {
-						reject(new Error(`Operation timed out after ${timeoutMs}ms`));
-					}, timeoutMs);
-				});
-
-				const taskPromise = task({ advanceSubStep });
-
+				const taskPromise = task({ advanceSubStep, signal: abortController.signal });
 				const result = await Promise.race([taskPromise, timeoutPromise]);
 
 				if (timeoutHandle) {
 					clearTimeout(timeoutHandle);
 				}
 
-				// Ensure minimum active display time for smooth UX
+				if (ownerTokenRef.current !== token) {
+					return result;
+				}
+
 				const completionAnimMs = 550;
 				const requiredActiveTime =
 					options?.minDurationMs !== undefined
@@ -224,17 +261,18 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 					);
 				}
 
-				// Mark completed
-				const nextCompleted = Array.from(
-					new Set([...initialCompleted, stepId])
-				);
+				if (ownerTokenRef.current !== token) {
+					return result;
+				}
+
+				const nextCompleted = Array.from(new Set([...initialCompleted, stepId]));
 				setCompletedStepIds(nextCompleted);
-				await persistCompletedSteps(nextCompleted);
+				persistCompletedSteps(nextCompleted).catch(() => {});
 
 				// Wait for tick scale-in and strikethrough animation (550ms)
 				await new Promise((resolve) => setTimeout(resolve, 550));
 
-				if (!options?.keepOpen) {
+				if (ownerTokenRef.current === token && !options?.keepOpen) {
 					setVisible(false);
 					setActiveId(null);
 					setDynamicSubtitle(undefined);
@@ -242,31 +280,179 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 
 				return result;
 			} catch (error) {
-				setFailedId(stepId);
-				// Keep failed row visible for 800ms so user clearly perceives the failure state
-				await new Promise((resolve) => setTimeout(resolve, 800));
-				setVisible(false);
-				setActiveId(null);
-				setDynamicSubtitle(undefined);
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+				}
+				if (ownerTokenRef.current === token) {
+					if (options?.treatErrorAsAttention || stepId === "verifying_details") {
+						setAttentionId(stepId);
+						setAttentionBadgeLabel(options?.attentionBadgeLabel || t("stepTakingLonger", "Taking longer than usual"));
+						await new Promise((resolve) => setTimeout(resolve, 800));
+						if (ownerTokenRef.current === token) {
+							setVisible(false);
+							setActiveId(null);
+							setAttentionId(null);
+							setAttentionBadgeLabel(null);
+							setDynamicSubtitle(undefined);
+						}
+					} else {
+						setFailedId(stepId);
+						await new Promise((resolve) => setTimeout(resolve, 800));
+						if (ownerTokenRef.current === token) {
+							setVisible(false);
+							setActiveId(null);
+							setFailedId(null);
+							setDynamicSubtitle(undefined);
+						}
+					}
+				}
 				throw error;
 			}
 		},
-		[persistCompletedSteps]
+		[persistCompletedSteps, t]
+	);
+
+	const runStepThenNavigate = useCallback(
+		async <T,>(
+			stepId: JourneyStepId,
+			task: (helpers: StepRunHelpers) => Promise<T>,
+			options: RunStepThenNavigateOptions
+		): Promise<T> => {
+			const token = ++ownerTokenRef.current;
+
+			// Set UI immediately without awaiting storage
+			const initialCompleted = getCompletedBefore(stepId);
+			setActiveId(stepId);
+			setFailedId(null);
+			setAttentionId(null);
+			setAttentionBadgeLabel(null);
+			setDynamicSubtitle(undefined);
+			setVisible(true);
+			setCompletedStepIds(initialCompleted);
+			persistCompletedSteps(initialCompleted).catch(() => {});
+
+			const startTime = Date.now();
+			const minActiveTime = 600;
+
+			const advanceSubStep = (id: string, customSubtitle?: string) => {
+				if (ownerTokenRef.current === token && customSubtitle) {
+					setDynamicSubtitle(customSubtitle);
+				}
+			};
+
+			const abortController = new AbortController();
+			const timeoutMs = options?.timeoutMs ?? 60000;
+
+			let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				timeoutHandle = setTimeout(() => {
+					abortController.abort();
+					reject(new Error(`Operation timed out after ${timeoutMs}ms`));
+				}, timeoutMs);
+			});
+
+			try {
+				const taskPromise = task({ advanceSubStep, signal: abortController.signal });
+				const result = await Promise.race([taskPromise, timeoutPromise]);
+
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+				}
+
+				if (ownerTokenRef.current !== token) {
+					return result;
+				}
+
+				const completionAnimMs = 550;
+				const requiredActiveTime =
+					options?.minDurationMs !== undefined
+						? Math.max(minActiveTime, options.minDurationMs - completionAnimMs)
+						: minActiveTime;
+				const elapsed = Date.now() - startTime;
+				if (elapsed < requiredActiveTime) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, requiredActiveTime - elapsed)
+					);
+				}
+
+				if (ownerTokenRef.current !== token) {
+					return result;
+				}
+
+				const nextCompleted = Array.from(new Set([...initialCompleted, stepId]));
+				setCompletedStepIds(nextCompleted);
+				persistCompletedSteps(nextCompleted).catch(() => {});
+
+				// Wait for tick scale-in and strikethrough animation (550ms)
+				await new Promise((resolve) => setTimeout(resolve, 550));
+
+				if (ownerTokenRef.current === token) {
+					// Navigate while loader is still visible!
+					options.navigate();
+
+					if (!options.keepOpen) {
+						const hideDelayMs = options.hideDelayMs ?? 450;
+						await new Promise((resolve) => setTimeout(resolve, hideDelayMs));
+						if (ownerTokenRef.current === token) {
+							setVisible(false);
+							setActiveId(null);
+							setDynamicSubtitle(undefined);
+						}
+					}
+				} else {
+					console.warn(
+						`[JourneyLoaderProvider] ownerToken superseded (${ownerTokenRef.current} vs ${token}), calling navigate anyway to avoid stranding user`
+					);
+					options.navigate();
+				}
+
+				return result;
+			} catch (error) {
+				if (timeoutHandle) {
+					clearTimeout(timeoutHandle);
+				}
+				if (ownerTokenRef.current === token) {
+					if (options?.treatErrorAsAttention || stepId === "verifying_details") {
+						setAttentionId(stepId);
+						setAttentionBadgeLabel(options?.attentionBadgeLabel || t("stepTakingLonger", "Taking longer than usual"));
+						await new Promise((resolve) => setTimeout(resolve, 800));
+						if (ownerTokenRef.current === token) {
+							setVisible(false);
+							setActiveId(null);
+							setAttentionId(null);
+							setAttentionBadgeLabel(null);
+							setDynamicSubtitle(undefined);
+						}
+					} else {
+						setFailedId(stepId);
+						await new Promise((resolve) => setTimeout(resolve, 800));
+						if (ownerTokenRef.current === token) {
+							setVisible(false);
+							setActiveId(null);
+							setFailedId(null);
+							setDynamicSubtitle(undefined);
+						}
+					}
+				}
+				throw error;
+			}
+		},
+		[persistCompletedSteps, t]
 	);
 
 	const contextValue = useMemo<JourneyLoaderContextValue>(
 		() => ({
 			runStep,
-			advance,
+			runStepThenNavigate,
 			show,
 			hide,
-			setActive,
 			markCompleted,
 			markFailed,
+			markAttention,
 			resetJourney,
 			completedStepIds,
 		}),
-		[runStep, advance, show, hide, setActive, markCompleted, markFailed, resetJourney, completedStepIds]
+		[runStep, runStepThenNavigate, show, hide, markCompleted, markFailed, markAttention, resetJourney, completedStepIds]
 	);
 
 	return (
@@ -278,6 +464,8 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 				completedIds={completedStepIds}
 				activeId={activeId}
 				failedId={failedId}
+				attentionId={attentionId}
+				attentionBadgeLabel={attentionBadgeLabel}
 				progressPercent={progressPercent}
 			/>
 		</JourneyLoaderContext.Provider>

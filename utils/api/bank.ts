@@ -173,7 +173,9 @@ export type BankDetailsSubmitRequestType = {
 export type BankDetailsSubmitResponseType = {
 	success: boolean;
 	message: string;
-	verified: boolean;
+	verified?: boolean;
+	verification_status?: "pending" | "verified" | "failed" | string;
+	verification_failure_reason?: string | null;
 	bank_details?: any;
 };
 
@@ -201,10 +203,23 @@ export const submitBankDetails = async (data: BankDetailsSubmitRequestType) => {
 		const raw = response.data;
 		const innerData = raw && typeof raw === "object" && "data" in raw ? raw.data : raw;
 
+		// Real backend fields instead of fabricated verified: true
+		const verification_status = (
+			innerData?.verification_status ||
+			raw?.verification_status ||
+			(raw?.verified === true ? "verified" : raw?.verified === false ? "failed" : "pending")
+		);
+		const verification_failure_reason =
+			innerData?.verification_failure_reason ||
+			raw?.verification_failure_reason ||
+			null;
+
 		return {
 			success: raw?.success ?? true,
 			message: raw?.message ?? "Bank details submitted successfully",
-			verified: true,
+			verified: verification_status === "verified",
+			verification_status,
+			verification_failure_reason,
 			bank_details: innerData,
 		};
 	} catch (error: any) {
@@ -231,6 +246,8 @@ export type BankAccount = {
 	account_type: string;
 	is_primary: boolean;
 	verified_by_lender: boolean;
+	verification_status?: "pending" | "verified" | "failed" | string;
+	verification_failure_reason?: string | null;
 	submitted_at: string;
 };
 
@@ -259,8 +276,11 @@ export const getBankAccounts = async (): Promise<GetBankAccountsResponseType> =>
 			city: String(item.city || ""),
 			state: String(item.state || ""),
 			account_type: String(item.account_type || "savings"),
-			is_primary: index === 0,
-			verified_by_lender: false,
+			// Use real backend fields instead of index === 0 and false
+			is_primary: typeof item.is_primary === "boolean" ? item.is_primary : index === 0 && item.is_primary !== false,
+			verified_by_lender: typeof item.verified_by_lender === "boolean" ? item.verified_by_lender : false,
+			verification_status: item.verification_status || (item.verified === true ? "verified" : item.verified === false ? "failed" : "pending"),
+			verification_failure_reason: item.verification_failure_reason || null,
 			submitted_at: String(item.created_at || item.updated_at || ""),
 		}));
 	} catch (error: any) {

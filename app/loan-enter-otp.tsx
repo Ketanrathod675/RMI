@@ -49,6 +49,7 @@ export default function LoanEnterOTP() {
 	const [isSendingOtp, setIsSendingOtp] = useState(false);
 	const [isVerifying, setIsVerifying] = useState(false);
 	const [isSuccess, setIsSuccess] = useState(false);
+	const [consentAccepted, setConsentAccepted] = useState(false);
 	const [disableContinueUntilResend, setDisableContinueUntilResend] =
 		useState(false);
 	const [modalVisible, setModalVisible] = useState(false);
@@ -166,7 +167,7 @@ export default function LoanEnterOTP() {
 
 	const handleContinue = async () => {
 		const enteredOtp = otp.join("").trim();
-		if (enteredOtp.length !== 4 || isVerifying || disableContinueUntilResend) {
+		if (enteredOtp.length !== 4 || isVerifying || disableContinueUntilResend || !consentAccepted) {
 			return;
 		}
 
@@ -336,10 +337,17 @@ export default function LoanEnterOTP() {
 					</TouchableOpacity>
 
 					{/* Consent Text */}
-					<TranslatedText
-						style={styles.consentText}
-						translationKey="consentToSign"
-					/>
+					<TouchableOpacity
+						style={styles.consentRow}
+						activeOpacity={0.8}
+						onPress={() => setConsentAccepted((accepted) => !accepted)}
+						accessibilityRole="checkbox"
+						accessibilityState={{ checked: consentAccepted }}>
+						<View style={[styles.consentCheckbox, consentAccepted && styles.consentCheckboxChecked]}>
+							{consentAccepted && <Ionicons name="checkmark" size={16} color={white} />}
+						</View>
+						<TranslatedText style={styles.consentText} translationKey="consentToSign" />
+					</TouchableOpacity>
 
 					{/* Warning Text */}
 					<TranslatedText
@@ -356,13 +364,15 @@ export default function LoanEnterOTP() {
 							otp.every((digit) => digit.trim() !== "") &&
 								!isVerifying &&
 								!disableContinueUntilResend &&
+								consentAccepted &&
 								styles.continueButtonActive,
 						]}
 						onPress={handleContinue}
 						disabled={
 							!otp.every((digit) => digit.trim() !== "") ||
 							isVerifying ||
-							disableContinueUntilResend
+							disableContinueUntilResend ||
+							!consentAccepted
 						}>
 						{isVerifying ? (
 							<ActivityIndicator size="small" color="#333" />
@@ -478,13 +488,35 @@ const styles = StyleSheet.create({
 	resendActive: {
 		color: "#007AFF",
 	},
-	consentText: {
-		fontSize: 14,
-		color: dark,
-		textAlign: "center",
-		lineHeight: 20,
+	consentRow: {
+		flexDirection: "row",
+		alignItems: "flex-start",
+		gap: width(3),
 		marginBottom: height(2),
 		paddingHorizontal: width(4),
+	},
+	consentCheckbox: {
+		width: 22,
+		height: 22,
+		marginTop: 1,
+		borderWidth: 1.5,
+		borderColor: "#666666",
+		borderRadius: 4,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	consentCheckboxChecked: {
+		backgroundColor: "#15803d",
+		borderColor: "#15803d",
+	},
+	consentText: {
+		flex: 1,
+		fontSize: 14,
+		color: dark,
+		textAlign: "left",
+		lineHeight: 20,
+		marginBottom: 0,
+		paddingHorizontal: 0,
 	},
 	warningText: {
 		fontSize: 14,

@@ -1,5 +1,6 @@
 import { translations, type Language, type TranslationKey } from "@/constants/translations";
 import { type RootState } from "@/store";
+import { useCallback } from "react";
 import { useSelector } from "react-redux";
 
 /**
@@ -16,27 +17,30 @@ export const useTranslation = () => {
 	 * @param fallback - Optional fallback text if translation not found
 	 * @returns Translated text
 	 */
-	const t = (key: TranslationKey, fallback?: string): string => {
-		try {
-			const translation = translations[currentLanguage as Language]?.[key];
+	const t = useCallback(
+		(key: TranslationKey, fallback?: string): string => {
+			try {
+				const translation = translations[currentLanguage as Language]?.[key];
 
-			if (translation !== undefined) {
-				return translation;
+				if (translation !== undefined) {
+					return translation;
+				}
+
+				// Fallback to English if translation not found in current language
+				const englishTranslation = translations.english[key];
+				if (englishTranslation !== undefined) {
+					return englishTranslation;
+				}
+
+				// Return fallback or key if no translation found
+				return fallback || key;
+			} catch (error) {
+				console.warn(`Translation error for key "${key}":`, error);
+				return fallback || key;
 			}
-
-			// Fallback to English if translation not found in current language
-			const englishTranslation = translations.english[key];
-			if (englishTranslation !== undefined) {
-				return englishTranslation;
-			}
-
-			// Return fallback or key if no translation found
-			return fallback || key;
-		} catch (error) {
-			console.warn(`Translation error for key "${key}":`, error);
-			return fallback || key;
-		}
-	};
+		},
+		[currentLanguage],
+	);
 
 	/**
 	 * Get translation with interpolation support
@@ -45,21 +49,24 @@ export const useTranslation = () => {
 	 * @param fallback - Optional fallback text
 	 * @returns Translated text with interpolated values
 	 */
-	const tWithValues = (
-		key: TranslationKey,
-		values: Record<string, string | number>,
-		fallback?: string,
-	): string => {
-		let translation = t(key, fallback);
+	const tWithValues = useCallback(
+		(
+			key: TranslationKey,
+			values: Record<string, string | number>,
+			fallback?: string,
+		): string => {
+			let translation = t(key, fallback);
 
-		// Replace placeholders like {{name}} with actual values
-		Object.entries(values).forEach(([placeholder, value]) => {
-			const regex = new RegExp(`{{${placeholder}}}`, "g");
-			translation = translation.replace(regex, String(value));
-		});
+			// Replace placeholders like {{name}} with actual values
+			Object.entries(values).forEach(([placeholder, value]) => {
+				const regex = new RegExp(`{{${placeholder}}}`, "g");
+				translation = translation.replace(regex, String(value));
+			});
 
-		return translation;
-	};
+			return translation;
+		},
+		[t],
+	);
 
 	/**
 	 * Check if current language is RTL (Right-to-Left)
