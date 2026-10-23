@@ -170,7 +170,6 @@ export default function MpinLogin() {
 	const { mutate: login, isPending } = useNetworkAwareMutation<any, any, any>({
 		mutationFn: mpinLogin,
 		onSuccess: async (data: any) => {
-			console.log("mpin login", data);
 
 			if (data?.access_token && data?.refresh_token && data?.token_type) {
 				handleSetTokens(data.access_token, data.refresh_token, data.token_type);

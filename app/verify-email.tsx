@@ -289,6 +289,8 @@ export default function VerifyEmail() {
 				{
 					timeoutMs: 65000,
 					treatErrorAsAttention: true,
+					markAttentionIf: (result: any) => ["needs_pan", "needs_email", "final_rejected", "recheck"].includes(result?.outcome),
+					attentionBadgeLabel: t("actionNeeded"),
 					navigate: () => {
 						if (navTarget) navTarget();
 					},
@@ -360,6 +362,8 @@ export default function VerifyEmail() {
 				{
 					timeoutMs: 65000,
 					treatErrorAsAttention: true,
+					markAttentionIf: (result: any) => ["needs_pan", "needs_email", "final_rejected", "recheck"].includes(result?.outcome),
+					attentionBadgeLabel: t("actionNeeded"),
 					navigate: () => {
 						if (navTarget) navTarget();
 					},

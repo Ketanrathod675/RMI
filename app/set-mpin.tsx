@@ -308,7 +308,6 @@ export default function SetMpin() {
 		}
 		setError("");
 
-		console.log("user id", otpVerifyResponse?.user_id);
 
 		if (!otpVerifyResponse?.user?.user_id) {
 			Toast.show({

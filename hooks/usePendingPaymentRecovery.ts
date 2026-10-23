@@ -43,7 +43,8 @@ export const usePendingPaymentRecovery = () => {
 
 				// If user is already past fee step, do not redirect
 				const isAtFeeStep = !currentStep || FEE_STEPS.includes(currentStep);
-				const isBrePending = dash?.workflow_progress?.overall_status === "in_progress";
+				const breStatus = String(dash?.workflow_progress?.bre_status ?? (dash as any)?.lead?.lead_metadata?.bre_status ?? "").toLowerCase();
+				const isBrePending = breStatus === "pending" || breStatus === "error";
 
 				if (!isAtFeeStep && !isBrePending) {
 					Logger.debug("User already past fee step, skipping payment recovery redirect", { currentStep });

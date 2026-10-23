@@ -39,6 +39,8 @@ export interface RunStepOptions {
 export interface RunStepThenNavigateOptions extends RunStepOptions {
 	navigate: () => void;
 	hideDelayMs?: number;
+	markAttentionIf?: (result: unknown) => boolean;
+	attentionBadgeLabel?: string;
 }
 
 interface JourneyLoaderContextValue {
@@ -77,6 +79,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 	const [dynamicSubtitle, setDynamicSubtitle] = useState<string | undefined>(undefined);
 
 	const ownerTokenRef = useRef(0);
+	const navigatedForTokenRef = useRef<number | null>(null);
 
 	// Load previously saved completed steps from storage on mount
 	useEffect(() => {
@@ -379,15 +382,22 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 					return result;
 				}
 
-				const nextCompleted = Array.from(new Set([...initialCompleted, stepId]));
-				setCompletedStepIds(nextCompleted);
-				persistCompletedSteps(nextCompleted).catch(() => {});
+				const needsAttention = options.markAttentionIf?.(result) === true;
+				if (needsAttention) {
+					setAttentionId(stepId);
+					setAttentionBadgeLabel(options.attentionBadgeLabel || t("actionNeeded"));
+				} else {
+					const nextCompleted = Array.from(new Set([...initialCompleted, stepId]));
+					setCompletedStepIds(nextCompleted);
+					persistCompletedSteps(nextCompleted).catch(() => {});
+				}
 
 				// Wait for tick scale-in and strikethrough animation (550ms)
 				await new Promise((resolve) => setTimeout(resolve, 550));
 
-				if (ownerTokenRef.current === token) {
+				if (ownerTokenRef.current === token && navigatedForTokenRef.current !== token) {
 					// Navigate while loader is still visible!
+					navigatedForTokenRef.current = token;
 					options.navigate();
 
 					if (!options.keepOpen) {
@@ -399,11 +409,6 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 							setDynamicSubtitle(undefined);
 						}
 					}
-				} else {
-					console.warn(
-						`[JourneyLoaderProvider] ownerToken superseded (${ownerTokenRef.current} vs ${token}), calling navigate anyway to avoid stranding user`
-					);
-					options.navigate();
 				}
 
 				return result;

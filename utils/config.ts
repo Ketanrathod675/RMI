@@ -37,7 +37,8 @@ if (!/^https?:\/\//i.test(apiBaseUrl)) {
 	throw new Error("EXPO_PUBLIC_API_URL must be an absolute HTTP(S) URL");
 }
 
-const allowUnsafeApiUrl = process.env.EXPO_PUBLIC_ALLOW_UNSAFE_API_URL === "true";
+const environment = getPublicEnv("API_ENV", __DEV__ ? "development" : "production") as Environment;
+const allowUnsafeApiUrl = environment !== "production" && process.env.EXPO_PUBLIC_ALLOW_UNSAFE_API_URL === "true";
 
 if (!__DEV__ && !allowUnsafeApiUrl) {
 	const host = apiBaseUrl.replace(/^https?:\/\//i, "").split(/[:/?#]/)[0].toLowerCase();
@@ -53,7 +54,6 @@ if (!__DEV__ && !allowUnsafeApiUrl) {
 	}
 }
 
-const environment = getPublicEnv("API_ENV", __DEV__ ? "development" : "production") as Environment;
 if (!["development", "staging", "production"].includes(environment)) {
 	throw new Error("EXPO_PUBLIC_API_ENV must be development, staging, or production");
 }

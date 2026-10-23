@@ -359,10 +359,7 @@ export default function VerifyingBank() {
 
 				{/* Single Loading Text directly below loader */}
 				<View style={styles.textContainer}>
-					<TranslatedText
-						style={styles.verifyingTitle}
-						translationKey="verifyingYourBankDetails"
-					/>
+					<Text style={styles.verifyingTitle}>{BANK_VERIFICATION_STATUS_AVAILABLE ? t("verifyingYourBankDetails") : t("bankDetailsSavingTitle", "Saving your bank details")}</Text>
 					<Text style={styles.takeWhileText}>
 						{t("thisMayTakeAWhile", "This may take a")}{" "}
 						<Text style={styles.whileText}>
@@ -385,14 +382,8 @@ export default function VerifyingBank() {
 							style={[styles.successImage, modalAnimatedStyle]}
 							resizeMode="contain"
 						/>
-						<TranslatedText
-							style={styles.successTitle}
-							translationKey="bankDetailsVerifiedSuccessfully"
-						/>
-						<TranslatedText
-							style={styles.successSubtitle}
-							translationKey="yourBankDetailsHasBeenVerified"
-						/>
+						<Text style={styles.successTitle}>{BANK_VERIFICATION_STATUS_AVAILABLE ? t("bankDetailsVerifiedSuccessfully") : t("bankDetailsSavedTitle", "Your bank details have been saved")}</Text>
+						{BANK_VERIFICATION_STATUS_AVAILABLE && <TranslatedText style={styles.successSubtitle} translationKey="yourBankDetailsHasBeenVerified" />}
 					</View>
 				</View>
 			</Modal>

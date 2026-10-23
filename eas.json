@@ -14,7 +14,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "REPLACE_WITH_PREVIEW_API_URL",
+        "EXPO_PUBLIC_API_URL": "https://rendering-underuse-viewless.ngrok-free.dev/api/v1",
         "EXPO_PUBLIC_API_ENV": "development",
         "EXPO_PUBLIC_LOG_LEVEL": "debug"
       }

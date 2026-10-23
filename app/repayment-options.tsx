@@ -1,18 +1,19 @@
-import { dark, primary, white } from "@/constants/Colors";
+﻿import { dark, primary, white } from "@/constants/Colors";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useTranslation } from "@/hooks/useTranslation";
 import { axios } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
-import { STORAGE_KEYS, setStorageItem, getStorageItem } from "@/utils/storage";
+import { STORAGE_KEYS, setStorageItem, getStorageItem, removeStorageItem } from "@/utils/storage";
+import { checkPaymentStatus } from "@/utils/api";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { decode } from "@/utils/encode_decode";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
-	DeviceEventEmitter,
+	AppState,
 	Platform,
 	ScrollView,
 	StyleSheet,
@@ -49,15 +50,6 @@ interface RepaymentOptionsResponse {
 // API function to get repayment options
 const getRepaymentOptions = async (loanNumber: string) => {
 	const response = await axios.get(`loans/${loanNumber}/repayment-options`);
-	console.log("=== REPAYMENT OPTIONS API RESPONSE ===");
-	console.log("Loan Number:", loanNumber);
-	console.log("Status:", response.status);
-	console.log("Full Response:", JSON.stringify(response.data, null, 2));
-	console.log(
-		"All Options:",
-		response.data?.repayment_options?.map((o: any) => o.type),
-	);
-	console.log("======================================");
 	return response.data;
 };
 
@@ -92,12 +84,6 @@ const formatDueDate = (dateString: string): string => {
 		today.setHours(0, 0, 0, 0);
 		dueDate.setHours(0, 0, 0, 0);
 
-		console.log("=== DUE DATE COMPARISON ===");
-		console.log("Due Date String:", dateString);
-		console.log("Due Date (parsed):", dueDate.toDateString());
-		console.log("Today:", today.toDateString());
-		console.log("Is Overdue:", dueDate <= today);
-		console.log("===========================");
 
 		// If due date is in the past or today, show "Immediate"
 		if (dueDate <= today) {
@@ -135,7 +121,7 @@ const translateDescription = (description: string, isHindi: boolean): string => 
 
 	// Hindi translation for the specific description
 	const hindiTranslation =
-		"पूरी बकाया राशि (मूलधन + ब्याज + शुल्क) का भुगतान करें और लोन बंद करें।";
+		"à¤ªà¥‚à¤°à¥€ à¤¬à¤•à¤¾à¤¯à¤¾ à¤°à¤¾à¤¶à¤¿ (à¤®à¥‚à¤²à¤§à¤¨ + à¤¬à¥à¤¯à¤¾à¤œ + à¤¶à¥à¤²à¥à¤•) à¤•à¤¾ à¤­à¥à¤—à¤¤à¤¾à¤¨ à¤•à¤°à¥‡à¤‚ à¤”à¤° à¤²à¥‹à¤¨ à¤¬à¤‚à¤¦ à¤•à¤°à¥‡à¤‚à¥¤";
 
 	// Normalize the input description
 	const normalizedDescription = normalize(description);
@@ -174,6 +160,44 @@ export default function RepaymentOptions() {
 	const [isHBPartner, setIsHBPartner] = useState(false);
 	const [isLoadingHbCondition, setIsLoadingHbCondition] = useState(false);
 	const [enableRepayment, setEnableRepayment] = useState(true);
+	const appWasBackgrounded = useRef(false);
+	const resolvingReturn = useRef(false);
+
+	useEffect(() => {
+		const subscription = AppState.addEventListener("change", async (state) => {
+			if (state !== "active") { appWasBackgrounded.current = true; return; }
+			if (!appWasBackgrounded.current || resolvingReturn.current) return;
+			appWasBackgrounded.current = false;
+			const [flag, timestamp, txnid] = await Promise.all([
+				getStorageItem(STORAGE_KEYS["@repayment-status"]),
+				getStorageItem(STORAGE_KEYS["@repayment-timestamp"]),
+				getStorageItem(STORAGE_KEYS["@repayment-txnid"]),
+			]);
+			if (flag !== "open") return;
+			const ageMs = timestamp ? Date.now() - Number(timestamp) : Number.POSITIVE_INFINITY;
+			if (!Number.isFinite(ageMs) || ageMs > 30 * 60 * 1000) {
+				await removeStorageItem(STORAGE_KEYS["@repayment-status"]);
+				await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+				await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+				router.replace({ pathname: "/repayment-success", params: { status: "unknown", loanNumber: loanNumber || "" } });
+				return;
+			}
+			resolvingReturn.current = true;
+			let status = "pending";
+			if (txnid) {
+				try { status = String((await checkPaymentStatus(txnid))?.data?.status || "pending"); }
+				catch { status = "pending"; }
+			}
+			const lower = status.toLowerCase();
+			if (["completed", "success", "successful", "paid", "failed", "failure", "cancelled", "canceled", "expired", "rejected"].includes(lower)) {
+				await removeStorageItem(STORAGE_KEYS["@repayment-status"]);
+				await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+				await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+			}
+			router.replace({ pathname: "/repayment-success", params: { status: lower, loanNumber: loanNumber || "", ...(txnid ? { txnid } : {}) } });
+		});
+		return () => subscription.remove();
+	}, [loanNumber, router]);
 
 	const { data: apiData, isLoading } = useNetworkAwareQuery<RepaymentOptionsResponse>({
 		queryKey: ["repaymentOptions", loanNumber],
@@ -191,14 +215,6 @@ export default function RepaymentOptions() {
 		display_name: option.type === "full_payment" ? t("closeYourLoan") : option.display_name,
 	}));
 
-	console.log("=== FILTERED REPAYMENT OPTIONS ===");
-	console.log("Original options count:", apiData?.repayment_options?.length || 0);
-	console.log("Filtered options count:", displayOptions.length);
-	console.log(
-		"Display options:",
-		displayOptions.map((o) => ({ type: o.type, display_name: o.display_name })),
-	);
-	console.log("===================================");
 
 	useEffect(() => {
 		const checkHBRepaymentCondition = async () => {
@@ -206,23 +222,13 @@ export default function RepaymentOptions() {
 				const rawApplicantFrom = await getStorageItem(STORAGE_KEYS["@applicant-from"]);
 				const applicantFrom = rawApplicantFrom ? decode(rawApplicantFrom) : null;
 
-				console.log(
-					`🔍 [HB Condition Debug] rawApplicantFrom: ${rawApplicantFrom}, decoded: ${applicantFrom}, apiData?.loan_id: ${apiData?.loan_id}`,
-				);
 
 				if (applicantFrom === "HB" && apiData?.loan_id) {
 					setIsHBPartner(true);
 					setIsLoadingHbCondition(true);
 
-					console.log(
-						`🚀 [HB Condition] Calling API: GET loans/${apiData.loan_id}/hb-repayment-condition`,
-					);
 					const response = await axios.get(
 						`loans/${apiData.loan_id}/hb-repayment-condition`,
-					);
-					console.log(
-						`✅ [HB Condition] API Response for loan_id ${apiData.loan_id}:`,
-						JSON.stringify(response.data, null, 2),
 					);
 
 					if (response.data) {
@@ -230,12 +236,7 @@ export default function RepaymentOptions() {
 					}
 				}
 			} catch (error: any) {
-				console.error("❌ [HB Condition] API Error:", error);
 				if (error?.response) {
-					console.error(
-						"📋 [HB Condition] API Error Details:",
-						JSON.stringify(error.response.data, null, 2),
-					);
 				}
 			} finally {
 				setIsLoadingHbCondition(false);
@@ -248,40 +249,31 @@ export default function RepaymentOptions() {
 	}, [apiData?.loan_id]);
 
 	const handlePayNow = async (option: RepaymentOption) => {
-		console.log("Pay Now clicked for:", option.type);
-		console.log("Payment amount:", option.amount);
 
 		setIsPaymentLoading(true);
 
 		try {
-			console.log("=== INITIATE REPAYMENT API START ===");
-			console.log("Loan Number:", loanNumber);
-			console.log("Repayment Type:", "full_payment");
-			console.log("Amount:", option.amount);
 
 			const requestBody = {
 				repayment_type: "full_payment",
 				amount: option.amount,
 			};
 
-			console.log("Request Body:", JSON.stringify(requestBody, null, 2));
 
 			const response = await axios.post(
 				`loans/${loanNumber}/initiate-repayment`,
 				requestBody,
 			);
 
-			console.log("=== INITIATE REPAYMENT API RESPONSE ===");
-			console.log("Status:", response.status);
-			console.log("Response Data:", JSON.stringify(response.data, null, 2));
-			console.log("========================================");
 
 			// Navigate to payment URL
 			if (response.data?.payment_url) {
-				console.log("🌐 Opening payment URL:", response.data.payment_url);
 				const canOpen = await Linking.canOpenURL(response.data.payment_url);
 
 				if (canOpen) {
+					const paymentData = response.data?.data || response.data;
+					const txnid = paymentData?.txnid || paymentData?.transaction_id || paymentData?.payment_id;
+					if (txnid) await setStorageItem(STORAGE_KEYS["@repayment-txnid"], String(txnid));
 					// Mark that payment was initiated - this allows the redirect handler to process the response
 					setPaymentInitiated(true);
 
@@ -291,7 +283,6 @@ export default function RepaymentOptions() {
 						STORAGE_KEYS["@repayment-timestamp"],
 						Date.now().toString(),
 					);
-					DeviceEventEmitter.emit("SHOW_GLOBAL_LOADER");
 
 					if (Platform.OS === "ios") {
 						const result = await WebBrowser.openAuthSessionAsync(response.data.payment_url, "rapid-money://");
@@ -302,17 +293,10 @@ export default function RepaymentOptions() {
 						await Linking.openURL(response.data.payment_url);
 					}
 				} else {
-					console.error("❌ Cannot open payment URL");
 				}
 			} else {
-				console.error("❌ No payment URL in response");
 			}
 		} catch (error: any) {
-			console.log("=== INITIATE REPAYMENT API ERROR ===");
-			console.error("Error:", error);
-			console.error("Error response:", error.response);
-			console.error("Error response data:", error.response?.data);
-			console.log("====================================");
 		} finally {
 			setIsPaymentLoading(false);
 		}

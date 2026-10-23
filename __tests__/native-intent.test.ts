@@ -33,10 +33,10 @@ export function runNativeIntentTests(): void {
 		);
 	}
 
-	// Case 2a: Mandate return (status=true)
+	// Case 2a: Mandate return (status=true), without txnid
 	{
 		const result = redirectSystemPath({
-			path: "/?status=true&txnid=MAND_456",
+			path: "/emandate-status?status=true",
 			initial: false,
 		});
 		assert(
@@ -68,7 +68,7 @@ export function runNativeIntentTests(): void {
 	// Case 2c: Mandate return (status=false)
 	{
 		const result = redirectSystemPath({
-			path: "/?status=false&txnid=MAND_000",
+			path: "/emandate-return?status=false",
 			initial: false,
 		});
 		assert(
@@ -83,14 +83,14 @@ export function runNativeIntentTests(): void {
 
 	// Case 3: Unrelated link (returned unchanged)
 	{
-		const testPath = "/(tabs)/profile?tab=settings";
+		const testPath = "/?status=success";
 		const result = redirectSystemPath({
 			path: testPath,
 			initial: false,
 		});
 		assert(
 			result === testPath,
-			"Unrelated link should be returned unchanged",
+			"Root status link should be returned unchanged",
 		);
 	}
 

@@ -31,7 +31,7 @@ export function redirectSystemPath({
 			?? searchParams.get("status")
 			?? searchParams.get("success");
 		if (
-			(pathname === "/" || pathname === "" || pathname.includes("emandate-return") || pathname.includes("emandate-status")) &&
+			(pathname.includes("emandate-return") || pathname.includes("emandate-status")) &&
 			callbackStatus !== null
 		) {
 			const statusLower = callbackStatus.trim().toLowerCase();

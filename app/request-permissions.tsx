@@ -1,4 +1,4 @@
-import { TermsAndPolicy } from "@/components";
+﻿import { TermsAndPolicy } from "@/components";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { useNotifications } from "@/hooks/useNotifications";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -68,7 +68,6 @@ export default function RequestPermissions() {
 		const subscription = AppState.addEventListener("change", (nextAppState) => {
 			if (appState.current.match(/active/) && nextAppState.match(/inactive|background/)) {
 				if (__DEV__) {
-					console.log("App backgrounded from permission screen, setting flag");
 				}
 				const flagData = JSON.stringify({
 					active: true,
@@ -77,7 +76,6 @@ export default function RequestPermissions() {
 				setStorageItem(STORAGE_KEYS["@in-permission-flow"], flagData);
 			} else if (appState.current.match(/inactive|background/) && nextAppState === "active") {
 				if (__DEV__) {
-					console.log("App foregrounded on permission screen");
 				}
 			}
 
@@ -86,7 +84,6 @@ export default function RequestPermissions() {
 
 		return () => {
 			if (__DEV__) {
-				console.log("Leaving permission screen, clearing flag");
 			}
 			removeStorageItem(STORAGE_KEYS["@in-permission-flow"]);
 			subscription.remove();
@@ -160,30 +157,24 @@ export default function RequestPermissions() {
 		// Step 1: Call mark-consent-permission API
 		try {
 			if (__DEV__) {
-				console.log("🚀 Calling POST /workflow/mark-consent-permission");
 			}
 			const response = await axios.post(URLS.workflow.start_consent_permission);
 			if (__DEV__) {
-				console.log("✅ Consent API Response status:", response.status);
 			}
 		} catch (error: any) {
 			if (__DEV__) {
-				console.warn("⚠️ [Consent] mark-consent-permission not available on backend (non-fatal):", error?.message);
 			}
 		}
 
 		// Step 2: Call mark_permissions API
 		try {
 			if (__DEV__) {
-				console.log("🚀 Calling POST /users/permissions");
 			}
 			const permResponse = await axios.post(URLS.user.mark_permissions);
 			if (__DEV__) {
-				console.log("✅ Permissions API Response status:", permResponse.status);
 			}
 		} catch (error: any) {
 			if (__DEV__) {
-				console.warn("⚠️ [Permissions] mark_permissions not available on backend (non-fatal):", error?.message);
 			}
 		}
 
@@ -209,7 +200,6 @@ export default function RequestPermissions() {
 		const verifyOtpData = (otpVerifyResponse as any) || (loginResponse as any);
 		if (verifyOtpData?.next_step === "dashboard" || verifyOtpData?.is_profile_completed === true) {
 			if (__DEV__) {
-				console.log("🎯 [request-permissions] Verified user profile completed -> routing to /(tabs)");
 			}
 			setIsLoading(false);
 			router.replace("/(tabs)");
@@ -218,7 +208,6 @@ export default function RequestPermissions() {
 
 		if (verifyOtpData?.next_step === "basic_details" || verifyOtpData?.is_profile_completed === false) {
 			if (__DEV__) {
-				console.log("🎯 [request-permissions] New user / profile incomplete -> routing to /loan-application");
 			}
 			setIsLoading(false);
 			router.replace("/loan-application" as any);
@@ -227,18 +216,12 @@ export default function RequestPermissions() {
 
 		try {
 			if (__DEV__) {
-				console.log("🔄 Fetching dashboard data to determine next step...");
 			}
 			const dashboardData = await getUserDashboardData();
 			const currentStep = dashboardData?.workflow_progress?.current_step;
 			const dashboardType = dashboardData?.dashboard_type;
 
 			if (__DEV__) {
-				console.log("📊 Dashboard State:", {
-					currentStep,
-					dashboardType,
-				});
-				console.log("🔍 [FOWS-DIAG][request-permissions] loginResponse user_exists:", loginResponse?.user_exists);
 			}
 
 			setIsLoading(false);
@@ -252,7 +235,6 @@ export default function RequestPermissions() {
 			// 1. If user has active loan dashboard or workflow is completed
 			if (dashboardType === "loan_dashboard" || overallStatus === "completed") {
 				if (__DEV__) {
-					console.log("🎯 [FOWS-DIAG][request-permissions] BRANCH 1 HIT: loan_dashboard / completed -> router.replace('/(tabs)')");
 				}
 				router.replace("/(tabs)");
 				return;
@@ -262,7 +244,6 @@ export default function RequestPermissions() {
 			if (currentStep && StepHref[currentStep as keyof typeof StepHref]) {
 				const targetPath = StepHref[currentStep as keyof typeof StepHref];
 				if (__DEV__) {
-					console.log(`🎯 [FOWS-DIAG][request-permissions] BRANCH 3 HIT: currentStep '${currentStep}' -> targetPath '${targetPath}'`);
 				}
 				if (currentStep === "digilocker") {
 					router.replace({
@@ -277,12 +258,10 @@ export default function RequestPermissions() {
 
 			// Fallback: Default to loan-application (Personal Details)
 			if (__DEV__) {
-				console.log("🎯 [FOWS-DIAG][request-permissions] BRANCH 4 (FALLBACK) HIT: router.replace('/loan-application')");
 			}
 			router.replace("/loan-application" as any);
 		} catch (dashError) {
 			if (__DEV__) {
-				console.warn("⚠️ [FOWS-DIAG][request-permissions] CATCH BLOCK HIT: Error fetching dashboard data:", dashError, "-> router.replace('/loan-application')");
 			}
 			setIsLoading(false);
 			router.replace("/loan-application" as any);

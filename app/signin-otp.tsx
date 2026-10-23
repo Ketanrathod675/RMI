@@ -1,4 +1,4 @@
-import { TermsAndPolicy } from "@/components";
+﻿import { TermsAndPolicy } from "@/components";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useAuth } from "@/hooks/useAuth";
@@ -124,17 +124,16 @@ export default function SigninSignupOtp() {
 			// Store the OTP verification response data (including user_id)
 			changeOtpVerifyResponse(data as any);
 
-			// ── Branch Integration: Set Identity ──────────────────────────────────
+			// â”€â”€ Branch Integration: Set Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 			const customerId = (data as any)?.customer_id ?? data?.user?.customer_id;
 			if (customerId) {
 				try {
 					setBranchIdentity(customerId);
 				} catch (branchErr) {
-					console.error("❌ [Branch] Failed to set identity:", branchErr);
 				}
 			}
 
-			// ── Analytics: User Segmentation ──────────────────────────────────
+			// â”€â”€ Analytics: User Segmentation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 			const userType = "new_user";
 			const resolvedUserId =
 				data?.user_id ||
@@ -205,12 +204,6 @@ export default function SigninSignupOtp() {
 					rawPermissionGiven === "false";
 
 				if (__DEV__) {
-					console.log("🔍 [FOWS-DIAG][signin-otp] OTP verified successfully:", {
-						rawPermissionGiven,
-						isNewUser,
-						loginResponseUserExists: loginResponse?.user_exists,
-						target: isNewUser ? "/request-permissions" : "/(tabs)",
-					});
 				}
 
 				Toast.show({
@@ -258,7 +251,6 @@ export default function SigninSignupOtp() {
 						return;
 					}
 				} catch (wfErr) {
-					console.warn("⚠️ [signin-otp] Error checking workflow for returning user:", wfErr);
 				}
 
 				router.replace("/(tabs)");
@@ -309,7 +301,6 @@ export default function SigninSignupOtp() {
 			}
 
 			if (__DEV__) {
-				console.log("Verify OTP API Error:", err);
 			}
 
 			const { error } = errorHandler(err, variables, ctx);
@@ -338,7 +329,6 @@ export default function SigninSignupOtp() {
 		const validate = validateMobileAndCountryCode(countryCode!, phoneNumber!);
 
 		if (!validate.countryCode.success || !validate.phoneNumber.success) {
-			console.error("❌ [Auto-OTP] Phone number validation failed");
 			return;
 		}
 
@@ -379,12 +369,10 @@ export default function SigninSignupOtp() {
 							autoVerify(parsedOtp);
 						}
 					} catch (err) {
-						console.error("❌ [Auto-OTP] Error handling SMS parsing:", err);
 					}
 				});
 			})
 			.catch((err) => {
-				console.error("❌ [Auto-OTP] Failed to start SMS retriever:", err);
 			});
 	};
 
@@ -603,7 +591,7 @@ export default function SigninSignupOtp() {
 
 					{/* Didn't Receive OTP & Resend Row in the same line */}
 					<View style={styles.resendRow}>
-						<Text style={styles.didntReceiveText}>Didn’t Receive OTP ?</Text>
+						<Text style={styles.didntReceiveText}>Didnâ€™t Receive OTP ?</Text>
 						{countdown > 0 ? (
 							<Text style={styles.countdownText}>
 								Re-send in {formatTime(countdown)}s
@@ -655,7 +643,7 @@ export default function SigninSignupOtp() {
 										styles.checkbox,
 										isChecked && styles.checkboxChecked,
 									]}>
-									{isChecked && <Text style={styles.checkmark}>✓</Text>}
+									{isChecked && <Text style={styles.checkmark}>âœ“</Text>}
 								</View>
 							</TouchableOpacity>
 
@@ -690,7 +678,7 @@ export default function SigninSignupOtp() {
 											styles.checkbox,
 											isSoftPullChecked && styles.checkboxChecked,
 										]}>
-										{isSoftPullChecked && <Text style={styles.checkmark}>✓</Text>}
+										{isSoftPullChecked && <Text style={styles.checkmark}>âœ“</Text>}
 									</View>
 								</TouchableOpacity>
 

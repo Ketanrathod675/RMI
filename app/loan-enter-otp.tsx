@@ -348,6 +348,7 @@ export default function LoanEnterOTP() {
 						</View>
 						<TranslatedText style={styles.consentText} translationKey="consentToSign" />
 					</TouchableOpacity>
+					{otp.every((digit) => digit.trim() !== "") && !consentAccepted && <Text style={{ color: "#B45309", fontSize: 13, marginTop: height(0.8) }}>{t("consentRequiredHint")}</Text>}
 
 					{/* Warning Text */}
 					<TranslatedText

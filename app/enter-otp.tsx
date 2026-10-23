@@ -413,6 +413,7 @@ export default function EnterOTP() {
 						</View>
 						<TranslatedText style={styles.consentText} translationKey="consentToSign" />
 					</TouchableOpacity>
+					{isOtpComplete && !isConsentChecked && <Text style={{ color: "#B45309", fontSize: 13, marginTop: height(0.8) }}>{t("consentRequiredHint")}</Text>}
 
 					{/* Warning Text */}
 					<TranslatedText style={styles.warningText} translationKey="warningIgnoreCode" />

@@ -20,5 +20,15 @@ allprojects {
   }
 }
 
+// Expo generates PackageList.java during autolinking. Gradle 9 validates task
+// inputs strictly, so ensure Expo's sources JAR waits for that generated source.
+subprojects { subproject ->
+  if (subproject.name == 'expo') {
+    subproject.tasks.matching { it.name == 'releaseSourcesJar' }.configureEach {
+      dependsOn(subproject.tasks.matching { it.name == 'generatePackagesList' })
+    }
+  }
+}
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

@@ -624,6 +624,11 @@ export const translations = {
 		repaymentFailed: "Repayment Failed",
 		couldntProcessRepayment: "We couldn't process your repayment. Please try again.",
 		retryPayment: "Retry Payment",
+		confirmingPayment: "We are confirming your payment",
+		repaymentReceived: "Your repayment has been confirmed.",
+		repaymentPendingMessage: "Your payment is being confirmed. We will update your loan shortly",
+		checkStatus: "Check status",
+		goToHome: "Go to Home",
 		mandateSetupInProgress: "Mandate setup in progress. Please wait...",
 		mandateSetupFailed: "Mandate setup failed. Please try again.",
 		mandateSuccessful: "Mandate Successful",
@@ -1008,6 +1013,8 @@ export const translations = {
 
 		// Verifying Bank page
 		verifyingYourBankDetails: "Verifying your Bank Details...",
+		bankDetailsSavingTitle: "Saving your bank details",
+		bankDetailsSavedTitle: "Your bank details have been saved",
 		bankDetailsVerifiedSuccessfully: "Bank Details Verified\nSuccessfully",
 		yourBankDetailsHasBeenVerified: "Your Bank Details has been verified\nsuccessfully.",
 		connectingToBankServer: "Connecting to Bank Server",
@@ -1431,6 +1438,8 @@ export const translations = {
 		// Verification & Payment Safety (Round 2)
 		stepActionNeeded: "Action needed",
 		stepTakingLonger: "Taking longer than usual",
+		actionNeeded: "Action needed",
+		consentRequiredHint: "Please accept the consent to continue",
 		paymentReceivedStep: "Payment received",
 		verifyingDetailsStep: "Verifying your details",
 		paymentSafePanBanner: "Your payment is confirmed and safe. We just need to correct your PAN to continue.",
@@ -2047,6 +2056,11 @@ export const translations = {
 		repaymentFailed: "चुकौती विफल",
 		couldntProcessRepayment: "हम आपकी चुकौती को संसाधित नहीं कर सके। कृपया पुनः प्रयास करें।",
 		retryPayment: "पुनः भुगतान करें",
+		confirmingPayment: "हम आपके भुगतान की पुष्टि कर रहे हैं",
+		repaymentReceived: "आपकी चुकौती की पुष्टि हो गई है।",
+		repaymentPendingMessage: "आपके भुगतान की पुष्टि की जा रही है। हम जल्द ही आपके ऋण को अपडेट करेंगे।",
+		checkStatus: "स्थिति जांचें",
+		goToHome: "होम पर जाएं",
 		mandateSetupInProgress: "जनादेश सेटअप प्रगति पर है. कृपया प्रतीक्षा करें...",
 		mandateSetupFailed: "जनादेश सेटअप विफल रहा. कृपया पुन: प्रयास करें.",
 		mandateSuccessful: "जनादेश सफल",
@@ -2432,6 +2446,8 @@ export const translations = {
 
 		// Verifying Bank page
 		verifyingYourBankDetails: "आपके बैंक विवरण सत्यापित किए जा रहे हैं...",
+		bankDetailsSavingTitle: "आपके बैंक विवरण सहेजे जा रहे हैं",
+		bankDetailsSavedTitle: "आपके बैंक विवरण सहेज दिए गए हैं",
 		bankDetailsVerifiedSuccessfully: "बैंक विवरण सफलतापूर्वक\nसत्यापित हुए",
 		yourBankDetailsHasBeenVerified: "आपके बैंक विवरण सफलतापूर्वक\nसत्यापित हो गए हैं।",
 		connectingToBankServer: "बैंक सर्वर से कनेक्ट हो रहा है",
@@ -2882,6 +2898,8 @@ export const translations = {
 		// Verification & Payment Safety (Round 2)
 		stepActionNeeded: "कार्रवाई आवश्यक है",
 		stepTakingLonger: "सामान्य से अधिक समय लग रहा है",
+		actionNeeded: "कार्रवाई आवश्यक है",
+		consentRequiredHint: "जारी रखने के लिए कृपया सहमति स्वीकार करें",
 		paymentReceivedStep: "भुगतान प्राप्त हुआ",
 		verifyingDetailsStep: "आपके विवरण सत्यापित किए जा रहे हैं",
 		paymentSafePanBanner: "आपका भुगतान सुरक्षित और पक्का है। जारी रखने के लिए बस अपना पैन सही करें।",

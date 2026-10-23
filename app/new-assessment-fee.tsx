@@ -480,6 +480,8 @@ export default function AssessmentFeeScreen() {
 				{
 					timeoutMs: 65000,
 					treatErrorAsAttention: true,
+					markAttentionIf: (result: any) => result?.outcome === "final_rejected",
+					attentionBadgeLabel: t("actionNeeded"),
 					navigate: () => {
 						if (navTarget) {
 							navTarget();
