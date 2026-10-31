@@ -18,10 +18,10 @@ export const STEP_NAMES = [
 	"address_submission",
 	"loan_application",
 	"bank_details",
-	"kfs_signing",
 	"enach_mandate",
 	"pdq_check",
 	"agreement_signing",
+	"kfs_signing",
 	"disbursement",
 	"credit_queue",
 	"digilocker",
@@ -39,26 +39,25 @@ export const StepHref: { [key in StepNameTypes]: string } = {
 	assessment_fee: "/new-assessment-fee",
 	assessment_fee_payment: "/new-assessment-fee",
 	email_verification: "/verify-email",
-	pan_verification: "/professional-details",
+	pan_verification: "/verify-pan",
 	customer_consent_step: "/customer-data-consent",
 	professional_details: "/professional-details",
 	ekyc_ckyc: "/ckyc-instructions",
 	selfie_match: "/ckyc-instructions?startSelfie=true",
 	address_submission: "/aadhaar-kyc?startFromAddress=true",
 	loan_application: "/search-loan",
-	agreement_signing: "/sanction-letter",
 	bank_details: "/verify-bank-details",
 	enach_mandate: "/auto-debit-setup",
-	pdq_check: "/loan-congratulations",
+	pdq_check: "/emandate-status",
+	agreement_signing: "/sanction-letter",
 	kfs_signing: "/sanction-letter",
-	disbursement: "/loan-congratulations",
+	disbursement: "/loan-congratulations?final=1",
 	credit_queue: "/application-verification",
 	digilocker: "/digilocker-kyc",
 	ckyc: "/ckyc-instructions",
 } as const;
 
 const STEPS_PROFESSIONAL_OR_LATER = [
-	"pan_verification",
 	"customer_consent_step",
 	"professional_details",
 	"ekyc_ckyc",
@@ -66,9 +65,10 @@ const STEPS_PROFESSIONAL_OR_LATER = [
 	"address_submission",
 	"loan_application",
 	"bank_details",
-	"kfs_signing",
 	"enach_mandate",
+	"pdq_check",
 	"agreement_signing",
+	"kfs_signing",
 	"disbursement",
 	"credit_queue",
 	"digilocker",
@@ -87,6 +87,12 @@ export function resolveWorkflowRoute(
 	breStatus?: string | null,
 	breFailedRule?: string | null,
 ): string {
+	if (breStatus === "needs_update" || breStatus === "rejected") {
+		const fixRoute = getBreFixRoute(breFailedRule);
+		if (fixRoute) {
+			return fixRoute;
+		}
+	}
 	if (overallStatus === "rejected") {
 		if (breStatus === "rejected") {
 			const fixRoute = getBreFixRoute(breFailedRule);
@@ -109,7 +115,7 @@ export function resolveWorkflowRoute(
 			route === "/professional-details" ||
 			STEPS_PROFESSIONAL_OR_LATER.includes(currentStep);
 		if (isProfOrLater) {
-			if (breStatus === "rejected") {
+			if (breStatus === "rejected" || breStatus === "needs_update") {
 				const fixRoute = getBreFixRoute(breFailedRule);
 				if (fixRoute) return fixRoute;
 			}

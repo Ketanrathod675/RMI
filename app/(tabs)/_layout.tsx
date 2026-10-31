@@ -52,7 +52,7 @@ export default function TabLayout() {
 				options={{
 					title: t("myLoan"),
 					tabBarIcon: ({ color }) => (
-						<IconSymbol size={25} name="gift.fill" color={color} />
+						<IconSymbol size={25} name="gift.fill" color={typeof color === "string" ? color : "#8E8E93"} />
 					),
 				}}
 			/>
@@ -61,7 +61,7 @@ export default function TabLayout() {
 				options={{
 					title: t("history"),
 					tabBarIcon: ({ color }) => (
-						<IconSymbol size={25} name="arrow.clockwise.circle" color={color} />
+						<IconSymbol size={25} name="arrow.clockwise.circle" color={typeof color === "string" ? color : "#8E8E93"} />
 					),
 				}}
 			/>
@@ -74,7 +74,7 @@ export default function TabLayout() {
 					headerTintColor: "#000000",
 					headerTitleStyle: { fontWeight: "600" },
 					headerShadowVisible: false,
-					tabBarIcon: ({ color }) => <IconSymbol size={25} name="person" color={color} />,
+					tabBarIcon: ({ color }) => <IconSymbol size={25} name="person" color={typeof color === "string" ? color : "#8E8E93"} />,
 				}}
 			/>
 		</Tabs>

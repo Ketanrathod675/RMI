@@ -1,0 +1,32 @@
+diff --git a/node_modules/react-native-otp-auto-verify/android/src/main/java/com/otpautoverify/OtpAutoVerifyModule.kt b/node_modules/react-native-otp-auto-verify/android/src/main/java/com/otpautoverify/OtpAutoVerifyModule.kt
+index 1111111..2222222 100644
+--- a/node_modules/react-native-otp-auto-verify/android/src/main/java/com/otpautoverify/OtpAutoVerifyModule.kt
++++ b/node_modules/react-native-otp-auto-verify/android/src/main/java/com/otpautoverify/OtpAutoVerifyModule.kt
+@@ -48,7 +48,7 @@ class OtpAutoVerifyModule(reactContext: ReactApplicationContext) :
+     }
+ 
+     override fun startSmsRetriever(promise: Promise) {
+-        val activity = currentActivity
++        val activity = getCurrentActivity()
+         if (activity == null) {
+             promise.reject("NO_ACTIVITY", "No current activity. Ensure the app is in the foreground.")
+             return
+@@ -98,7 +98,7 @@ class OtpAutoVerifyModule(reactContext: ReactApplicationContext) :
+             return
+         }
+ 
+-        val activity = currentActivity
++        val activity = getCurrentActivity()
+         try {
+             if (activity != null) {
+                 activity.unregisterReceiver(smsReceiver)
+@@ -125,8 +125,8 @@ class OtpAutoVerifyModule(reactContext: ReactApplicationContext) :
+ 
+     override fun onHostResume() {
+         // Optionally re-register if we were listening and activity was recreated.
+-        if (isListening && currentActivity != null && !isReceiverRegistered) {
+-            currentActivity?.let { registerReceiverIfNecessary(it) }
++        if (isListening && getCurrentActivity() != null && !isReceiverRegistered) {
++            getCurrentActivity()?.let { registerReceiverIfNecessary(it) }
+         }
+     }

@@ -4,6 +4,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { font, height, width } from "@/utils/dimensions";
 import React, { forwardRef, useState } from "react";
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
+import type { TextInputRef } from "@/types/rn-refs";
 import { TranslatedText } from "./TranslatedText";
 
 interface TranslatedInputProps extends TextInputProps {
@@ -29,7 +30,7 @@ interface TranslatedInputProps extends TextInputProps {
 	required?: boolean;
 }
 
-export const TranslatedInput = forwardRef<TextInput, TranslatedInputProps>(
+export const TranslatedInput = forwardRef<TextInputRef, TranslatedInputProps>(
 	(
 		{
 			labelKey,

@@ -7,6 +7,7 @@ import {
 	StyleSheet,
 	View,
 } from "react-native";
+import type { ScrollViewRef } from "@/types/rn-refs";
 import TestimonialCard from "./TestimonialCard";
 
 interface Testimonial {
@@ -28,7 +29,7 @@ const SNAP_INTERVAL = CARD_WIDTH + CARD_GAP;
 
 const TestimonialCarousel: React.FC<TestimonialCarouselProps> = ({ testimonials }) => {
 	const [currentIndex, setCurrentIndex] = useState(0);
-	const scrollRef = useRef<ScrollView>(null);
+	const scrollRef = useRef<ScrollViewRef>(null);
 
 	useEffect(() => {
 		if (testimonials.length <= 1) {

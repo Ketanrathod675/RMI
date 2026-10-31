@@ -364,3 +364,28 @@ export const reapplyForLoan = async (): Promise<ReapplyLoanResponse> => {
 	);
 	return response.data;
 };
+
+export type WorkflowProgressData = {
+	workflow_id?: string;
+	user_id?: string;
+	lead_id?: string | null;
+	current_step?: string;
+	next_step?: string | null;
+	overall_status?: string;
+	overall_percentage?: number;
+	is_active?: boolean;
+	steps?: Record<string, string>;
+	all_steps?: string[];
+	[key: string]: any;
+};
+
+/**
+ * Fetch Current Workflow Progress (GET /workflow/progress)
+ */
+export const getWorkflowProgress = async (): Promise<StandardResponse<WorkflowProgressData>> => {
+	const response = await axios.get<StandardResponse<WorkflowProgressData>>(
+		URLS.workflow.progress
+	);
+	return response.data;
+};
+

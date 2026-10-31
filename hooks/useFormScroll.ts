@@ -6,15 +6,15 @@ import {
 	type LayoutChangeEvent,
 	type NativeScrollEvent,
 	type NativeSyntheticEvent,
-	type ScrollView,
 } from "react-native";
+import type { ScrollViewRef } from "@/types/rn-refs";
 
 export interface RegisterFieldOptions {
 	parentOffset?: number;
 }
 
 export function useFormScroll() {
-	const scrollRef = useRef<ScrollView>(null);
+	const scrollRef = useRef<ScrollViewRef>(null);
 	const fieldOffsets = useRef<Record<string, number>>({});
 	const fieldElements = useRef<Record<string, any>>({});
 	const fieldInputRefs = useRef<Record<string, React.RefObject<any> | any>>({});

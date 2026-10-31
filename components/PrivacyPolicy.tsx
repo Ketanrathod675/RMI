@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { dark, primary } from "@/constants/Colors";
 import { useDefault } from "@/hooks/useDefault";
 import { height } from "@/utils/dimensions";
@@ -349,7 +350,7 @@ export const PrivacyPolicy: FC<PrivacyPolicyProps> = ({ showModal, setShowModal 
 										Email:{" "}
 										<Text
 											style={styles.emailLink}
-											onPress={() => Linking.openURL("mailto:grievance@rapidmoney.in")}>
+											onPress={() => openExternalUrl("mailto:grievance@rapidmoney.in")}>
 											grievance@rapidmoney.in
 										</Text>
 									</Text>
@@ -658,7 +659,7 @@ export const PrivacyPolicy: FC<PrivacyPolicyProps> = ({ showModal, setShowModal 
 										अमित अगाशे) को ईमेल (
 										<Text
 											style={styles.emailLink}
-											onPress={() => Linking.openURL("mailto:grievance@rapidmoney.in")}>
+											onPress={() => openExternalUrl("mailto:grievance@rapidmoney.in")}>
 											grievance@rapidmoney.in
 										</Text>
 										) या फोन (+91

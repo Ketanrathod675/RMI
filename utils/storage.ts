@@ -94,6 +94,7 @@ export const AuthKeys = [
 	"@user-id",
 	"@applicant-from",
 	"@completion-date",
+	"@digilocker-txn-id",
 ] as const;
 
 export const RemovableKeys = [...AuthKeys, ...TempKeys] as const;

@@ -1,4 +1,4 @@
-import { useNavigation } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import { useEffect } from "react";
 import { BackHandler } from "react-native";
 
@@ -8,7 +8,7 @@ import { BackHandler } from "react-native";
  * screen handlers might still be active.
  */
 export const useCleanBackHandlers = () => {
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	useEffect(() => {
 		// Override any existing back handlers with a clean one that allows normal behavior

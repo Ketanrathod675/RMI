@@ -91,8 +91,8 @@ export default function PersonalDetails() {
 		React.useCallback(() => {
 			RNStatusBar.setBarStyle("dark-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 		}, [])
 	);

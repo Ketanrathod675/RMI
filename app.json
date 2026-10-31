@@ -122,12 +122,19 @@
       "expo-image",
       [
         "expo-build-properties",
-        {}
+        {
+          "android": {
+            "cmakeVersion": "3.31.1"
+          }
+        }
       ],
       "expo-web-browser",
       "expo-font",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-status-bar",
+      "@sentry/react-native"
     ],
+
     "experiments": {
       "typedRoutes": true
     },

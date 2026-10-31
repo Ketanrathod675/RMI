@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import { axios } from "../core/client";
 import { URLS } from "../core/endpoints";
 import type {
@@ -48,7 +49,7 @@ export const triggerPostKycAllocationAdapter = async (
 		return res.data ?? null;
 	} catch (error) {
 		if (__DEV__) {
-			console.warn("⚠️ [Post-KYC Allocation Adapter] Failed to allocate lender:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 		return null;
 	}
@@ -97,7 +98,7 @@ export const getLenders = async (): Promise<LenderItem[]> => {
 		return [];
 	} catch (err) {
 		if (__DEV__) {
-			console.warn("⚠️ [getLenders] Failed to fetch lenders list:", err);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 		return [];
 	}

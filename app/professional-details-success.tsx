@@ -2,14 +2,15 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary, white } from "@/constants/Colors";
 import { useTranslation } from "@/hooks/useTranslation";
 import { font, height, width } from "@/utils/dimensions";
-import { useNavigation, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useEffect, useRef } from "react";
 import { ActivityIndicator, BackHandler, StyleSheet, Text, View } from "react-native";
 
 export default function ProfessionalDetailsSuccess() {
 	const { t } = useTranslation();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const allowNavigationRef = useRef(false);
 
 	// Prevent all back navigation (gesture back, hardware back button) during 3 seconds

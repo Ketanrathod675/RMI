@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TermsAndPolicy } from "@/components";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary, white } from "@/constants/Colors";
@@ -6,8 +7,11 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Layout01 } from "@/layouts/layout_01";
 import { errorHandler, mpinLogin } from "@/utils/api";
+import Logger from "@/utils/logger";
 import { height, width } from "@/utils/dimensions";
-import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -30,14 +34,14 @@ export default function MpinLogin() {
 	const [checked, setChecked] = useState(true);
 	const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 	const [showTermsAndConditions, setShowTermsAndConditions] = useState(false);
-	const inputRefs = useRef<TextInput[]>([]);
+	const inputRefs = useRef<TextInputRef[]>([]);
 
 	// Exit alert state
 	const [showExitAlert, setShowExitAlert] = useState(false);
 
 	const { isMpinSet, isLoading, logout, phoneNumber, handleSetTokens, handleMpinSignIn } =
 		useAuth();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const params = useLocalSearchParams();
 
 	// Store back handler reference for cleanup
@@ -197,12 +201,12 @@ export default function MpinLogin() {
 		onError: (err: any, variables, ctx) => {
 			const { error, errorType } = errorHandler(err, variables, ctx);
 
-			console.log("error", error);
+			Logger.warn("MPIN login failed", { status: err?.response?.status ?? "unknown", errorType });
 
 			  // ✅ ADD ONLY THIS BLOCK
   const message =
     err?.response?.data?.message ||
-    error?.message ||
+    getFriendlyError(error).message ||
     "";
 
   if (message.toLowerCase().includes("inactive")) {
@@ -234,7 +238,6 @@ export default function MpinLogin() {
 				text2: t("pleaseRetryPayment"),
 			});
 
-			console.log("errorType", errorType);
 		},
 	});
 

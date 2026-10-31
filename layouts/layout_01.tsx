@@ -23,7 +23,7 @@ export const Layout01: FC<{
 }> = ({ children, style, contentStyle }) => {
 	return (
 		<View style={{ flex: 1, backgroundColor: white }}>
-			<RNStatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+			<RNStatusBar barStyle="light-content" />
 			<KeyboardAvoidingView
 				style={{ flex: 1, backgroundColor: white }}
 				behavior={Platform.OS === "ios" ? "padding" : "height"}>

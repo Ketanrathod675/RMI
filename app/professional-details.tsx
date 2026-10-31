@@ -1,3 +1,5 @@
+import { useMountedRef } from "@/hooks/useMountedRef";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { Select, StickyFormFooter, type SelectOption } from "@/components";
 import { primary } from "@/constants/Colors";
@@ -17,7 +19,9 @@ import {
 	type ProfessionalDetailsPayload,
 } from "@/utils/api";
 import { getEmploymentDetailsHbPartner } from "@/utils/api/user";
-import { useNavigation, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useState, useRef } from "react";
@@ -41,18 +45,19 @@ import Toast from "react-native-toast-message";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
 export default function ProfessionalDetails() {
+	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	// Track this screen in the journey
 	useJourneyTracker("/professional-details");
 
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
-	const companyNameRef = useRef<TextInput>(null);
-	const designationRef = useRef<TextInput>(null);
+	const companyNameRef = useRef<TextInputRef>(null);
+	const designationRef = useRef<TextInputRef>(null);
 
 	const { visible: isKeyboardVisible, height: keyboardHeight } = useKeyboardVisible();
 	const { scrollRef, scrollProps, registerField, scrollToField, scrollToFirstError } = useFormScroll();
@@ -455,9 +460,11 @@ export default function ProfessionalDetails() {
 	const { mutate: submitProfessionalDetailsMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: submitProfessionalDetails,
 		onSuccess: async () => {
+			if (!mountedRef.current) return;
 			await runStepThenNavigate(
 				"professional_details",
 				async () => {
+					if (!mountedRef.current) return;
 					Toast.show({
 						type: "success",
 						text1: t("employmentDetailsSubmittedSuccessfully", "Details submitted successfully"),
@@ -465,20 +472,22 @@ export default function ProfessionalDetails() {
 					});
 				},
 				{
-					navigate: () => router.replace("/professional-details-success"),
+					navigate: () => { if (mountedRef.current) router.replace("/professional-details-success"); },
 				}
 			);
 		},
 		onError: (err: any) => {
+			if (!mountedRef.current) return;
 			const status = err?.status ?? err?.response?.status;
-			const detail = err?.detail ?? err?.response?.data?.detail ?? err?.message ?? "";
+			const detail = err?.detail ?? err?.response?.data?.detail ?? "";
+			const safeDetail = getFriendlyError(err).message;
 			const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
 
 			if (status === 409) {
 				if (detailStr.includes("No active loan workflow")) {
 					Toast.show({
 						type: "error",
-						text1: detailStr,
+						text1: "Please continue your application from Home.",
 					});
 					router.replace("/(tabs)");
 					return;
@@ -495,7 +504,7 @@ export default function ProfessionalDetails() {
 			Toast.show({
 				type: "error",
 				text1: t("failedToSubmitEmploymentDetails", "Failed to submit details"),
-				text2: detailStr || t("pleaseRetryPayment", "Please try again"),
+				text2: safeDetail || t("pleaseRetryPayment", "Please try again"),
 			});
 		},
 	});

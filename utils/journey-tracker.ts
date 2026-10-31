@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import type { Href } from "expo-router";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "./storage";
 
@@ -12,7 +13,7 @@ export const saveCurrentScreen = async (screen: Href) => {
 		}
 	} catch (error) {
 		if (__DEV__) {
-			console.error("❌ [JourneyTracker] Error saving current screen:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 	}
 };
@@ -26,7 +27,7 @@ export const getLastVisitedScreen = async (): Promise<string | null> => {
 		return screen;
 	} catch (error) {
 		if (__DEV__) {
-			console.error("❌ [JourneyTracker] Error getting last visited screen:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 		return null;
 	}
@@ -43,7 +44,7 @@ export const clearLastVisitedScreen = async () => {
 		}
 	} catch (error) {
 		if (__DEV__) {
-			console.error("❌ [JourneyTracker] Error clearing last visited screen:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 	}
 };

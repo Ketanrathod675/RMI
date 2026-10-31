@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import React from 'react';
 import { Linking, StyleSheet, Text, TextStyle, StyleProp } from 'react-native';
 
@@ -23,9 +24,7 @@ export const HyperlinkText: React.FC<HyperlinkTextProps> = ({ text, style }) => 
       formattedUrl = `https://${url}`;
     }
     
-    Linking.openURL(formattedUrl).catch(err => 
-      console.error('Failed to open URL:', err)
-    );
+    void openExternalUrl(formattedUrl);
   };
 
   const renderText = () => {

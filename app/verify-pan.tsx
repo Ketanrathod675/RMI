@@ -10,6 +10,8 @@ import {
 	useAssessmentChecksController,
 } from "@/hooks/useAssessmentChecks";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import Logger from "@/utils/logger";
 import {
 	getHandshakeStatus,
 	getUserProfile,
@@ -21,7 +23,7 @@ import { resolveLeadId } from "@/utils/leadId";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	BackHandler,
@@ -55,7 +57,34 @@ export default function VerifyPan() {
 
 	// Still checking panel states
 	const [isStillChecking, setIsStillChecking] = useState(false);
-	const [lastCheckError, setLastCheckError] = useState<"error" | "timeout" | null>(null);
+	const [lastCheckError, setLastCheckError] = useState<"error" | "timeout" | "service_unavailable" | null>(null);
+
+	// Cooldown and retry state
+	const lastSubmittedPanRef = useRef<string>("");
+	const lastStatusRef = useRef<AssessmentChecks["status"] | "timeout" | null>(null);
+	const lastRetryAtRef = useRef<number>(0);
+	const retryCooldownSecondsRef = useRef<number>(60);
+	const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+
+	useEffect(() => {
+		if (cooldownRemaining <= 0) return;
+		const timer = setInterval(() => {
+			setCooldownRemaining((prev) => {
+				if (prev <= 1) {
+					clearInterval(timer);
+					return 0;
+				}
+				return prev - 1;
+			});
+		}, 1000);
+		return () => clearInterval(timer);
+	}, [cooldownRemaining]);
+
+	const startCooldown = (seconds: number) => {
+		const s = Math.max(1, seconds);
+		retryCooldownSecondsRef.current = s;
+		setCooldownRemaining(s);
+	};
 
 	// Rejection modal state
 	const [delayVisible, setDelayVisible] = useState(false);
@@ -98,7 +127,10 @@ export default function VerifyPan() {
 
 					if (isMounted) {
 						if (fullName) setName(fullName);
-						if (existingPan) setPan(existingPan);
+						if (existingPan) {
+							setPan(existingPan);
+							lastSubmittedPanRef.current = existingPan.trim().toUpperCase();
+						}
 					}
 				} catch {
 					// Fallback
@@ -115,7 +147,7 @@ export default function VerifyPan() {
 					return;
 				}
 
-				if (checks.status === "rejected") {
+				if (checks.status === "rejected" || checks.status === "needs_update") {
 					if (isEmailFixable(checks)) {
 						router.replace("/verify-email" as any);
 						return;
@@ -128,6 +160,17 @@ export default function VerifyPan() {
 					// Final rejection
 					setIsLoadingDetails(false);
 					setDelayVisible(true);
+					return;
+				}
+
+				if (checks.status === "service_unavailable") {
+					lastStatusRef.current = "service_unavailable";
+					if (typeof checks.retry_after_seconds === "number") {
+						startCooldown(checks.retry_after_seconds);
+					}
+					setIsLoadingDetails(false);
+					setLastCheckError("service_unavailable");
+					setIsStillChecking(true);
 					return;
 				}
 
@@ -164,7 +207,7 @@ export default function VerifyPan() {
 				return;
 			}
 
-			if (checks.status === "rejected") {
+			if (checks.status === "rejected" || checks.status === "needs_update") {
 				if (isEmailFixable(checks)) {
 					router.replace("/verify-email" as any);
 					return;
@@ -179,7 +222,18 @@ export default function VerifyPan() {
 				return;
 			}
 
+			if (checks.status === "service_unavailable") {
+				lastStatusRef.current = "service_unavailable";
+				if (typeof checks.retry_after_seconds === "number") {
+					startCooldown(checks.retry_after_seconds);
+				}
+				setLastCheckError("service_unavailable");
+				setIsStillChecking(true);
+				return;
+			}
+
 			// error or pending
+			lastStatusRef.current = "error";
 			setLastCheckError("error");
 			setIsStillChecking(true);
 		},
@@ -215,46 +269,58 @@ export default function VerifyPan() {
 						throw new Error("Lead details not found");
 					}
 
-					try {
-						await retryAssessmentChecks({
-							lead_id: leadId,
-							updated_pan: cleanPan,
-						});
-					} catch (retryErr: any) {
-						const status = retryErr?.status ?? retryErr?.response?.status;
-						const detail =
-							retryErr?.detail ??
-							retryErr?.response?.data?.detail ??
-							retryErr?.message ??
-							"Update failed";
-						const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
+					const isPanChanged = cleanPan !== lastSubmittedPanRef.current;
+					const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
+					const shouldCallRetryBackend =
+						isPanChanged ||
+						((lastStatusRef.current === "error" || lastStatusRef.current === "service_unavailable") &&
+							timeSinceLastRetry >= retryCooldownSecondsRef.current);
 
-						if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
-							const checks = await getHandshakeStatus();
-							if (checks.status === "approved") {
-								navTarget = () =>
-									router.replace({
-										pathname: "/professional-details" as any,
-										params: { disableBack: "true" },
-									});
-								return { outcome: "approved", checks };
+					if (shouldCallRetryBackend) {
+						lastRetryAtRef.current = Date.now();
+						lastSubmittedPanRef.current = cleanPan;
+						startCooldown(retryCooldownSecondsRef.current);
+
+						try {
+							await retryAssessmentChecks({
+								lead_id: leadId,
+								updated_pan: cleanPan,
+							});
+						} catch (retryErr: any) {
+							const status = retryErr?.status ?? retryErr?.response?.status;
+							const detail =
+								retryErr?.detail ??
+								retryErr?.response?.data?.detail ??
+								retryErr?.message ??
+								"Update failed";
+							const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
+
+							if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
+								const checks = await getHandshakeStatus();
+								if (checks.status === "approved") {
+									navTarget = () =>
+										router.replace({
+											pathname: "/professional-details" as any,
+											params: { disableBack: "true" },
+										});
+									return { outcome: "approved", checks };
+								}
+								handleAssessmentOutcome(checks);
+								return { outcome: "recheck", checks };
 							}
-							handleAssessmentOutcome(checks);
-							return { outcome: "recheck", checks };
-						}
 
-						Toast.show({
-							type: "error",
-							text1: detailStr,
-						});
-						throw retryErr;
+							Toast.show({
+								type: "error",
+								text1: getFriendlyError(retryErr).message,
+							});
+							throw retryErr;
+						}
 					}
 
 					// Poll handshake status
 					const checks = await pollAssessmentChecks({
 						signal: loaderSignal,
-						timeoutMs: 60000,
-						intervalMs: 2000,
+						leadId,
 					});
 
 					if (checks.status === "approved") {
@@ -266,7 +332,7 @@ export default function VerifyPan() {
 						return { outcome: "approved", checks };
 					}
 
-					if (checks.status === "rejected") {
+					if (checks.status === "rejected" || checks.status === "needs_update") {
 						if (isEmailFixable(checks)) {
 							navTarget = () =>
 								router.replace({
@@ -285,6 +351,14 @@ export default function VerifyPan() {
 						return { outcome: "final_rejected", checks };
 					}
 
+					if (checks.status === "service_unavailable") {
+						lastStatusRef.current = "service_unavailable";
+						if (typeof checks.retry_after_seconds === "number") {
+							startCooldown(checks.retry_after_seconds);
+						}
+						throw { isServiceUnavailable: true, checks };
+					}
+
 					throw { isError: true, checks };
 				},
 				{
@@ -299,7 +373,17 @@ export default function VerifyPan() {
 			);
 		} catch (pollErr: any) {
 			if (pollErr?.aborted) return;
-			setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
+			const checks = pollErr?.checks;
+			if (checks?.status === "service_unavailable" || pollErr?.isServiceUnavailable) {
+				lastStatusRef.current = "service_unavailable";
+				if (typeof checks?.retry_after_seconds === "number") {
+					startCooldown(checks.retry_after_seconds);
+				}
+				setLastCheckError("service_unavailable");
+			} else {
+				lastStatusRef.current = pollErr?.isTimeout ? "timeout" : "error";
+				setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
+			}
 			setIsStillChecking(true);
 		} finally {
 			setIsVerifying(false);
@@ -317,7 +401,14 @@ export default function VerifyPan() {
 				"verifying_details",
 				async ({ signal: loaderSignal }) => {
 					const leadId = await resolveLeadId(params.lead_id as string);
-					if (lastCheckError === "error" && leadId) {
+					const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
+					const shouldCallRetryBackend =
+						(lastStatusRef.current === "error" || lastStatusRef.current === "service_unavailable") &&
+						timeSinceLastRetry >= retryCooldownSecondsRef.current;
+
+					if (shouldCallRetryBackend && leadId) {
+						lastRetryAtRef.current = Date.now();
+						startCooldown(retryCooldownSecondsRef.current);
 						try {
 							await retryAssessmentChecks({ lead_id: leadId });
 						} catch {
@@ -327,8 +418,7 @@ export default function VerifyPan() {
 
 					const checks = await pollAssessmentChecks({
 						signal: loaderSignal,
-						timeoutMs: 60000,
-						intervalMs: 2000,
+						leadId,
 					});
 
 					if (checks.status === "approved") {
@@ -340,7 +430,7 @@ export default function VerifyPan() {
 						return { outcome: "approved", checks };
 					}
 
-					if (checks.status === "rejected") {
+					if (checks.status === "rejected" || checks.status === "needs_update") {
 						if (isEmailFixable(checks)) {
 							navTarget = () =>
 								router.replace({
@@ -358,6 +448,14 @@ export default function VerifyPan() {
 						return { outcome: "final_rejected", checks };
 					}
 
+					if (checks.status === "service_unavailable") {
+						lastStatusRef.current = "service_unavailable";
+						if (typeof checks.retry_after_seconds === "number") {
+							startCooldown(checks.retry_after_seconds);
+						}
+						throw { isServiceUnavailable: true, checks };
+					}
+
 					throw { isError: true, checks };
 				},
 				{
@@ -372,7 +470,17 @@ export default function VerifyPan() {
 			);
 		} catch (err: any) {
 			if (err?.aborted) return;
-			setLastCheckError(err?.isTimeout ? "timeout" : "error");
+			const checks = err?.checks;
+			if (checks?.status === "service_unavailable" || err?.isServiceUnavailable) {
+				lastStatusRef.current = "service_unavailable";
+				if (typeof checks?.retry_after_seconds === "number") {
+					startCooldown(checks.retry_after_seconds);
+				}
+				setLastCheckError("service_unavailable");
+			} else {
+				lastStatusRef.current = err?.isTimeout ? "timeout" : "error";
+				setLastCheckError(err?.isTimeout ? "timeout" : "error");
+			}
 			setIsStillChecking(true);
 		} finally {
 			setIsVerifying(false);
@@ -455,26 +563,36 @@ export default function VerifyPan() {
 							) : null}
 						</View>
 
-						{/* Still checking panel on error/timeout */}
+						{/* Still checking panel on error/timeout/service_unavailable */}
 						{isStillChecking && (
 							<View style={styles.stillCheckingCard}>
 								<Text style={styles.stillCheckingTitle}>
 									{t("stillCheckingDetailsTitle", "We're still checking your details")}
 								</Text>
 								<Text style={styles.stillCheckingDesc}>
-									{t(
-										"stillCheckingDetailsDesc",
-										"Verification is taking longer than expected. You can try again or check your dashboard.",
-									)}
+									{lastStatusRef.current === "service_unavailable"
+										? t(
+												"verificationServiceUnavailable",
+												"Our verification partner is temporarily unavailable. Please try again in a few minutes.",
+										  )
+										: t(
+												"stillCheckingDetailsDesc",
+												"Verification is taking longer than expected. You can try again or check your dashboard.",
+										  )}
 								</Text>
 								<View style={styles.stillCheckingActions}>
 									<TouchableOpacity
-										style={styles.retryButton}
+										style={[
+											styles.retryButton,
+											(isVerifying || cooldownRemaining > 0) && styles.buttonDisabled,
+										]}
 										onPress={handleRetryChecking}
-										disabled={isVerifying}
+										disabled={isVerifying || cooldownRemaining > 0}
 									>
 										<Text style={styles.retryButtonText}>
-											{t("tryAgain", "Try Again")}
+											{cooldownRemaining > 0
+												? `${t("tryAgain", "Try Again")} (${cooldownRemaining}s)`
+												: t("tryAgain", "Try Again")}
 										</Text>
 									</TouchableOpacity>
 									<TouchableOpacity

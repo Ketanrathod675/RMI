@@ -50,7 +50,7 @@ export interface PaymentStatusResponse {
 }
 
 export type AssessmentChecks = {
-	status: "pending" | "approved" | "rejected" | "error";
+	status: "pending" | "approved" | "rejected" | "needs_update" | "error" | "service_unavailable";
 	failed_rule: null | "age" | "pin_code" | "email" | "pan_card" | "bureau";
 	message?: string;
 	handshake_success?: boolean | null;
@@ -59,6 +59,8 @@ export type AssessmentChecks = {
 	can_update_pan: boolean;
 	remaining_email_updates: number;
 	remaining_pan_updates: number;
+	retry_after_seconds?: number;
+	unavailable_service?: string;
 };
 
 export interface RetryAssessmentChecksPayload {

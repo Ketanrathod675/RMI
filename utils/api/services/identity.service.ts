@@ -12,12 +12,14 @@ export type IdentityApiResponse<T = any> = {
 export class IdentityApiError extends Error {
 	status?: number;
 	detail?: string;
+	code?: string;
 
-	constructor(message: string, status?: number, detail?: string) {
+	constructor(message: string, status?: number, detail?: string, code?: string) {
 		super(message);
 		this.name = "IdentityApiError";
 		this.status = status;
 		this.detail = detail;
+		this.code = code;
 	}
 }
 
@@ -45,6 +47,7 @@ async function requestIdentity<T>(
 		};
 	} catch (err: any) {
 		const status = err.response?.status;
+		const code = err.response?.data?.code || err.response?.data?.data?.code;
 		const detail =
 			typeof err.response?.data?.detail === "string"
 				? err.response.data.detail
@@ -52,8 +55,8 @@ async function requestIdentity<T>(
 				? err.response.data.detail[0]?.msg
 				: err.response?.data?.message || err.message;
 
-		Logger.error(`Identity API [${actionName}] transport/HTTP error`, { status });
-		throw new IdentityApiError(detail || "Network error", status, detail);
+		Logger.error(`Identity API [${actionName}] transport/HTTP error`, { status, code });
+		throw new IdentityApiError(detail || "Network error", status, detail, code);
 	}
 }
 
@@ -88,6 +91,8 @@ export type ValidateCkycOtpData = {
 
 export type InitDigilockerPayload = {
 	redirect_url: string;
+	client_type?: string;
+	force_new?: boolean;
 };
 
 export type InitDigilockerData = {
@@ -100,7 +105,12 @@ export type CompleteDigilockerPayload = {
 };
 
 export type CompleteDigilockerData = {
+	txn_id?: string;
+	code?: string;
 	aadhaar_details?: any;
+	next_action?: string;
+	workflow_current_step?: string;
+	[key: string]: any;
 };
 
 export const getCkycStatus = async (): Promise<IdentityApiResponse<CkycStatusData>> => {
@@ -136,7 +146,12 @@ export const initDigilocker = async (
 	payload: InitDigilockerPayload,
 ): Promise<IdentityApiResponse<InitDigilockerData>> => {
 	return requestIdentity(
-		() => axios.post(URLS.ckyc.digilocker_init, { redirect_url: payload.redirect_url }),
+		() =>
+			axios.post(URLS.ckyc.digilocker_init, {
+				redirect_url: payload.redirect_url,
+				client_type: payload.client_type || "app",
+				...(payload.force_new !== undefined ? { force_new: payload.force_new } : {}),
+			}),
 		"initDigilocker",
 	);
 };
@@ -158,6 +173,18 @@ export const completeDigilocker = async (
 export type SelfieStatusData = {
 	status?: string;
 	workflow_completed?: boolean;
+	selfie_uploaded?: boolean;
+	selfie_url?: string;
+	liveness_status?: string;
+	liveness_score?: number;
+	face_match_status?: string;
+	face_match_score?: number;
+	reference_photo_available?: boolean;
+	reference_photo_missing?: boolean;
+	restart_digilocker?: boolean;
+	attempts?: number;
+	remaining_attempts?: number;
+	code?: string;
 	[key: string]: any;
 };
 
@@ -174,6 +201,11 @@ export type UploadSelfieData = {
 	face_match_passed?: boolean;
 	face_match_score?: number;
 	workflow_completed?: boolean;
+	reference_photo_missing?: boolean;
+	restart_digilocker?: boolean;
+	remaining_attempts?: number;
+	code?: string;
+	[key: string]: any;
 };
 
 export const getSelfieStatus = async (): Promise<IdentityApiResponse<SelfieStatusData>> => {
@@ -267,6 +299,32 @@ export type SubmitAddressData = {
 	is_current_address?: boolean;
 	address_data?: any;
 	workflow_completed?: boolean;
+};
+
+export type AddressPrefillData = {
+	is_current_address?: boolean;
+	kyc_proof_of_address_number?: string;
+	kyc_address?: string;
+	kyc_city?: string;
+	kyc_pin_code?: string;
+	kyc_state?: string;
+	source?: string | null;
+	communication_address?: string | null;
+	communication_city?: string | null;
+	communication_pin_code?: string | null;
+	communication_state?: string | null;
+	communication_proof_of_address_number?: string | null;
+	address_proof_url?: string | null;
+	document_type?: string | null;
+	supported_document_types?: (string | AddressDocumentTypeOption)[];
+	[key: string]: any;
+};
+
+export const getAddressPrefill = async (): Promise<IdentityApiResponse<AddressPrefillData>> => {
+	return requestIdentity(
+		() => axios.get(URLS.address_v2.prefill),
+		"getAddressPrefill",
+	);
 };
 
 export const getAddressStatus = async (): Promise<IdentityApiResponse<AddressStatusData>> => {

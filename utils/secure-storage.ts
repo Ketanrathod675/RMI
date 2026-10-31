@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
@@ -50,7 +51,7 @@ export const SecureStorage = {
 			const stored = await this.getSensitive(key);
 			if (stored !== null) return stored;
 		} catch (error) {
-			console.warn(`[SecureStorage] Error reading sensitive key ${key}:`, error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 
 		const legacy = await AsyncStorage.getItem(key);

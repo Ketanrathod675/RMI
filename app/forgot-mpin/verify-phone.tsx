@@ -1,3 +1,5 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TermsAndPolicy } from "@/components";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
@@ -9,6 +11,7 @@ import { ForgotMpinLayout } from "@/layouts/forgot-mpin-layout";
 import { axios, errorHandler, URLS } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { router } from "expo-router";
+import type { TextInputRef } from "@/types/rn-refs";
 import React, { useContext, useEffect, useRef, useState } from "react";
 import { Keyboard, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import Toast from "react-native-toast-message";
@@ -24,10 +27,10 @@ export default function VerifyPhone() {
 	const [showTermsAndConditions, setShowTermsAndConditions] = useState(false);
 
 	const otpRefs = [
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
 	];
 
 	useEffect(() => {
@@ -72,12 +75,11 @@ export default function VerifyPhone() {
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-
-			console.log("error", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: t("failedToSendOtp"),
-				text2: error?.message || t("unableToSendOtp"),
+				text2: getFriendlyError(error).message || t("unableToSendOtp"),
 				visibilityTime: 4000,
 			});
 		},
@@ -89,8 +91,7 @@ export default function VerifyPhone() {
 			return response?.data;
 		},
 		onSuccess: () => {
-			console.log("verify mpin reset otp success");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 			setOtpVerified(true);
 			Toast.show({
 				type: "success",
@@ -105,12 +106,11 @@ export default function VerifyPhone() {
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-
-			console.log("error", error?.message);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: t("otpVerificationFailed"),
-				text2: error?.message || t("invalidOtpCheckCode"),
+				text2: getFriendlyError(error).message || t("invalidOtpCheckCode"),
 				visibilityTime: 4000,
 			});
 		},
@@ -135,7 +135,7 @@ export default function VerifyPhone() {
 		newOtp[idx] = value;
 		setOtp(newOtp);
 		if (value && idx < 3) {
-			(otpRefs[idx + 1].current as TextInput | null)?.focus();
+			otpRefs[idx + 1].current?.focus();
 		} else if (value && idx === 3) {
 			// Dismiss keyboard after last digit is entered
 			Keyboard.dismiss();
@@ -155,7 +155,7 @@ export default function VerifyPhone() {
 				newOtp[idx - 1] = "";
 				setOtp(newOtp);
 				setTimeout(() => {
-					(otpRefs[idx - 1].current as TextInput | null)?.focus();
+					otpRefs[idx - 1].current?.focus();
 				}, 0);
 			}
 		}

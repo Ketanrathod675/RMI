@@ -1,9 +1,10 @@
 import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
+import { useTranslation } from "@/hooks/useTranslation";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-export type PaymentStatusModalType = "cancelled" | "failed" | "expired" | "unconfirmed";
+export type PaymentStatusModalType = "cancelled" | "failed" | "expired" | "unconfirmed" | "not_completed";
 
 interface Props {
     visible: boolean;
@@ -39,6 +40,12 @@ const COPY: Record<PaymentStatusModalType, { icon: string; color: string; title:
         title: "We could not confirm your payment yet",
         body: "If money was debited, please do NOT pay again. Tap \"Check again\" in a minute. Confirmation can take a little while. If it still does not show, contact support.",
     },
+    not_completed: {
+        icon: "time",
+        color: "#F59E0B",
+        title: "Payment not completed",
+        body: "We have not received a payment confirmation yet. If you paid, tap Check status.",
+    },
 };
 
 export const PaymentStatusModal: React.FC<Props> = ({
@@ -49,40 +56,55 @@ export const PaymentStatusModal: React.FC<Props> = ({
     onContactSupport,
     onClose,
 }) => {
+    const { t } = useTranslation();
     if (!type) return null;
     const c = COPY[type];
     const unconfirmed = type === "unconfirmed";
+    const notCompleted = type === "not_completed";
 
     return (
         <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
             <View style={styles.overlay}>
                 <View style={styles.card}>
                     <Ionicons name={c.icon as any} size={width(14)} color={c.color} />
-                    <Text style={styles.title}>{c.title}</Text>
-                    <Text style={styles.body}>{c.body}</Text>
+                    <Text style={styles.title}>{notCompleted ? t("paymentNotCompleted", c.title) : c.title}</Text>
+                    <Text style={styles.body}>{notCompleted ? t("paymentNotConfirmedYet", c.body) : c.body}</Text>
 
                     {unconfirmed ? (
                         <>
                             <TouchableOpacity style={styles.primary} onPress={onCheckAgain} activeOpacity={0.85}>
-                                <Text style={styles.primaryText}>Check again</Text>
+                                <Text style={styles.primaryText}>{t("checkAgain", "Check again")}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.secondary} onPress={onContactSupport} activeOpacity={0.85}>
-                                <Text style={styles.secondaryText}>Contact support</Text>
+                                <Text style={styles.secondaryText}>{t("contactSupport", "Contact support")}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                <Text style={styles.link}>Close</Text>
+                                <Text style={styles.link}>{t("close", "Close")}</Text>
+                            </TouchableOpacity>
+                        </>
+                    ) : notCompleted ? (
+                        <>
+                            <TouchableOpacity style={styles.primary} onPress={onRetry} activeOpacity={0.85}>
+                                <Text style={styles.primaryText}>{t("tryAgain", "Try again")}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.secondary} onPress={onCheckAgain} activeOpacity={0.85}>
+                                <Text style={styles.secondaryText}>{t("iAlreadyPaidCheckStatus", "I already paid, check status")}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                                <Text style={styles.link}>{t("close", "Close")}</Text>
                             </TouchableOpacity>
                         </>
                     ) : (
                         <>
                             <TouchableOpacity style={styles.primary} onPress={onRetry} activeOpacity={0.85}>
-                                <Text style={styles.primaryText}>Try again</Text>
+                                <Text style={styles.primaryText}>{t("tryAgain", "Try again")}</Text>
                             </TouchableOpacity>
                             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                                <Text style={styles.link}>Not now</Text>
+                                <Text style={styles.link}>{t("notNow", "Not now")}</Text>
                             </TouchableOpacity>
                         </>
                     )}
+
                 </View>
             </View>
         </Modal>

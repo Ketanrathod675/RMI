@@ -1,5 +1,27 @@
 import { translations } from "@/constants/translations";
 import { getStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { store } from "@/store";
+
+let currentLanguage: "english" | "hindi" = "english";
+getStorageItem(STORAGE_KEYS["@set-language"]).then((stored) => {
+	if (stored === "hindi" || stored === "english") currentLanguage = stored;
+}).catch(() => {});
+
+export const getActiveLanguage = (): "english" | "hindi" => {
+	try {
+		const lang = store.getState()?.global?.language;
+		if (lang === "hindi" || lang === "english") return lang;
+	} catch {}
+	return currentLanguage;
+};
+
+export const getSyncTranslation = (
+	key: keyof typeof translations.english,
+	fallback?: string,
+): string => {
+	const lang = getActiveLanguage();
+	return translations[lang]?.[key] || translations.english[key] || fallback || (key as string);
+};
 
 /**
  * Get translation for a key based on the stored language preference
@@ -11,14 +33,16 @@ export const getTranslationForKey = async (
 	try {
 		const storedLanguage = await getStorageItem(STORAGE_KEYS["@set-language"]);
 		const language = storedLanguage === "hindi" ? "hindi" : "english";
+		currentLanguage = language;
 
 		return translations[language][key] || translations.english[key] || key;
 	} catch (error) {
-		console.warn("Failed to get translation for key:", key, error);
+		console.warn("Failed to load toast translation", { key });
 		// Fallback to English if there's any error
 		return translations.english[key] || key;
 	}
 };
+
 
 /**
  * Show a localized toast message
@@ -52,7 +76,7 @@ export const showLocalizedToast = async (
 			visibilityTime: config.visibilityTime,
 		});
 	} catch (error) {
-		console.warn("Failed to show localized toast:", error);
+		console.warn("Failed to show localized toast");
 		// Fallback to English
 		toastFunction({
 			type: config.type,

@@ -38,9 +38,12 @@ export const initiateAssessmentFee = async (
  */
 export const checkPaymentStatus = async (
 	txnid: string,
+	options: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<PaymentStatusResponse> => {
 	const response = await axios.post<PaymentStatusResponse>(
 		URLS.payments.verify_status(txnid),
+		undefined,
+		{ timeout: options.timeoutMs, signal: options.signal },
 	);
 	return response.data;
 };
@@ -61,16 +64,34 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 		};
 	}
 
-	let status: "pending" | "approved" | "rejected" | "error" = "pending";
+	let status: "pending" | "approved" | "rejected" | "needs_update" | "error" | "service_unavailable" = "pending";
 
 	if (raw.status && typeof raw.status === "string") {
 		const s = raw.status.toLowerCase().trim();
-		if (s === "approved" || s === "rejected" || s === "error" || s === "pending") {
+		if (
+			s === "approved" ||
+			s === "rejected" ||
+			s === "needs_update" ||
+			s === "error" ||
+			s === "pending" ||
+			s === "service_unavailable"
+		) {
 			status = s as any;
 		} else if (s === "success") {
 			status = "approved";
 		} else if (s === "failed" || s === "fail") {
 			status = "error";
+		}
+	} else if (raw.bre_status && typeof raw.bre_status === "string") {
+		const bs = raw.bre_status.toLowerCase().trim();
+		if (
+			bs === "approved" ||
+			bs === "rejected" ||
+			bs === "needs_update" ||
+			bs === "error" ||
+			bs === "service_unavailable"
+		) {
+			status = bs as any;
 		}
 	} else {
 		// Older backend shape derivation:
@@ -119,6 +140,11 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 				? 1
 				: 0;
 
+	const retry_after_seconds =
+		typeof raw.retry_after_seconds === "number" ? raw.retry_after_seconds : undefined;
+	const unavailable_service =
+		typeof raw.unavailable_service === "string" ? raw.unavailable_service : undefined;
+
 	return {
 		status,
 		failed_rule,
@@ -130,6 +156,8 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 		can_update_pan,
 		remaining_email_updates,
 		remaining_pan_updates,
+		retry_after_seconds,
+		unavailable_service,
 	};
 };
 
@@ -137,10 +165,14 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
  * Fetch Handshake / BRE Status
  * GET /payment/handshake-status?txnid={txnid}
  */
-export const getHandshakeStatus = async (txnid?: string): Promise<AssessmentChecks> => {
+export const getHandshakeStatus = async (
+	txnid?: string,
+	options?: { signal?: AbortSignal },
+): Promise<AssessmentChecks> => {
 	Logger.debug("Fetching handshake status", txnid ? { txnid } : {});
 	const response = await axios.get(URLS.payments.handshake_status, {
 		params: txnid ? { txnid } : undefined,
+		signal: options?.signal,
 	});
 	const raw = response.data?.data || response.data;
 	return normalizeAssessmentChecks(raw);

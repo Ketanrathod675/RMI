@@ -1,3 +1,6 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatINR, formatDate } from "@/utils/formatters";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark } from "@/constants/Colors";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
@@ -37,21 +40,21 @@ const getLoanHistory = async () => {
 		const response = await axios.get(apiUrl);
 		return response.data;
 	} catch (error: any) {
-		console.error("❌ Failed to fetch loan history:", error?.message || error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		throw error;
 	}
 };
 
 const formatLoanAmount = (amount?: number): string => {
-	if (typeof amount !== "number" || isNaN(amount)) return "₹0.00";
-	return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+	if (!Number.isFinite(amount)) return "-";
+	return `₹${formatINR(amount)}`;
 };
 
 const formatDateTime = (dateString?: string): string => {
-	if (!dateString) return "Jan 22, 2025 • 09:41 AM";
+	if (!dateString) return "-";
 	try {
 		const date = new Date(dateString);
-		if (isNaN(date.getTime())) return dateString;
+		if (isNaN(date.getTime()) || formatDate(dateString) === "-") return "-";
 
 		const months = [
 			"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -70,7 +73,7 @@ const formatDateTime = (dateString?: string): string => {
 
 		return `${month} ${day}, ${year} • ${formattedHours}:${minutes} ${ampm}`;
 	} catch {
-		return dateString;
+		return "-";
 	}
 };
 
@@ -123,8 +126,8 @@ export default function History() {
 		React.useCallback(() => {
 			RNStatusBar.setBarStyle("dark-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 		}, [])
 	);

@@ -1,10 +1,15 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatINR } from "@/utils/formatters";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
 import { useTranslation } from "@/hooks/useTranslation";
 import { axios, URLS } from "@/utils/api";
 import { Images } from "@/constants/images";
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -15,6 +20,7 @@ import {
 	Animated,
 	BackHandler,
 	Dimensions,
+	RefreshControl,
 	Linking,
 	Modal,
 	Platform,
@@ -96,7 +102,7 @@ interface LoanBookAPIResponse {
 
 const formatNumber = (amount?: number): string => {
 	if (typeof amount !== "number" || isNaN(amount)) return "0";
-	return amount.toLocaleString("en-IN");
+	return formatINR(amount);
 };
 
 // API functions
@@ -131,8 +137,8 @@ export default function LoanDetails() {
 		React.useCallback(() => {
 			RNStatusBar.setBarStyle("dark-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 
 			const onBackPress = () => {
@@ -154,7 +160,7 @@ export default function LoanDetails() {
 	);
 
 	// If no loanNumber provided (from profile), fetch all loans first
-	const { data: allLoansData, isLoading: isLoadingAllLoans } = useNetworkAwareQuery({
+	const { data: allLoansData, isLoading: isLoadingAllLoans, isFetching: isFetchingAllLoans, isError: allLoansError, error: allLoansQueryError, refetch: refetchAllLoans } = useNetworkAwareQuery({
 		queryKey: ["allLoans"],
 		queryFn: getAllLoans,
 		enabled: !loanNumber,
@@ -163,7 +169,7 @@ export default function LoanDetails() {
 	const effectiveLoanNumber = loanNumber || allLoansData?.loans?.[0]?.loan_number;
 
 	// Fetch specific loan details
-	const { data: apiData, isLoading: isLoadingDetails } =
+	const { data: apiData, isLoading: isLoadingDetails, isFetching: isFetchingDetails, isError: loanDetailsError, error: loanDetailsQueryError, refetch: refetchLoanDetails } =
 		useNetworkAwareQuery<LoanDetailsAPIResponse>({
 			queryKey: ["loanDetails", effectiveLoanNumber],
 			queryFn: () => getLoanDetails(effectiveLoanNumber || ""),
@@ -265,7 +271,7 @@ export default function LoanDetails() {
 			if (downloadUrl) {
 				const canOpen = await Linking.canOpenURL(downloadUrl);
 				if (canOpen) {
-					await Linking.openURL(downloadUrl);
+					await openExternalUrl(downloadUrl);
 					Toast.show({
 						type: "success",
 						text1: "Download Started",
@@ -278,16 +284,19 @@ export default function LoanDetails() {
 				throw new Error("No download URL received");
 			}
 		} catch (error: any) {
-			console.error("❌ Document download failed:", error?.message);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: "Download Failed",
-				text2: error?.message || `Unable to download ${item.name}`,
+				text2: getFriendlyError(error).message || `Unable to download ${item.name}`,
 			});
 		} finally {
 			setDownloadingId(null);
 		}
 	};
+
+	if (allLoansError && !allLoansData) return <QueryErrorState error={allLoansQueryError} onRetry={() => { void refetchAllLoans(); }} onGoHome={() => router.replace("/(tabs)")} />;
+	if (loanDetailsError && !apiData) return <QueryErrorState error={loanDetailsQueryError} onRetry={() => { void refetchLoanDetails(); }} onGoHome={() => router.replace("/(tabs)")} />;
 
 	// Loading state
 	if (isLoadingAllLoans || isLoadingDetails) {
@@ -391,7 +400,8 @@ export default function LoanDetails() {
 				<Text style={styles.headerTitle}>Loan details</Text>
 			</View>
 
-			<ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false}>
+			<ScrollView style={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={isFetchingAllLoans || isFetchingDetails} onRefresh={() => { void Promise.all([refetchAllLoans(), ...(effectiveLoanNumber ? [refetchLoanDetails()] : [])]); }} />}>
+				{(allLoansError && allLoansData || loanDetailsError && apiData) && <QueryErrorState error={loanDetailsQueryError ?? allLoansQueryError} hasData onRetry={() => { void Promise.all([refetchAllLoans(), refetchLoanDetails()]); }} />}
 				{/* Top Loan Header Card (Screenshot 1 & Screenshot 2) */}
 				<TouchableOpacity
 					style={styles.loanHeaderCard}
@@ -457,7 +467,7 @@ export default function LoanDetails() {
 
 							{/* Transaction Rows */}
 							{loanBookData?.loan_book && loanBookData.loan_book.length > 0 ? (
-								loanBookData.loan_book.map((txn, index) => {
+								(Array.isArray(loanBookData.loan_book) ? loanBookData.loan_book : []).map((txn, index) => {
 									const isCredit = txn.type === "credit";
 									const isLast = index === loanBookData.loan_book.length - 1;
 

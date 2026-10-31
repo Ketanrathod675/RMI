@@ -154,7 +154,7 @@ export const useMandateVerification = () => {
 						notStarted,
 						status: data?.status ?? rawStatus,
 						txnid: resolvedTxnid,
-						nextStep: data?.next_step || undefined,
+						nextStep: data?.current_step || data?.next_step || undefined,
 					};
 				}
 
@@ -164,7 +164,7 @@ export const useMandateVerification = () => {
 						notStarted,
 						status: data?.status ?? rawStatus,
 						txnid: resolvedTxnid,
-						nextStep: data?.next_step || undefined,
+						nextStep: data?.current_step || data?.next_step || undefined,
 					};
 				}
 

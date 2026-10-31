@@ -2,6 +2,7 @@ import { HyperlinkText } from "@/components/HyperlinkText";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { getCustomerCare, getFaqs } from "@/utils/api/services/faq.service";
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { router, useFocusEffect } from "expo-router";
@@ -144,25 +145,23 @@ export default function HelpAndSupport() {
 
 	const handleCallPress = () => {
 		const cleanPhone = String(supportPhone).trim();
-		Linking.openURL(`tel:${cleanPhone}`).catch((err) =>
-			console.error("Failed to dial:", err)
-		);
+		void openExternalUrl(`tel:${cleanPhone}`);
 	};
 
 	const handleWhatsAppPress = () => {
 		const cleanPhone = String(supportWhatsApp).replace(/[^0-9]/g, "");
-		Linking.openURL(
+		void openExternalUrl(
 			`https://wa.me/${cleanPhone}?text=` +
 			encodeURIComponent("Hi! Can we have a chat.")
-		).catch((err) => console.error("Failed to open WhatsApp:", err));
+		);
 	};
 
 	const handleEmailPress = () => {
 		const cleanEmail = String(supportEmail).trim();
-		Linking.openURL(
+		void openExternalUrl(
 			`mailto:${cleanEmail}?subject=` +
 			encodeURIComponent("RapidMoney App Support")
-		).catch((err) => console.error("Failed to open Email:", err));
+		);
 	};
 
 	const filteredFaqs = useMemo(() => {

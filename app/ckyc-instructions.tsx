@@ -1,3 +1,5 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import OvalCameraCapture from "@/components/OvalCameraCapture";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary } from "@/constants/Colors";
@@ -7,9 +9,10 @@ import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getCkycStatus, sendCkycOtp, uploadSelfie } from "@/utils/api";
+import { getAddressPrefill, getCkycStatus, getSelfieStatus, sendCkycOtp, uploadSelfie } from "@/utils/api";
 import { updateUserSelfie } from "@/utils/selfie";
-import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import { useQueryClient } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -30,7 +33,7 @@ import { font, height, width } from "@/utils/dimensions";
 export default function CKYCInstructions() {
 	const { t } = useTranslation();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	// Track this screen in the journey
 	useJourneyTracker("/ckyc-instructions");
@@ -43,6 +46,8 @@ export default function CKYCInstructions() {
 	const [isFaceMatching, setIsFaceMatching] = useState(false);
 	const [retakeCount, setRetakeCount] = useState(0);
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+	const [isRefPhotoMissing, setIsRefPhotoMissing] = useState(false);
+	const [verifiedName, setVerifiedName] = useState<string | null>(null);
 	const queryClient = useQueryClient();
 
 	const isMounted = useRef(true);
@@ -63,30 +68,103 @@ export default function CKYCInstructions() {
 	// Subsystem 1: Mount-time CKYC status check (real, active logic)
 	useEffect(() => {
 		const checkCkycOnMount = async () => {
-			try {
-				const response = await getCkycStatus();
-				if (__DEV__) {
-					console.log("📥 [CKYC] Mount check completed. next_action:", response?.data?.next_action);
+			if (fromDigilocker === "true" || startSelfie === "true") {
+				try {
+					const ckycResponse = await getCkycStatus();
+					const nextAction = ckycResponse?.data?.next_action;
+
+					if (nextAction === "digilocker") {
+						router.replace("/digilocker-kyc" as any);
+						return;
+					}
+
+					if (nextAction === "ckyc") {
+						if (isMounted.current) {
+							setStep(1);
+							setIsLoadingCkyc(false);
+						}
+						return;
+					}
+					// If nextAction === "selfie_match" (or status === "completed"), continue with selfie logic below
+				} catch (error) {
+					Logger.warn("Operation failed", { code: "operation_failed" });
+				}
+			}
+
+			if (fromDigilocker === "true") {
+				try {
+					const selfieRes = await getSelfieStatus();
+					if (selfieRes?.data?.reference_photo_available === false) {
+						if (isMounted.current) {
+							setIsRefPhotoMissing(true);
+							setIsLoadingCkyc(false);
+						}
+						return;
+					}
+					const name = (selfieRes?.data as any)?.name || (selfieRes?.data as any)?.full_name;
+					if (name && typeof name === "string" && isMounted.current) {
+						setVerifiedName(name);
+					}
+				} catch {
+					Logger.warn("Operation failed", { code: "operation_failed" });
 				}
 
+				try {
+					const prefillRes = await getAddressPrefill();
+					const prefillName =
+						(prefillRes?.data as any)?.name ||
+						(prefillRes?.data as any)?.full_name ||
+						(prefillRes?.data as any)?.aadhaar_name;
+					if (prefillName && typeof prefillName === "string" && isMounted.current) {
+						setVerifiedName((prev) => prev || prefillName);
+					}
+				} catch {
+					// optional
+				}
+
+				if (isMounted.current) {
+					setStep(0);
+					setIsLoadingCkyc(false);
+				}
+				return;
+			}
+
+			if (startSelfie === "true") {
+				try {
+					const prefillRes = await getAddressPrefill();
+					const prefillName =
+						(prefillRes?.data as any)?.name ||
+						(prefillRes?.data as any)?.full_name ||
+						(prefillRes?.data as any)?.aadhaar_name;
+					if (prefillName && typeof prefillName === "string" && isMounted.current) {
+						setVerifiedName(prefillName);
+					}
+				} catch {
+					// optional
+				}
+
+				if (isMounted.current) {
+					setStep(0);
+					setIsLoadingCkyc(false);
+				}
+				return;
+			}
+
+			try {
+				const response = await getCkycStatus();
 				const nextAction = response?.data?.next_action;
 
-				if (nextAction === "digilocker" && startSelfie !== "true") {
-					if (__DEV__) {
-						console.log("👉 [CKYC] next_action is digilocker, navigating to /digilocker-kyc");
-					}
+				if (nextAction === "digilocker") {
 					router.replace("/digilocker-kyc" as any);
 					return;
 				}
 
 				if (nextAction === "selfie_match") {
-					if (startSelfie !== "true") {
-						setStep(0);
-					}
+					setStep(0);
 				}
 				// if nextAction === "ckyc", stay on step 1 (setStep(1) default)
 			} catch (error) {
-				console.error("❌ [CKYC] Failed to verify CKYC status on mount:", error);
+				Logger.warn("Operation failed", { code: "operation_failed" });
 			}
 
 			if (isMounted.current) {
@@ -95,65 +173,99 @@ export default function CKYCInstructions() {
 		};
 
 		checkCkycOnMount();
-	}, [router, startSelfie]);
+	}, [router, startSelfie, fromDigilocker]);
 
 	// Set initial step when coming from OTP/reapplication for selfie
 	useEffect(() => {
-		if (startSelfie === "true") {
+		if (startSelfie === "true" || fromDigilocker === "true") {
 			setStep(0);
 		}
-	}, [startSelfie]);
+	}, [startSelfie, fromDigilocker]);
 
-	const handleLivenessFailed = useCallback(() => {
-		if (retakeCount >= 4) {
-			Alert.alert(
-				t("retakeLimitReached", "Retake Limit Reached"),
-				t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
-			);
-			return;
-		}
-		setRetakeCount((prev) => prev + 1);
-		Alert.alert(
-			t("livenessCheckFailed", "Liveness Check Failed"),
-			t("livenessFailedPleaseRetake", "Liveness check failed, please retake in good light"),
-			[
-				{
-					text: t("retakePhoto", "Retake Photo"),
-					onPress: () => {
-						setPickedImage(null);
-						setShowCamera(true);
-					},
-				},
-			]
-		);
-	}, [retakeCount, t]);
+	const handleLivenessFailed = useCallback(
+		(remainingAttempts?: number) => {
+			if (remainingAttempts !== undefined) {
+				if (remainingAttempts <= 0) {
+					Alert.alert(
+						t("retakeLimitReached", "Retake Limit Reached"),
+						t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
+					);
+					return;
+				}
+			} else if (retakeCount >= 4) {
+				Alert.alert(
+					t("retakeLimitReached", "Retake Limit Reached"),
+					t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
+				);
+				return;
+			}
+			setRetakeCount((prev) => prev + 1);
 
-	const handleFaceMatchFailed = useCallback(() => {
-		if (retakeCount >= 4) {
+			const attemptsText =
+				remainingAttempts !== undefined
+					? `\n\n(${remainingAttempts} ${remainingAttempts === 1 ? t("attemptLeft", "attempt left") : t("attemptsLeft", "attempts left")})`
+					: "";
+
 			Alert.alert(
-				t("retakeLimitReached", "Retake Limit Reached"),
-				t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
-			);
-			return;
-		}
-		setRetakeCount((prev) => prev + 1);
-		Alert.alert(
-			t("faceVerificationFailed", "Face Verification Failed"),
-			t(
-				"selfieDoesNotMatchAadhaar",
-				"Your selfie does not match with your Aadhaar photo. Please retake the photo ensuring good lighting and clear visibility."
-			),
-			[
-				{
-					text: t("retakePhoto", "Retake Photo"),
-					onPress: () => {
-						setPickedImage(null);
-						setShowCamera(true);
+				t("livenessCheckFailed", "Liveness Check Failed"),
+				`${t("livenessFailedPleaseRetake", "Liveness check failed, please retake in good light")}${attemptsText}`,
+				[
+					{
+						text: t("retakePhoto", "Retake Photo"),
+						onPress: () => {
+							setPickedImage(null);
+							setShowCamera(true);
+						},
 					},
-				},
-			]
-		);
-	}, [retakeCount, t]);
+				]
+			);
+		},
+		[retakeCount, t]
+	);
+
+	const handleFaceMatchFailed = useCallback(
+		(remainingAttempts?: number) => {
+			if (remainingAttempts !== undefined) {
+				if (remainingAttempts <= 0) {
+					Alert.alert(
+						t("retakeLimitReached", "Retake Limit Reached"),
+						t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
+					);
+					return;
+				}
+			} else if (retakeCount >= 4) {
+				Alert.alert(
+					t("retakeLimitReached", "Retake Limit Reached"),
+					t("tooManyAttemptsPleaseTryLater", "Too many attempts. Please try again later.")
+				);
+				return;
+			}
+			setRetakeCount((prev) => prev + 1);
+
+			const attemptsText =
+				remainingAttempts !== undefined
+					? `\n\n(${remainingAttempts} ${remainingAttempts === 1 ? t("attemptLeft", "attempt left") : t("attemptsLeft", "attempts left")})`
+					: "";
+
+			Alert.alert(
+				t("faceVerificationFailed", "Face Verification Failed"),
+				`${t(
+					"selfieDoesNotMatchAadhaar",
+					"Your selfie does not match with your Aadhaar photo. Please retake the photo ensuring good lighting and clear visibility."
+				)}${attemptsText}`,
+				[
+					{
+						text: t("retakePhoto", "Retake Photo"),
+						onPress: () => {
+							setPickedImage(null);
+							setShowCamera(true);
+						},
+					},
+				]
+			);
+		},
+		[retakeCount, t]
+	);
 
 	// Subsystem 3: Upload selfie and verify liveness & face match
 	const { mutate: handleUploadSelfie, isPending } = useNetworkAwareMutation({
@@ -170,7 +282,7 @@ export default function CKYCInstructions() {
 					try {
 						await updateUserSelfie(pickedImage);
 					} catch (error) {
-						console.error("Failed to save selfie to storage:", error);
+						Logger.warn("Operation failed", { code: "operation_failed" });
 					}
 				}
 
@@ -183,7 +295,7 @@ export default function CKYCInstructions() {
 						{
 							text: t("ok", "OK"),
 							onPress: () => {
-								const params: any = { startFromAddress: "true" };
+								const params: any = { startFromAddress: "true", fromSelfie: "true" };
 								if (permAddressData) params.permAddressData = String(permAddressData);
 								if (corrAddressData) params.corrAddressData = String(corrAddressData);
 								router.replace({ pathname: "/aadhaar-kyc", params } as any);
@@ -194,13 +306,30 @@ export default function CKYCInstructions() {
 				return;
 			}
 
+			if (data.data?.reference_photo_missing || data.data?.restart_digilocker) {
+				setIsRefPhotoMissing(true);
+				Alert.alert(
+					t("alert", "Alert"),
+					t("aadhaarPhotoMissing", "We couldn't load your Aadhaar photo. Please verify with DigiLocker again."),
+					[
+						{
+							text: t("verifyAgain", "Verify again"),
+							onPress: () => {
+								router.replace("/digilocker-kyc" as any);
+							},
+						},
+					]
+				);
+				return;
+			}
+
 			if (data.data?.liveness_passed === false) {
-				handleLivenessFailed();
+				handleLivenessFailed(data.data?.remaining_attempts);
 				return;
 			}
 
 			if (data.data?.face_match_passed === false) {
-				handleFaceMatchFailed();
+				handleFaceMatchFailed(data.data?.remaining_attempts);
 				return;
 			}
 
@@ -211,10 +340,33 @@ export default function CKYCInstructions() {
 			});
 		},
 		onError: (err: any) => {
+			const errorData = err?.response?.data?.data || err?.response?.data;
+			if (
+				errorData?.reference_photo_missing ||
+				errorData?.restart_digilocker ||
+				err?.code === "PHOTO_UNUSABLE" ||
+				err?.code === "PARSE_FAILED"
+			) {
+				setIsRefPhotoMissing(true);
+				Alert.alert(
+					t("alert", "Alert"),
+					t("aadhaarPhotoMissing", "We couldn't load your Aadhaar photo. Please verify with DigiLocker again."),
+					[
+						{
+							text: t("verifyAgain", "Verify again"),
+							onPress: () => {
+								router.replace("/digilocker-kyc" as any);
+							},
+						},
+					]
+				);
+				return;
+			}
+
 			Toast.show({
 				type: "error",
 				text1: t("alert", "Alert"),
-				text2: err?.detail || err?.message || t("uploadFailed", "Upload Failed"),
+				text2: getFriendlyError(err).message || t("uploadFailed", "Upload Failed"),
 			});
 		},
 	});
@@ -365,7 +517,7 @@ export default function CKYCInstructions() {
 			}
 		} catch (error: any) {
 			if (!isMounted.current) return;
-			const msg = error?.detail || error?.message || "";
+			const msg = getFriendlyError(error).message || "";
 			if (msg.toLowerCase().includes("digilocker")) {
 				router.replace("/digilocker-kyc" as any);
 			} else {
@@ -390,12 +542,36 @@ export default function CKYCInstructions() {
 		);
 	}
 
+	if (isRefPhotoMissing) {
+		return (
+			<SafeAreaView style={styles.safeContainer}>
+				<View style={styles.centered}>
+					<Image source={Images.SELFIE} style={styles.illustration} resizeMode="contain" />
+					<Text style={styles.stepTitle}>
+						{t("aadhaarPhotoMissing", "We couldn't load your Aadhaar photo. Please verify with DigiLocker again.")}
+					</Text>
+					<TouchableOpacity
+						style={styles.ctaBtn}
+						onPress={() => router.replace("/digilocker-kyc" as any)}>
+						<View style={styles.ctaBtnContentRow}>
+							<Text style={styles.ctaBtnText}>{t("verifyAgain", "Verify again")}</Text>
+							<IconSymbol name="arrow.right" size={20} color={dark} />
+						</View>
+					</TouchableOpacity>
+				</View>
+			</SafeAreaView>
+		);
+	}
+
 	return (
 		<SafeAreaView style={styles.safeContainer}>
 			{/* STEP 0: Liveness Check Instructions */}
 			{step === 0 && (
 				<View style={styles.centered}>
 					<TranslatedText style={styles.stepTitle} translationKey="livenessCheckInstructions" />
+					{verifiedName ? (
+						<Text style={styles.verifiedAsText}>Verified as {verifiedName}</Text>
+					) : null}
 					<TranslatedText style={styles.stepDescBold} translationKey="ensurePassportSizedPhoto" />
 					<View style={styles.livenessRow}>
 						<View style={styles.livenessCol}>
@@ -457,6 +633,9 @@ export default function CKYCInstructions() {
 				<View style={styles.centeredStep2}>
 					<View style={styles.selfieContentCenterGroup}>
 						<TranslatedText style={styles.takeSelfieTitle} translationKey="takeASelfie" />
+						{verifiedName ? (
+							<Text style={styles.verifiedAsText}>Verified as {verifiedName}</Text>
+						) : null}
 
 						<Image source={Images.SELFIE} style={styles.selfieIllustration} resizeMode="contain" />
 
@@ -569,6 +748,14 @@ const styles = StyleSheet.create({
 		fontSize: 22,
 		color: "#222",
 		marginBottom: 8,
+		textAlign: "center",
+	},
+	verifiedAsText: {
+		fontSize: 14,
+		color: "#666",
+		fontWeight: "500",
+		marginTop: -4,
+		marginBottom: 12,
 		textAlign: "center",
 	},
 	stepDesc: {

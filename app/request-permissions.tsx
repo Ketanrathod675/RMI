@@ -1,4 +1,4 @@
-﻿import { TermsAndPolicy } from "@/components";
+import { TermsAndPolicy } from "@/components";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { useNotifications } from "@/hooks/useNotifications";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -9,12 +9,14 @@ import { font, height, width } from "@/utils/dimensions";
 import { removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
-import { router, useNavigation } from "expo-router";
+import { router } from "expo-router";
+import { useTypedNavigation, type BeforeRemoveEvent } from "@/hooks/useTypedNavigation";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
 	AppState,
+	type AppStateStatus,
 	BackHandler,
 	ScrollView,
 	StyleSheet,
@@ -60,8 +62,8 @@ export default function RequestPermissions() {
 	} = useNotifications();
 	const { loginResponse, otpVerifyResponse } = useSignin(true);
 
-	const navigation = useNavigation();
-	const appState = useRef(AppState.currentState);
+	const navigation = useTypedNavigation();
+	const appState = useRef<string>(AppState.currentState ?? "active");
 
 	// AppState tracking: detect backgrounding during permission flow
 	useEffect(() => {
@@ -92,8 +94,8 @@ export default function RequestPermissions() {
 
 	// Intercept router navigation and hardware back button
 	useEffect(() => {
-		const unsubscribe = navigation.addListener("beforeRemove", (e: any) => {
-			if (["GO_BACK", "POP"].includes(e.data?.action?.type)) {
+		const unsubscribe = navigation.addListener("beforeRemove", (e: BeforeRemoveEvent) => {
+			if (["GO_BACK", "POP"].includes(e.data.action.type)) {
 				e.preventDefault();
 
 				Alert.alert(t("areYouSureGoBack"), t("youWillLoseProgress"), [

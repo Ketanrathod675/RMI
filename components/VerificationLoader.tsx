@@ -9,6 +9,7 @@ import {
 	LayoutChangeEvent,
 	Modal,
 	StyleSheet,
+	TouchableOpacity,
 	Text as RNText,
 	TextProps,
 	useWindowDimensions,
@@ -98,6 +99,7 @@ export interface VerificationLoaderProps {
 	progressPercent: number;
 	headingText?: string;
 	slaText?: string | null;
+	onCancel?: () => void;
 }
 
 export interface VerificationLoaderContentProps
@@ -870,7 +872,15 @@ export default function VerificationLoader({
 	progressPercent,
 	headingText,
 	slaText,
+	onCancel,
 }: VerificationLoaderProps) {
+	const { t } = useTranslation();
+	const [canCancel, setCanCancel] = useState(false);
+	useEffect(() => {
+		if (!visible || !onCancel) { setCanCancel(false); return; }
+		const timer = setTimeout(() => setCanCancel(true), 8000);
+		return () => clearTimeout(timer);
+	}, [visible, onCancel]);
 	return (
 		<Modal
 			visible={visible}
@@ -879,7 +889,7 @@ export default function VerificationLoader({
 			statusBarTranslucent
 			navigationBarTranslucent
 			supportedOrientations={["portrait"]}
-			onRequestClose={noop}>
+			onRequestClose={() => { if (canCancel) onCancel?.(); }}>
 			<StatusBar style="dark" />
 			<SafeAreaProvider>
 				<VerificationLoaderContent
@@ -893,6 +903,11 @@ export default function VerificationLoader({
 					headingText={headingText}
 					slaText={slaText}
 				/>
+					{canCancel && onCancel && (
+						<TouchableOpacity onPress={onCancel} style={{ alignSelf: "center", padding: 14 }} accessibilityRole="button">
+							<RNText style={{ color: TOKENS.body, fontSize: 14 }}>{t("stopChecking", "Stop checking")}</RNText>
+						</TouchableOpacity>
+					)}
 			</SafeAreaProvider>
 		</Modal>
 	);

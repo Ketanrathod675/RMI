@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import React, { useRef, useState } from "react";
 import {
 	Alert,
@@ -52,7 +53,7 @@ export default function OvalCameraCapture({
 					onCapture(photo.uri);
 				}
 			} catch (error) {
-				console.error("Error taking photo:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 				Alert.alert("Camera Error", "Failed to capture photo. Please try again.");
 			}
 		}

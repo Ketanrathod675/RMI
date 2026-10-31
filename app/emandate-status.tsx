@@ -1,3 +1,4 @@
+import { useMountedRef } from "@/hooks/useMountedRef";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { type MandateVerifySource, useMandateVerification } from "@/hooks/useMandateVerification";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -10,6 +11,7 @@ import { ActivityIndicator, AppState, StyleSheet, Text, TouchableOpacity, View }
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function EmandateStatus() {
+	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
@@ -29,35 +31,18 @@ export default function EmandateStatus() {
 
 	const [canLeave, setCanLeave] = useState(false);
 
-	const goNext = useCallback(
-		async (step?: string | null) => {
-			if (outcome !== "success") {
-				void recheck();
-				return;
-			}
-			let targetStep = step;
-			if (!targetStep) {
-				try {
-					const dash: any = await getUserDashboardData();
-					targetStep = dash?.workflow_progress?.current_step || dash?.current_step;
-				} catch {
-					// ignore
-				}
-			}
+	const goNext = useCallback(async () => {
+		if (outcome !== "success") {
+			void recheck();
+			return;
+		}
 
-			// The mandate endpoint has already confirmed success. Dashboard workflow state
-			// can lag behind that result, so don't reclassify a completed mandate as incomplete.
-			const normalizedStep = String(targetStep ?? "").trim().toLowerCase();
-			if (!normalizedStep || normalizedStep === "enach_mandate" || normalizedStep === "auto_debit_setup") {
-				router.replace("/loan-congratulations" as any);
-				return;
-			}
-
-			const href = StepHref[targetStep as keyof typeof StepHref];
-			router.replace((href && href !== "/auto-debit-setup" ? href : "/loan-congratulations") as any);
-		},
-		[outcome, recheck, router],
-	);
+		// In the new backend workflow order:
+		// bank_details > enach_mandate > pdq_check > agreement_signing > disbursement
+		// Completing mandate ALWAYS moves forward to sanction letter & KFS digital signing.
+		// Loan completion only happens AFTER signing the agreement with OTP.
+		router.replace("/sanction-letter" as any);
+	}, [outcome, recheck, router]);
 
 	const tryAgain = useCallback(async () => {
 		await removeStorageItem(STORAGE_KEYS["@mandate-pending"]).catch(() => undefined);
@@ -68,11 +53,11 @@ export default function EmandateStatus() {
 	useEffect(() => {
 		if (outcome === "success") {
 			const timer = setTimeout(() => {
-				void goNext(nextStep);
+				void goNext();
 			}, 1500);
 			return () => clearTimeout(timer);
 		}
-	}, [outcome, nextStep, goNext]);
+	}, [outcome, goNext]);
 
 	// When mandate registration is in progress, auto-redirect to Home after 10 seconds (matching web)
 	useEffect(() => {

@@ -1,3 +1,4 @@
+import { useMountedRef } from "@/hooks/useMountedRef";
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { DateInput, Dropdown, Select, StickyFormFooter, type SelectOption } from "@/components";
 import TranslatedInput from "@/components/TranslatedInput";
@@ -8,6 +9,7 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useKeyboardVisible } from "@/hooks/useKeyboardVisible";
 import { useFormScroll } from "@/hooks/useFormScroll";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 import { BASIC_DETAILS_LOADER_MS } from "@/constants/journeySteps";
@@ -29,7 +31,9 @@ import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
-import { router, useFocusEffect, useNavigation } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -61,6 +65,7 @@ const EMAIL_REGEX = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const BLOCK_UNSERVICEABLE_PINCODE_AT_BASIC_DETAILS = false;
 
 export default function LoanApplication() {
+	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 
@@ -111,17 +116,19 @@ export default function LoanApplication() {
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [resendTimer, setResendTimer] = useState(0);
 	const [isEmailVerified, setIsEmailVerified] = useState(false);
-	const otpInputRefs = useRef<(TextInput | null)[]>([]);
+	const otpInputRefs = useRef<(TextInputRef | null)[]>([]);
 	const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const delayedActionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(() => () => { if (delayedActionTimerRef.current) clearTimeout(delayedActionTimerRef.current); }, []);
 	const modalAnimValue = useRef(new Animated.Value(0)).current;
 
 	const [isPanVerified, setIsPanVerified] = useState(false);
 
-	const fullNameRef = useRef<TextInput>(null);
-	const panRef = useRef<TextInput>(null);
-	const fatherNameRef = useRef<TextInput>(null);
-	const emailRef = useRef<TextInput>(null);
-	const pincodeRef = useRef<TextInput>(null);
+	const fullNameRef = useRef<TextInputRef>(null);
+	const panRef = useRef<TextInputRef>(null);
+	const fatherNameRef = useRef<TextInputRef>(null);
+	const emailRef = useRef<TextInputRef>(null);
+	const pincodeRef = useRef<TextInputRef>(null);
 
 	const [pincodeLookupResult, setPincodeLookupResult] = useState<{
 		loading: boolean;
@@ -190,7 +197,7 @@ export default function LoanApplication() {
 	const { visible: isKeyboardVisible, height: keyboardHeight } = useKeyboardVisible();
 	const { scrollRef, scrollProps, registerField, scrollToField, scrollToFirstError } = useFormScroll();
 
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const dispatch = useAppDispatch();
 	const { userId, accessToken, logout, applicantFrom } = useAuth(true);
 	const { runStep, runStepThenNavigate, resetJourney } = useJourneyLoader();
@@ -291,6 +298,7 @@ export default function LoanApplication() {
 	const { mutate: submitPersonalDetailsMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: submitBasicDetails,
 		onSuccess: async (response) => {
+			if (!mountedRef.current) return;
 			if (__DEV__) {
 				console.log("✅ [KYC Submit] Submitted successfully to FastAPI backend");
 			}
@@ -368,6 +376,7 @@ export default function LoanApplication() {
 				{
 					minDurationMs: BASIC_DETAILS_LOADER_MS,
 					navigate: () => {
+						if (!mountedRef.current) return;
 						// If af is "no", assessment-fee is skipped completely
 						if (afFlag === "no") {
 							router.replace({
@@ -389,6 +398,7 @@ export default function LoanApplication() {
 			);
 		},
 		onError: (err, variables, ctx) => {
+			if (!mountedRef.current) return;
 			const { error } = errorHandler(err, variables, ctx);
 			const status = (err as any)?.response?.status;
 			const rawDetail = (err as any)?.response?.data?.detail;
@@ -404,7 +414,7 @@ export default function LoanApplication() {
 			if (
 				status === 400 &&
 				(detailStr.toLowerCase().includes("already been submitted") ||
-					error?.message?.toLowerCase().includes("already been submitted"))
+					getFriendlyError(error).message?.toLowerCase().includes("already been submitted"))
 			) {
 				Toast.show({
 					type: "info",
@@ -437,11 +447,7 @@ export default function LoanApplication() {
 			}
 
 			// Other 400 / validation / server errors: surface clear message, do not crash
-			const backendErrorDetail =
-				detailStr ||
-				(err as any)?.response?.data?.message ||
-				error?.message ||
-				t("errorSubmittingPersonalDetails", "Submission Error");
+			const backendErrorDetail = getFriendlyError(err).message;
 
 			Toast.show({
 				type: "error",
@@ -802,7 +808,8 @@ export default function LoanApplication() {
 				newOtp[index - 1] = "";
 				setOtp(newOtp);
 
-				setTimeout(() => {
+				delayedActionTimerRef.current = setTimeout(() => {
+					delayedActionTimerRef.current = null;
 					otpInputRefs.current[index - 1]?.focus();
 				}, 0);
 			}

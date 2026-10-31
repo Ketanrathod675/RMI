@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { CustomersIcon } from "@/components/ui/CustomersIcon";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { TranslatedText } from "@/components/TranslatedText";
@@ -130,7 +131,7 @@ export default function Login() {
 			Toast.show({
 				type: "error",
 				text1: t("errorOccurredWhileRequestingOTP"),
-				text2: errData?.message ?? t("pleaseTryAgain"),
+				text2: getFriendlyError(err).message,
 			});
 		},
 	});

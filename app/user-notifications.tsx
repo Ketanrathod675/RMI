@@ -6,11 +6,19 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { dark, white, primary } from "@/constants/Colors";
 import { font, width, height } from "@/utils/dimensions";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
+import { getUserNotifications } from "@/utils/api/services/notifications.service";
 
 export default function UserNotifications() {
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
+	const { data, isError, error, refetch } = useNetworkAwareQuery({
+		queryKey: ["userNotifications"],
+		queryFn: () => getUserNotifications({ skip: 0, limit: 50 }),
+	});
 	useJourneyTracker("/user-notifications");
+	if (isError && !data) return <QueryErrorState error={error} onRetry={() => { void refetch(); }} onGoHome={() => router.replace("/(tabs)")} />;
 
 	return (
 		<View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>

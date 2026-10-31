@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
@@ -13,7 +14,8 @@ import { clearLastVisitedScreen } from "@/utils/journey-tracker";
 import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { Image } from "expo-image";
 import * as Linking from "expo-linking";
-import { Stack, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -45,7 +47,7 @@ const isFailureStatus = (s?: string | null): boolean => {
 export default function LoanCongratulations() {
 	useJourneyTracker("/loan-congratulations");
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const { t } = useTranslation();
 	const dispatch = useDispatch();
 
@@ -54,7 +56,9 @@ export default function LoanCongratulations() {
 	const [showFinalScreen, setShowFinalScreen] = useState(false);
 
 	const urlHook = Linking.useLinkingURL();
-	const params = useLocalSearchParams();
+	const params = useLocalSearchParams<{ final?: string; txnid?: string; status?: string }>();
+	const isFinal = params?.final === "1" || params?.final === "true";
+	const hasTrackedDisbursementRef = useRef(false);
 	const processedRef = useRef(false);
 	const verifiedTxnIdRef = useRef<string | null>(null); // Lock to prevent race conditions
 	const allowNavigationRef = useRef(false); // Flag to allow programmatic navigation
@@ -77,6 +81,16 @@ export default function LoanCongratulations() {
 
 	// Check for params passed from navigation
 	useEffect(() => {
+		if (isFinal) {
+			setStatus("success");
+			setShowFinalScreen(true);
+			if (!hasTrackedDisbursementRef.current) {
+				hasTrackedDisbursementRef.current = true;
+				trackDisbursement("").catch(() => {});
+			}
+			return;
+		}
+
 		const checkParams = async () => {
 			if (verifiedTxnIdRef.current) return;
 
@@ -101,10 +115,12 @@ export default function LoanCongratulations() {
 		};
 
 		checkParams();
-	}, [params]);
+	}, [isFinal, params]);
 
 	// Check initial URL deep link
 	useEffect(() => {
+		if (isFinal) return;
+
 		const parseInitialUrl = async () => {
 			if (verifiedTxnIdRef.current || processedRef.current) {
 				return;
@@ -145,7 +161,7 @@ export default function LoanCongratulations() {
 
 	// Listen for live deep link events
 	useEffect(() => {
-		if (!urlHook || processedRef.current) {
+		if (isFinal || !urlHook || processedRef.current) {
 			return;
 		}
 
@@ -191,8 +207,8 @@ export default function LoanCongratulations() {
 		if (isSuccessStatus(clientStatus)) {
 			console.log("✅ [LoanCongrats] Client indicated mandate success:", clientStatus);
 			verifiedTxnIdRef.current = txnId || "confirmed";
-			setStatus("success");
-			trackDisbursement(txnId || "").catch(() => {});
+			allowNavigationRef.current = true;
+			router.replace("/sanction-letter" as any);
 			return;
 		}
 
@@ -211,25 +227,17 @@ export default function LoanCongratulations() {
 
 			if (data) {
 				const rawStatus = normalizeMandateStatus(data?.status);
-				if (isSuccessStatus(rawStatus)) {
+				if (isSuccessStatus(rawStatus) || (data as any)?.is_complete === true) {
 					console.log("✅ [LoanCongrats] Server confirmed mandate is active/authorized");
 					verifiedTxnIdRef.current = txnId || data.txnid || "confirmed";
-					setStatus("success");
-					trackDisbursement(txnId || data.txnid || "").catch(() => {});
+					allowNavigationRef.current = true;
+					router.replace("/sanction-letter" as any);
 					return;
 				}
 
 				if (isFailureStatus(rawStatus)) {
 					console.log("❌ [LoanCongrats] Server confirmed mandate failure");
 					setStatus("failure");
-					return;
-				}
-
-				if ((data as any)?.is_complete === true) {
-					console.log("✅ [LoanCongrats] Backend confirmed mandate completion");
-					verifiedTxnIdRef.current = txnId || data.txnid || "confirmed";
-					setStatus("success");
-					trackDisbursement(txnId || data.txnid || "").catch(() => {});
 					return;
 				}
 
@@ -243,7 +251,7 @@ export default function LoanCongratulations() {
 				}
 			}
 		} catch (error) {
-			console.error("❌ [LoanCongrats] Error checking mandate status with server", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 
 		// 4. Fallback check: verify user dashboard workflow progress
@@ -252,15 +260,24 @@ export default function LoanCongratulations() {
 			const currentStep = String(
 				dashboard?.workflow_progress?.current_step || dashboard?.current_step || "",
 			).toLowerCase().trim();
-			if (currentStep === "pdq_check") {
-				setApiMessage(t("mandateRegistrationInProgressDesc"));
-				setStatus("in_progress");
-				return;
-			}
-			if (currentStep && currentStep !== "enach_mandate" && currentStep !== "auto_debit_setup") {
-				console.log("✅ [LoanCongrats] Workflow step moved past mandate:", currentStep);
+			const overallStatus = String(
+				dashboard?.workflow_progress?.overall_status || dashboard?.overall_status || "",
+			).toLowerCase().trim();
+
+			if (currentStep === "disbursement" || overallStatus === "completed") {
+				console.log("✅ [LoanCongrats] Workflow reached disbursement / completed");
 				verifiedTxnIdRef.current = txnId || "confirmed";
 				setStatus("success");
+				return;
+			}
+			if (currentStep === "pdq_check") {
+				allowNavigationRef.current = true;
+				router.replace("/emandate-status" as any);
+				return;
+			}
+			if (currentStep === "agreement_signing" || currentStep === "kfs_signing") {
+				allowNavigationRef.current = true;
+				router.replace("/sanction-letter" as any);
 				return;
 			}
 		} catch {
@@ -322,7 +339,8 @@ export default function LoanCongratulations() {
 	};
 
 	const handleContinue = () => {
-		setShowFinalScreen(true);
+		allowNavigationRef.current = true;
+		router.replace("/sanction-letter" as any);
 	};
 
 	if (status === "in_progress") {

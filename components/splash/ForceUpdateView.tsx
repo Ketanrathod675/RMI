@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { primary, dark_primary, dark, white } from "@/constants/Colors";
 import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
@@ -11,7 +12,7 @@ interface ForceUpdateViewProps {
 export const ForceUpdateView = ({ playStoreUrl }: ForceUpdateViewProps) => {
 	const handleUpdate = () => {
 		if (playStoreUrl) {
-			Linking.openURL(playStoreUrl);
+			openExternalUrl(playStoreUrl);
 		}
 	};
 

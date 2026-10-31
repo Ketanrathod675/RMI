@@ -2,8 +2,11 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
 import { useTranslation } from "@/hooks/useTranslation";
 import Logger from "@/utils/logger";
+import { openExternalUrl } from "@/utils/openExternalUrl";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { axios, getUserDashboardData, URLS } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,6 +21,7 @@ import {
 	Platform,
 	Pressable,
 	ScrollView,
+	RefreshControl,
 	StatusBar as RNStatusBar,
 	StyleSheet,
 	Text,
@@ -55,8 +59,8 @@ const getLoanDetails = async (loanNumber: string) => {
 	console.log("=== MY LOAN API RESPONSE ===");
 	console.log("API Endpoint:", `loans/${loanNumber}`);
 	console.log("Loan Number:", loanNumber);
-	console.log("Status:", response.status);
-	Logger.debug("My loan response", response.data);
+Logger.warn("Operation failed", { code: "operation_failed" });
+	Logger.debug("My loan data loaded");
 	console.log("============================");
 	return response.data;
 };
@@ -66,10 +70,10 @@ const downloadInsurancePolicy = async () => {
 	try {
 		console.log("📄 Calling insurance policy download API");
 		const response = await axios.post("insurance/download-my-policy", {});
-		Logger.debug("Insurance policy response", response.data);
+		Logger.debug("Insurance policy data loaded");
 		return response.data;
 	} catch (error) {
-		console.error("❌ Insurance Policy Download Error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		throw error;
 	}
 };
@@ -79,10 +83,10 @@ const downloadNOC = async (loanId: string) => {
 	try {
 		console.log("📄 Calling NOC download API for loanId:", loanId);
 		const response = await axios.get(URLS.loans.noc(loanId));
-		Logger.debug("NOC response", response.data);
+		Logger.debug("NOC response received");
 		return response.data;
 	} catch (error) {
-		console.error("❌ NOC Download Error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		throw error;
 	}
 };
@@ -149,7 +153,7 @@ const DocumentRow = ({
 					const canOpen = await Linking.canOpenURL(downloadUrl);
 
 					if (canOpen) {
-						await Linking.openURL(downloadUrl);
+						await openExternalUrl(downloadUrl);
 						Toast.show({
 							type: "success",
 							text1: "Download Started",
@@ -162,11 +166,11 @@ const DocumentRow = ({
 					throw new Error("No download URL received");
 				}
 			} catch (error: any) {
-				console.error("❌ NOC Download failed:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 				Toast.show({
 					type: "error",
 					text1: "Download Failed",
-					text2: error?.response?.data?.message || error?.message || "Unable to download NOC",
+					text2: getFriendlyError(error).message || "Unable to download NOC",
 				});
 			} finally {
 				setIsDownloading(false);
@@ -193,12 +197,11 @@ const DocumentRow = ({
 
 				// Check if document is ready (has symbo_message URL)
 				if (response.symbo_message) {
-					console.log("📄 Opening insurance policy URL:", response.symbo_message);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 					const canOpen = await Linking.canOpenURL(response.symbo_message);
 
 					if (canOpen) {
-						await Linking.openURL(response.symbo_message);
+						await openExternalUrl(response.symbo_message);
 
 						Toast.show({
 							type: "success",
@@ -215,8 +218,7 @@ const DocumentRow = ({
 					throw new Error(errorMsg);
 				}
 			} catch (error: any) {
-				console.error("❌ Insurance Policy Download failed:", error);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 				let errorMessage = "Unable to download insurance policy";
 
 				if (error?.response?.data) {
@@ -231,12 +233,8 @@ const DocumentRow = ({
 						return;
 					}
 					errorMessage = data.message || data.error || errorMessage;
-				} else if (
-					error?.message &&
-					!error.message.includes("status") &&
-					!error.message.includes("code")
-				) {
-					errorMessage = error.message;
+				} else {
+					errorMessage = getFriendlyError(error).message;
 				}
 
 				Toast.show({
@@ -299,14 +297,14 @@ export default function MyLoan() {
 		React.useCallback(() => {
 			RNStatusBar.setBarStyle("light-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 		}, [])
 	);
 
 	// Fetch dashboard data to get loan number and progress
-	const { data: dashboardData } = useNetworkAwareQuery({
+	const { data: dashboardData, isError: dashboardError, error: dashboardQueryError, refetch: refetchDashboard, isLoading: isDashboardLoading, isFetching: isDashboardFetching } = useNetworkAwareQuery({
 		queryKey: ["userDashboard"],
 		queryFn: getUserDashboardData,
 	});
@@ -314,13 +312,16 @@ export default function MyLoan() {
 	const loanNumber = (dashboardData as any)?.primary_loan?.loan_number;
 
 	// Fetch loan details if loan number exists in dashboard
-	const { data: apiData, isLoading } = useNetworkAwareQuery<LoanDetailsAPIResponse>({
+	const { data: apiData, isLoading, isError, error, refetch, isFetching } = useNetworkAwareQuery<LoanDetailsAPIResponse>({
 		queryKey: ["myLoanDetails", loanNumber],
 		queryFn: () => getLoanDetails(loanNumber || ""),
 		enabled: !!loanNumber,
 	});
+	if (dashboardError && !dashboardData) return <QueryErrorState error={dashboardQueryError} onRetry={() => { void refetchDashboard(); }} onGoHome={() => router.replace("/(tabs)")} />;
+	if (isError && !apiData) return <QueryErrorState error={error} onRetry={() => { void refetch(); }} onGoHome={() => router.replace("/(tabs)")} />;
 
 	if (!loanNumber) {
+		if (isDashboardLoading) return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={primary} /></View>;
 		return (
 			<SafeAreaView style={styles.container}>
 				<StatusBar style="light" />
@@ -405,6 +406,7 @@ export default function MyLoan() {
 
 	return (
 		<SafeAreaView style={styles.container}>
+			{isError && apiData && <QueryErrorState error={error} hasData onRetry={() => { void refetch(); }} />}
 			<StatusBar style="light" />
 			{/* Header */}
 			<View style={styles.header}>
@@ -414,7 +416,8 @@ export default function MyLoan() {
 				<TranslatedText style={styles.headerTitle} translationKey="myLoan" />
 			</View>
 
-			<ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+			<ScrollView style={styles.content} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={isFetching || isDashboardFetching} onRefresh={() => { void Promise.all([refetchDashboard(), refetch()]); }} />}>
+				{isError && apiData && <QueryErrorState error={error} hasData onRetry={() => { void refetch(); }} />}
 				{/* Loan Details Container */}
 				<View style={styles.detailsContainer}>
 					{/* Loan Amount */}

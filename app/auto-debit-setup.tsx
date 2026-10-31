@@ -1,3 +1,5 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { useMountedRef } from "@/hooks/useMountedRef";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { type MandateVerifySource } from "@/hooks/useMandateVerification";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -14,7 +16,8 @@ import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from 
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
-import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import * as WebBrowser from "expo-web-browser";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -59,10 +62,11 @@ const Radio = ({ selected }: { selected: boolean }) => (
 );
 
 export default function AutoDebitSetup() {
+	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const queryClient = useQueryClient();
 	useJourneyTracker("/auto-debit-setup");
 
@@ -127,6 +131,7 @@ export default function AutoDebitSetup() {
 				if (!active) return;
 
 				// 3. Check dashboard step to see if user has already advanced
+				// StepHref maps: pdq_check -> /emandate-status, agreement_signing -> /sanction-letter, disbursement -> /loan-congratulations?final=1
 				try {
 					const dash: any = await getUserDashboardData();
 					const step: string | undefined = dash?.workflow_progress?.current_step || dash?.current_step;
@@ -172,6 +177,7 @@ export default function AutoDebitSetup() {
 		setIsSubmitting(true);
 		try {
 			const mandate = await createMandate(selectedMethod);
+			if (!mountedRef.current) return;
 			if (!mandate?.url) {
 				throw new Error(t("mandateNoCheckoutUrl"));
 			}
@@ -180,12 +186,14 @@ export default function AutoDebitSetup() {
 				STORAGE_KEYS["@mandate-pending"],
 				JSON.stringify({ txnid: mandate.txnid ?? "", method: selectedMethod, startedAt: Date.now() }),
 			);
+			if (!mountedRef.current) return;
 
 			let source: MandateVerifySource = "browser_closed";
 			let targetTxnid = mandate.txnid ?? "";
 
 			try {
 				const result = await WebBrowser.openAuthSessionAsync(mandate.url, RETURN_URL);
+				if (!mountedRef.current) return;
 				if (result.type === "success" && result.url) {
 					const { queryParams } = Linking.parse(result.url);
 					const statusParam = String(
@@ -213,16 +221,17 @@ export default function AutoDebitSetup() {
 				source = "browser_closed";
 			}
 
-			router.replace({ pathname: "/emandate-status" as any, params: { txnid: targetTxnid, source } });
+			if (mountedRef.current) router.replace({ pathname: "/emandate-status" as any, params: { txnid: targetTxnid, source } });
 		} catch (err) {
+			if (!mountedRef.current) return;
 			const info = getApiErrorInfo(err);
 			Toast.show({
 				type: "error",
 				text1: t("unableToStartMandateSetup"),
-				text2: info.detail || info.message || t("pleaseTryAgain"),
+				text2: getFriendlyError(err).message,
 			});
 		} finally {
-			setIsSubmitting(false);
+			if (mountedRef.current) setIsSubmitting(false);
 			launchingRef.current = false;
 		}
 	};

@@ -37,7 +37,7 @@ export async function checkDeviceSecurity(): Promise<SecurityCheckResult> {
 
 		return { isSecure: true, reason: null };
 	} catch (error) {
-		if (__DEV__) console.warn("Security check failed:", error);
+		if (__DEV__) console.warn("Security check failed", { code: "security_check_failed" });
 		// Graceful fallback to avoid bricking on unexpected device errors
 		return { isSecure: true, reason: null };
 	}

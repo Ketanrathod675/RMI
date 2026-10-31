@@ -1,4 +1,5 @@
-﻿import { TermsAndPolicy } from "@/components";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { TermsAndPolicy } from "@/components";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useAuth } from "@/hooks/useAuth";
@@ -16,11 +17,12 @@ import { font, height, width } from "@/utils/dimensions";
 import { encode, getUserIdFromToken } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import RNOtpVerify from "@/utils/otpVerify";
-import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { clearDigilockerSession } from "@/utils/digilocker";
 import { MaterialIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Image } from "expo-image";
-import { router, useFocusEffect, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -34,6 +36,7 @@ import {
 	StyleSheet,
 	Text,
 	TextInput,
+	type TextInputInstance,
 	TouchableOpacity,
 	View,
 } from "react-native";
@@ -57,7 +60,7 @@ export default function SigninSignupOtp() {
 	const [countdown, setCountdown] = useState(loginResponse?.expires_in || 300);
 	const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 	const [showTermsAndConditions, setShowTermsAndConditions] = useState(false);
-	const inputRefs = useRef<(TextInput | null)[]>([]);
+	const inputRefs = useRef<(TextInputInstance | null)[]>([]);
 	const [currentSignInKey, setCurrentSignInKey] = useState<string | undefined>(
 		params.signInKey || loginResponse?.sign_in_key || loginResponse?.otp_id
 	);
@@ -78,26 +81,14 @@ export default function SigninSignupOtp() {
 
 	const { language } = useDefault();
 	const insets = useSafeAreaInsets();
-	const navigation = useNavigation();
-
-	// Intercept navigation events to prevent alerts
-	useEffect(() => {
-		const unsubscribe = navigation.addListener("beforeRemove", () => {
-			// Allow navigation silently
-		});
-
-		return () => {
-			unsubscribe();
-		};
-	}, [navigation]);
 
 	// Handle hardware back button & status bar style
 	useFocusEffect(
 		React.useCallback(() => {
 			RNStatusBar.setBarStyle("dark-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 
 			const onBackPress = () => {
@@ -212,6 +203,8 @@ export default function SigninSignupOtp() {
 					visibilityTime: 2500,
 				});
 
+				await clearDigilockerSession();
+
 				// Direct new users or users with pending permissions directly to /request-permissions
 				if (isNewUser) {
 					router.replace("/request-permissions");
@@ -240,6 +233,11 @@ export default function SigninSignupOtp() {
 						return;
 					}
 					const targetStep = wf?.current_step;
+					if (targetStep === "digilocker") {
+						router.replace("/digilocker-kyc" as any);
+						return;
+					}
+
 					const targetRoute = resolveWorkflowRoute(
 						targetStep,
 						wf?.overall_status,
@@ -304,7 +302,7 @@ export default function SigninSignupOtp() {
 			}
 
 			const { error } = errorHandler(err, variables, ctx);
-			const rawMessage = (error as any)?.detail || error?.message || "";
+			const rawMessage = (error as any)?.detail || getFriendlyError(error).message || "";
 
 			let displayError = rawMessage;
 			if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("invalid or expired otp")) {
@@ -457,7 +455,7 @@ export default function SigninSignupOtp() {
 			Toast.show({
 				type: "error",
 				text1: t("errorOccurredWhileRequestingOTP"),
-				text2: error?.message ?? t("pleaseTryAgain"),
+				text2: getFriendlyError(error).message ?? t("pleaseTryAgain"),
 			});
 		},
 	});

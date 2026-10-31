@@ -1,0 +1,15 @@
+diff --git a/node_modules/react-native-branch/android/build.gradle b/node_modules/react-native-branch/android/build.gradle
+index 1111111..2222222 100644
+--- a/node_modules/react-native-branch/android/build.gradle
++++ b/node_modules/react-native-branch/android/build.gradle
+@@ -27,6 +27,10 @@ def safeExtGet(prop, fallback) {
+     android {
+         compileSdkVersion safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)
+ 
++        buildFeatures {
++            buildConfig true
++        }
++
+         defaultConfig {
+             minSdkVersion safeExtGet('minSdkVersion', DEFAULT_MIN_SDK_VERSION)
+             targetSdkVersion safeExtGet('targetSdkVersion', DEFAULT_TARGET_SDK_VERSION)

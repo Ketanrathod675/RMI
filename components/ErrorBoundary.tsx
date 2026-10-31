@@ -2,6 +2,9 @@ import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { dark_primary } from "@/constants/Colors";
 import type { ErrorBoundaryProps } from "expo-router";
+import { reportError } from "@/utils/errorHandling";
+import { router, usePathname } from "expo-router";
+import { useTranslation } from "@/hooks/useTranslation";
 
 interface Props {
 	children: React.ReactNode;
@@ -23,7 +26,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 		// Log a short message only — never log full error objects that might
 		// contain request/response data with PII, and never log in a way that
 		// could leak sensitive state. A message only is safe.
-		console.error("App crashed:", error?.message || "Unknown error");
+		reportError(error, "root-boundary");
 	}
 
 	handleReset = () => this.setState({ hasError: false, error: null });
@@ -46,27 +49,97 @@ export class ErrorBoundary extends React.Component<Props, State> {
 	}
 }
 
+const errorHistory: number[] = [];
+
+function recordBoundaryError(): number {
+	const now = Date.now();
+	errorHistory.push(now);
+	const recent = errorHistory.filter((ts) => now - ts < 30_000);
+	errorHistory.length = 0;
+	errorHistory.push(...recent);
+	return recent.length;
+}
+
 /**
  * Reusable Route-level ErrorBoundary for Expo Router screens.
  * Screens can export this as: `export { RouteErrorBoundary as ErrorBoundary } from "@/components/ErrorBoundary";`
  */
 export function RouteErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+	const pathname = usePathname();
+	const { t } = useTranslation();
+	const previousPathRef = React.useRef(pathname);
+	const retryRef = React.useRef(retry);
+	retryRef.current = retry;
+	const [errorCount] = React.useState(() => recordBoundaryError());
+
 	React.useEffect(() => {
-		console.error("Screen crashed:", error?.message || "Unknown error");
-	}, [error]);
+		reportError(error, pathname);
+	}, [error, pathname]);
+
+	React.useEffect(() => {
+		if (previousPathRef.current !== pathname) {
+			previousPathRef.current = pathname;
+			retryRef.current();
+		}
+	}, [pathname]);
+
+	const isHomeScreen = pathname === "/" || pathname === "/(tabs)" || pathname.startsWith("/(tabs)/index");
+	const hasRepeatedErrors = errorCount >= 2;
+
+	let canRestartWithUpdates = false;
+	let reloadAsyncFn: (() => Promise<void>) | null = null;
+	try {
+		const Updates = require("expo-updates");
+		if (typeof Updates?.reloadAsync === "function") {
+			canRestartWithUpdates = true;
+			reloadAsyncFn = Updates.reloadAsync;
+		}
+	} catch {
+		// expo-updates not installed
+	}
+
+	const handleRestart = async () => {
+		if (reloadAsyncFn) {
+			try {
+				await reloadAsyncFn();
+				return;
+			} catch {}
+		}
+		retry();
+	};
 
 	return (
 		<View style={styles.container}>
-			<Text style={styles.title}>Something went wrong</Text>
+			<Text style={styles.title}>{t("somethingWentWrong", "Something went wrong")}</Text>
 			<Text style={styles.subtitle}>
-				We're sorry for the inconvenience. Please try again.
+				{t("errorBoundaryMessage", "We're sorry for the inconvenience. Please try again.")}
 			</Text>
 			<TouchableOpacity style={styles.button} activeOpacity={0.8} onPress={retry}>
-				<Text style={styles.buttonText}>Try Again</Text>
+				<Text style={styles.buttonText}>{t("tryAgain", "Try again")}</Text>
 			</TouchableOpacity>
+			{hasRepeatedErrors ? (
+				canRestartWithUpdates ? (
+					<TouchableOpacity style={[styles.button, { marginTop: 10 }]} activeOpacity={0.8} onPress={handleRestart}>
+						<Text style={styles.buttonText}>{t("restartApp", "Restart app")}</Text>
+					</TouchableOpacity>
+				) : (
+					<Text style={styles.reopenNotice}>
+						{t("pleaseCloseAndReopenApp", "Please close and reopen the app.")}
+					</Text>
+				)
+			) : !isHomeScreen ? (
+				<TouchableOpacity style={[styles.button, { marginTop: 10 }]} activeOpacity={0.8} onPress={() => router.replace("/(tabs)")}>
+					<Text style={styles.buttonText}>{t("goToHome", "Go to Home")}</Text>
+				</TouchableOpacity>
+			) : (
+				<Text style={styles.reopenNotice}>
+					{t("pleaseCloseAndReopenApp", "Please close and reopen the app.")}
+				</Text>
+			)}
 		</View>
 	);
 }
+
 
 const styles = StyleSheet.create({
 	container: {
@@ -101,6 +174,14 @@ const styles = StyleSheet.create({
 		fontWeight: "700",
 		fontSize: 15,
 	},
+	reopenNotice: {
+		marginTop: 16,
+		fontSize: 13,
+		color: "#64748B",
+		textAlign: "center",
+		fontWeight: "500",
+	},
 });
+
 
 export default ErrorBoundary;

@@ -22,8 +22,7 @@ export function getApiErrorInfo(err: any): ApiErrorInfo {
 		detail = String((rawDetail as any).msg ?? "");
 	}
 
-	const rawMessage = err?.response?.data?.message ?? err?.message ?? "";
-	const message = typeof rawMessage === "string" ? rawMessage : "";
+	const message = getFriendlyError(err).message;
 
 	return { status, detail, message };
 }
@@ -34,3 +33,4 @@ export function getApiErrorInfo(err: any): ApiErrorInfo {
 export function errorText(info: ApiErrorInfo): string {
 	return `${info.detail} ${info.message}`.toLowerCase().trim();
 }
+import { getFriendlyError } from "@/utils/api/core/friendlyError";

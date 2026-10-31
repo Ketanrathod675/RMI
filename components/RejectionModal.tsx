@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { TranslatedText } from "@/components/TranslatedText";
 import { Images } from "@/constants/images";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -217,7 +218,7 @@ export default function RejectionModal({
 									translationKey="forAssistanceContact"
 								/>
 								<TouchableOpacity
-									onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>
+									onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>
 									<Text style={[styles.supportEmailText, { textAlign: "center" }]}>
 										support@rapidmoney.in
 									</Text>

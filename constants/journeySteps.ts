@@ -17,6 +17,7 @@ export type JourneyStepId =
 	| "professional_details"
 	| "ekyc_ckyc"
 	| "bank_details"
+	| "enach_mandate"
 	| "sanction"
 	| "agreement_signing"
 	| "disbursement";
@@ -108,6 +109,13 @@ export const JOURNEY_STEPS: JourneyStep[] = [
 		titleKey: "bankVerificationStepTitle",
 		title: "Bank account verification",
 		activeSubtitle: "Penny drop in progress",
+		nextRoute: "/auto-debit-setup",
+	},
+	{
+		id: "enach_mandate",
+		titleKey: "mandateStepTitle",
+		title: "Auto-debit setup",
+		activeSubtitle: "Setting up auto-debit",
 		nextRoute: "/sanction-letter",
 	},
 	{
@@ -122,13 +130,14 @@ export const JOURNEY_STEPS: JourneyStep[] = [
 		titleKey: "agreementSigningStepTitle",
 		title: "Agreement signing",
 		activeSubtitle: "Signing digital loan agreement",
-		nextRoute: "/auto-debit-setup",
+		nextRoute: "/loan-congratulations?final=1",
 	},
 	{
 		id: "disbursement",
 		titleKey: "disbursementSetupStepTitle",
-		title: "Disbursement & mandate",
-		activeSubtitle: "Setting up auto-debit & payout",
+		title: "Disbursement",
+		activeSubtitleKey: "payoutInProgress",
+		activeSubtitle: "Payout in progress",
 		nextRoute: "/(tabs)",
 	},
 ];

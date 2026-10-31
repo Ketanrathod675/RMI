@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import * as Application from "expo-application";
 import { Platform } from "react-native";
 import { getBranchAttribution, getBranchDeviceToken } from "@/utils/branch";
@@ -67,7 +68,7 @@ export const requestOtp = async (data: LoginRequestType): Promise<Partial<LoginR
 	};
 
 	if (__DEV__) {
-		console.log(`➡️ [AUTH] Calling OTP endpoint: ${axios.defaults.baseURL}/${URLS.auth.request_otp} for phone: ${maskPhone(data.phone_number)}`);
+Logger.warn("Operation failed", { code: "operation_failed" });
 	}
 
 	try {
@@ -98,7 +99,7 @@ export const requestOtp = async (data: LoginRequestType): Promise<Partial<LoginR
 		return resData as Partial<LoginResponseType>;
 	} catch (error: any) {
 		if (__DEV__) {
-			console.error("❌ [AUTH] requestOtp error status:", error?.response?.status, error?.message);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 		throw error;
 	}
@@ -271,7 +272,7 @@ export const logoutSession = async (token?: string): Promise<void> => {
 		);
 	} catch (error) {
 		if (__DEV__) {
-			console.warn("⚠️ [AUTH] logoutSession failed:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 	}
 };

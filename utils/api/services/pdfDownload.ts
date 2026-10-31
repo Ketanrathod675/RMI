@@ -61,13 +61,21 @@ export async function downloadAuthenticatedPdf(
 }
 
 import * as Sharing from "expo-sharing";
+import Toast from "react-native-toast-message";
+import { openExternalUrl } from "@/utils/openExternalUrl";
+import { getSyncTranslation } from "@/utils/toast_translations";
 
 /**
  * Opens or shares a locally downloaded PDF in an external viewer.
  * Uses expo-sharing if available (supports "Open With", "Save to Files", etc.),
- * and falls back to system linking.
+ * and falls back to system linking or openExternalUrl with friendly toast on failure.
  */
 export async function openLocalPdf(fileUri: string): Promise<void> {
+	if (/^https?:\/\//i.test(fileUri)) {
+		await openExternalUrl(fileUri);
+		return;
+	}
+
 	try {
 		const isSharingAvailable = await Sharing.isAvailableAsync();
 		if (isSharingAvailable) {
@@ -82,10 +90,26 @@ export async function openLocalPdf(fileUri: string): Promise<void> {
 		// Fallback to linking if sharing fails
 	}
 
-	if (Platform.OS === "android") {
-		const contentUri = await FileSystem.getContentUriAsync(fileUri);
-		await Linking.openURL(contentUri);
-		return;
+	try {
+		let targetUri = fileUri;
+		if (Platform.OS === "android" && !fileUri.startsWith("content://")) {
+			try {
+				targetUri = await FileSystem.getContentUriAsync(fileUri);
+			} catch {
+				targetUri = fileUri;
+			}
+		}
+
+		if (await Linking.canOpenURL(targetUri)) {
+			await Linking.openURL(targetUri);
+			return;
+		}
+		throw new Error("No PDF viewer available");
+	} catch {
+		Toast.show({
+			type: "error",
+			text1: getSyncTranslation("errGeneric", "Unable to open document. Please install a PDF viewer."),
+		});
 	}
-	await Linking.openURL(fileUri);
 }
+

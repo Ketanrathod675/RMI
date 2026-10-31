@@ -1,3 +1,5 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary, white } from "@/constants/Colors";
 import { ForgotMpinContext } from "@/context/forgot_mpin";
@@ -61,7 +63,7 @@ export default function ForgotMpin() {
 			return response?.data;
 		},
 		onSuccess: (data) => {
-			console.log("data", data);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "success",
 				text1: t("otpSentSuccessfully"),
@@ -74,12 +76,11 @@ export default function ForgotMpin() {
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-
-			console.log("error", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: t("failedToSendOtp"),
-				text2: error?.message || t("pleaseTryAgain"),
+				text2: getFriendlyError(error).message || t("pleaseTryAgain"),
 			});
 		},
 	});

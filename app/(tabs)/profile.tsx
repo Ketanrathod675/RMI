@@ -2,7 +2,9 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { dark, white } from "@/constants/Colors";
 import { useDefault } from "@/hooks/useDefault";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { LANGUAGES, type Languages } from "@/store";
 import { getUserDashboardData, getUserProfile, getUserFeedback, saveFeedback } from "@/utils/api";
 import { fetchSelfie } from "@/utils/api/kyc";
@@ -21,6 +23,7 @@ import {
 	Platform,
 	Pressable,
 	ScrollView,
+	RefreshControl,
 	StatusBar as RNStatusBar,
 	StyleSheet,
 	Text,
@@ -69,6 +72,7 @@ export default function Profile() {
 	const {
 		data: selfieData,
 		isLoading: isSelfieLoading,
+		isFetching: isSelfieFetching,
 		refetch: refetchSelfie,
 	} = useNetworkAwareQuery({
 		queryKey: ["userSelfie"],
@@ -97,8 +101,8 @@ export default function Profile() {
 		React.useCallback(() => {
 			RNStatusBar.setBarStyle("dark-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 		}, []),
 	);
@@ -253,14 +257,11 @@ export default function Profile() {
 				text2: "Your feedback has been submitted successfully.",
 			});
 		} catch (error: any) {
-			const errorMsg =
-				error?.response?.data?.detail ||
-				error?.message ||
-				"Failed to submit feedback. Please try again.";
+			const errorMsg = getFriendlyError(error).message;
 			Toast.show({
 				type: "error",
 				text1: "Submission Failed",
-				text2: typeof errorMsg === "string" ? errorMsg : "Please try again later.",
+				text2: errorMsg,
 			});
 		} finally {
 			setIsSubmittingFeedback(false);
@@ -319,7 +320,9 @@ export default function Profile() {
 	const {
 		data: userProfile,
 		isLoading: _isLoading,
-		error: _error,
+		error: profileError,
+		isError: isProfileError,
+		refetch: refetchProfile,
 	} = useNetworkAwareQuery({
 		queryKey: ["userProfile"],
 		queryFn: getUserProfile,
@@ -329,6 +332,9 @@ export default function Profile() {
 	const {
 		data: dashboardData,
 		isLoading: isDashboardLoading,
+		isError: isDashboardError,
+		error: dashboardError,
+		refetch: refetchDashboard,
 	} = useNetworkAwareQuery({
 		queryKey: ["userDashboard"],
 		queryFn: () => getUserDashboardData(),
@@ -390,12 +396,16 @@ export default function Profile() {
 		lang.label.toLowerCase().includes(searchText.toLowerCase()),
 	);
 
+	if (!userProfile && !dashboardData && (isProfileError || isDashboardError)) return <QueryErrorState error={profileError ?? dashboardError} onRetry={() => { void Promise.all([refetchProfile(), refetchDashboard()]); }} onGoHome={() => router.replace("/(tabs)")} />;
+
 	return (
 		<ScrollView
 			style={styles.container}
 			showsVerticalScrollIndicator={false}
 			keyboardShouldPersistTaps="handled"
-			keyboardDismissMode="on-drag">
+			keyboardDismissMode="on-drag"
+			refreshControl={<RefreshControl refreshing={isSelfieFetching || isDashboardLoading} onRefresh={() => { void Promise.all([refetchSelfie(), refetchDashboard(), refetchProfile()]); }} />}>
+			{(isProfileError && userProfile || isDashboardError && dashboardData) && <QueryErrorState error={profileError ?? dashboardError} hasData onRetry={() => { void Promise.all([refetchProfile(), refetchDashboard()]); }} />}
 			<StatusBar style="dark" />
 			{/* User Profile Card */}
 			<View style={styles.profileCardWrapper}>

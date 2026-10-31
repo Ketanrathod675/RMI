@@ -18,7 +18,7 @@ import {
 	TouchableOpacity,
 	useWindowDimensions,
 	View,
-	ViewToken,
+	type FlatListProps,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -31,6 +31,8 @@ import { VIDEO_TUTORIALS, VideoTutorialItem } from "@/constants/videoTutorials";
 import { getVideos } from "@/utils/api";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { Images } from "@/constants/images";
+
+type ViewableItemsChangedInfo = Parameters<NonNullable<FlatListProps<VideoTutorialItem>["onViewableItemsChanged"]>>[0];
 
 // ─── Looped Reel Data Definition ──────────────────────────────────────────────
 export const TOTAL_BASE_ITEMS = VIDEO_TUTORIALS.length; // 3
@@ -601,8 +603,8 @@ export default function ReelPlayerScreen() {
 		useCallback(() => {
 			RNStatusBar.setBarStyle("light-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 
 			const onBackPress = () => {
@@ -625,7 +627,7 @@ export default function ReelPlayerScreen() {
 	}).current;
 
 	const onViewableItemsChanged = useRef(
-		({ viewableItems }: { viewableItems: ViewToken[] }) => {
+		({ viewableItems }: ViewableItemsChangedInfo) => {
 			if (viewableItems && viewableItems.length > 0) {
 				const visibleItem = viewableItems[0];
 				if (typeof visibleItem.index === "number" && visibleItem.index !== null) {

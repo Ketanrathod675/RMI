@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import {
 	languageSchema,
 	setLanguage as setLang,
@@ -50,7 +51,7 @@ export const useDefault = () => {
 						Toast.show({
 							type: "error",
 							text1: t("failedToUpdateLanguage"),
-							text2: error?.message ?? t("pleaseRetryLanguageUpdate"),
+							text2: getFriendlyError(error).message ?? t("pleaseRetryLanguageUpdate"),
 						});
 					}, 200);
 				},

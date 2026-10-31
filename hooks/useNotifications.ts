@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import {
 	getPermissionsAsync,
 	requestPermissionsAsync,
@@ -34,7 +35,7 @@ export function useNotifications(): UseNotificationsReturn {
 				status: settings.status,
 			});
 		} catch (err: any) {
-			setError(err?.message ?? "Error getting notification permissions");
+			setError(getFriendlyError(err).message ?? "Error getting notification permissions");
 		} finally {
 			setIsLoading(false);
 		}
@@ -52,7 +53,7 @@ export function useNotifications(): UseNotificationsReturn {
 			});
 			return isGranted;
 		} catch (err: any) {
-			setError(err?.message ?? "Error requesting notification permissions");
+			setError(getFriendlyError(err).message ?? "Error requesting notification permissions");
 			return false;
 		} finally {
 			setIsLoading(false);

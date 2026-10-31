@@ -1,3 +1,5 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
@@ -8,7 +10,9 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { ForgotMpinLayout } from "@/layouts/forgot-mpin-layout";
 import { axios, errorHandler, URLS } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
-import { router, useNavigation } from "expo-router";
+import { router } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import * as ScreenCapture from "expo-screen-capture";
 import React, { useContext, useEffect, useRef, useState } from "react";
 import {
@@ -35,7 +39,7 @@ export default function ResetMpin() {
 
 	const { otpVerified, phoneNumber } = useContext(ForgotMpinContext);
 	const { t } = useTranslation();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	useEffect(() => {
 		const activate = async () => {
@@ -114,18 +118,18 @@ export default function ResetMpin() {
 
 	// Refs for MPIN inputs
 	const mpinRefs = [
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
 	];
 
 	// Refs for confirm MPIN inputs
 	const confirmRefs = [
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
 	];
 
 	const { mutate: resetMpinMutation, isPending: isResettingMpin } = useNetworkAwareMutation({
@@ -156,11 +160,11 @@ export default function ResetMpin() {
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-			console.log("Reset MPIN error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: t("mpinResetFailed"),
-				text2: error?.message || t("unableToResetMpin"),
+				text2: getFriendlyError(error).message || t("unableToResetMpin"),
 				visibilityTime: 4000,
 			});
 		},

@@ -18,7 +18,8 @@ const getPublicEnv = (key: keyof typeof publicEnvironment, fallback?: string): s
 
 const defaultApiUrl =
 	Platform.OS === "android"
-		// ? "http://172.16.16.124:8000/api/v1"
+		// ? "https://botch-certainty-motto.ngrok-free.dev/api/v1"
+		// ? "https://internal-uat.rapidmoney.in/v1"
 		? "https://rendering-underuse-viewless.ngrok-free.dev/api/v1"
 		: "http://localhost:8000/api/v1";
 

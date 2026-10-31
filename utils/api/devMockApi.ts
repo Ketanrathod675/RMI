@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import { getStorageItem, setStorageItem } from "@/utils/storage";
 import type { AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import type { UserProfileResponseType } from "./user";
@@ -195,7 +196,7 @@ export function updateDevMockOptions(options: Partial<DevMockOptions>): void {
  */
 export function resetDevMockCurrentStep(): void {
 	if (!__DEV__) return;
-	console.log("🔄 [DEV MOCK API] Resetting mock user state back to fresh new user ('personal_details')");
+Logger.warn("Operation failed", { code: "operation_failed" });
 	_mockUserReview = null;
 	updateDevMockOptions({
 		userExists: false,
@@ -713,9 +714,7 @@ export async function handleDevMockRequest(
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
 		const phoneNumber = reqData?.phone_number ?? "9876543210";
 		const maskedPhone = phoneNumber.replace(/(\d{2})\d{4,}(\d{2})/, "$1******$2");
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST auth/request-otp for phone:", maskedPhone);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		// Always reset new logins to a clean new user starting at personal_details
 		updateDevMockOptions({
 			userExists: false,
@@ -762,9 +761,7 @@ export async function handleDevMockRequest(
 		const phoneNumber = reqData?.phone_number ?? "9876543210";
 		const enteredOtp = reqData?.otp;
 		const maskedPhone = phoneNumber.replace(/(\d{2})\d{4,}(\d{2})/, "$1******$2");
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST auth/verify-otp for phone:", maskedPhone);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		// If test failure OTP 0000 entered, return 400
 		if (String(enteredOtp) === "0000") {
 			return {
@@ -833,9 +830,7 @@ export async function handleDevMockRequest(
 	// ─── 3. Endpoint: auth/setup-mpin ─────────────────────────────────────────
 	if (url.includes("auth/setup-mpin") && method === "post") {
 		await delay(400);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST auth/setup-mpin");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				message: "MPIN setup successful [MOCK MODE]",
@@ -853,9 +848,7 @@ export async function handleDevMockRequest(
 	// ─── 4. Endpoint: workflow/mark-consent-permission ────────────────────────
 	if (url.includes("workflow/mark-consent-permission") && method === "post") {
 		await delay(350);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST workflow/mark-consent-permission");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -871,9 +864,7 @@ export async function handleDevMockRequest(
 	// ─── 5. Endpoint: users/permissions ───────────────────────────────────────
 	if (url.includes("users/permissions") && method === "post") {
 		await delay(350);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST users/permissions");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -889,9 +880,7 @@ export async function handleDevMockRequest(
 	// ─── 6. Endpoint: users/dashboard ─────────────────────────────────────────
 	if (url.includes("users/dashboard") && method === "get") {
 		await delay(400);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET users/dashboard");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const currentStep = _mockOptions.currentStep || "personal_details";
 		const isProf = currentStep === "professional_details";
 		const isCkyc = currentStep === "ckyc";
@@ -947,9 +936,7 @@ export async function handleDevMockRequest(
 	// ─── 7. Endpoint: kyc/verify-pan ─────────────────────────────────────────
 	if (url.includes("kyc/verify-pan") && method === "post") {
 		await delay(600);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST kyc/verify-pan");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
 		const name = reqData?.name || "DEV USER";
 		const panNumber = (reqData?.pan_number || "ABCDE1234F").toUpperCase();
@@ -981,9 +968,7 @@ export async function handleDevMockRequest(
 	// ─── 8. Endpoint: auth/send-email-otp ─────────────────────────────────────
 	if (url.includes("auth/send-email-otp") && method === "post") {
 		await delay(450);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST auth/send-email-otp");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
 		const email = reqData?.email || "dev.user@example.com";
 
@@ -1045,9 +1030,7 @@ export async function handleDevMockRequest(
 	// ─── 9. Endpoint: auth/verify-email-otp ───────────────────────────────────
 	if (url.includes("auth/verify-email-otp") && method === "post") {
 		await delay(450);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST auth/verify-email-otp");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
 		const otp = reqData?.otp || "";
 		const email = reqData?.email || "dev.user@example.com";
@@ -1082,9 +1065,7 @@ export async function handleDevMockRequest(
 	// ─── 10. Endpoint: kyc/verify-email ───────────────────────────────────────
 	if (url.includes("kyc/verify-email") && method === "get") {
 		await delay(400);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/verify-email");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				email: "dev.user@rapidmoney.in",
@@ -1116,8 +1097,7 @@ export async function handleDevMockRequest(
 		(url.includes("users/basic-details") && method === "patch")
 	) {
 		await delay(700);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST/PATCH personal-details / basic-details");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		updateDevMockOptions({ currentStep: "assessment_fee_payment" });
 
 		const mockUserData = {
@@ -1172,9 +1152,7 @@ export async function handleDevMockRequest(
 	// ─── 12. Endpoint: users/personal-details-hb-partner ──────────────────────
 	if (url.includes("users/personal-details-hb-partner") && method === "get") {
 		await delay(400);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET users/personal-details-hb-partner");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				full_name: "Dev HB User",
@@ -1201,9 +1179,7 @@ export async function handleDevMockRequest(
 	// ─── 13. Endpoint: kyc/initial-approval ───────────────────────────────────
 	if (url.includes("kyc/initial-approval") && method === "post") {
 		await delay(500);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST kyc/initial-approval");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		if (_mockOptions.simulateReapplicationRejection) {
 			console.log("🛠️ [DEV MOCK API] ⚡ Returning REJECTION status for kyc/initial-approval");
 			return {
@@ -1235,9 +1211,7 @@ export async function handleDevMockRequest(
 	// ─── 14. Endpoint: kyc/lender-offers ──────────────────────────────────────
 	if (url.includes("kyc/lender-offers") && method === "get") {
 		await delay(500);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/lender-offers");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -1285,9 +1259,7 @@ export async function handleDevMockRequest(
 	if ((url.includes("initiate-assessment-fee") || url.includes("payments/initiate")) && method === "post") {
 		await delay(400);
 		_easebuzzPollCount = 0; // Reset poll counter for new payment
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST initiate-assessment-fee");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const mockOrderId = "AF_" + Date.now();
 		const mockTxnId = "txnid_mock_" + Date.now();
 
@@ -1359,9 +1331,7 @@ export async function handleDevMockRequest(
 	// ─── 17. Endpoint: kyc/verify-lead-creation ────────────────────────────────
 	if (url.includes("kyc/verify-lead-creation") && method === "get") {
 		await delay(350);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/verify-lead-creation");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				lead_created: true,
@@ -1738,9 +1708,7 @@ export async function handleDevMockRequest(
 	// ─── 18. Endpoint: kyc/get-my-details ─────────────────────────────────────
 	if (url.includes("kyc/get-my-details") && method === "get") {
 		await delay(400);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/get-my-details");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const isReappRejection = Boolean(_mockOptions.simulateReapplicationRejection);
 
 		return {
@@ -1766,9 +1734,7 @@ export async function handleDevMockRequest(
 	// ─── 19. Endpoint: kyc/employment-details ─────────────────────────────────
 	if (url.includes("kyc/employment-details") && method === "post") {
 		await delay(600);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST kyc/employment-details");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
 
 		// Server requires employment_type, verification_type, income_range, residence_status
@@ -1812,9 +1778,7 @@ export async function handleDevMockRequest(
 	// ─── 20. Endpoint: kyc/professional-details ────────────────────────────────
 	if (url.includes("kyc/professional-details") && method === "get") {
 		await delay(400);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/professional-details");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				status: true,
@@ -1843,9 +1807,7 @@ export async function handleDevMockRequest(
 	// ─── 21. Endpoint: kyc/get-my-ckyc ─────────────────────────────────────────
 	if (url.includes("kyc/get-my-ckyc") && method === "get") {
 		await delay(450);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/get-my-ckyc");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const outcome = _mockOptions.ckycOutcome || "happy_path";
 
 		if (outcome === "digilocker_redirect") {
@@ -1920,9 +1882,7 @@ export async function handleDevMockRequest(
 	// ─── 22. Endpoint: onefin/ckyc/send-otp ────────────────────────────────────
 	if (url.includes("onefin/ckyc/send-otp") && method === "post") {
 		await delay(500);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST onefin/ckyc/send-otp");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const isSuccess = _mockOptions.ckycSendOtpSuccess !== false;
 
 		if (!isSuccess) {
@@ -1954,9 +1914,7 @@ export async function handleDevMockRequest(
 	// ─── 23. Endpoint: ekyc/upload-selfie or documents/upload ──────────────────
 	if ((url.includes("ekyc/upload-selfie") || url.includes("documents/upload")) && method === "post") {
 		await delay(600);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for selfie upload");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				status: "uploaded",
@@ -1975,9 +1933,7 @@ export async function handleDevMockRequest(
 	// ─── 24. Endpoint: kychub-face-match/verify-selfie-with-aadhaar ────────────
 	if (url.includes("kychub-face-match/verify-selfie-with-aadhaar") && method === "post") {
 		await delay(700);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST kychub-face-match/verify-selfie-with-aadhaar");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const isIdentical = _mockOptions.faceMatchSuccess !== false;
 
 		return {
@@ -1997,8 +1953,7 @@ export async function handleDevMockRequest(
 	// ─── 25. Endpoint: lender-approval/check-approval ──────────────────────────
 	if (url.includes("lender-approval/check-approval") && method === "post") {
 		await delay(350);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST lender-approval/check-approval");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		updateDevMockOptions({ currentStep: "loan_application" });
 
 		return {
@@ -2017,9 +1972,7 @@ export async function handleDevMockRequest(
 	// ─── 26. Endpoint: onefin/ckyc/validate-otp ──────────────────────────────
 	if (url.includes("onefin/ckyc/validate-otp") && method === "post") {
 		await delay(500);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST onefin/ckyc/validate-otp");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		let submittedOtp = "";
 		try {
 			const parsedData =
@@ -2084,9 +2037,7 @@ export async function handleDevMockRequest(
 	// ─── 27. Endpoint: onefin/ckyc/resend-otp ────────────────────────────────
 	if (url.includes("onefin/ckyc/resend-otp") && method === "post") {
 		await delay(450);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST onefin/ckyc/resend-otp");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const isSuccess = _mockOptions.ckycResendOtpSuccess !== false;
 
 		if (!isSuccess) {
@@ -2119,9 +2070,7 @@ export async function handleDevMockRequest(
 	// ─── 28. Endpoint: postalpincode.in / pincode lookup ────────────────────
 	if (url.includes("postalpincode.in") || url.includes("pincode")) {
 		await delay(350);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET postalpincode");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const cleanUrl = url.split("?")[0];
 		const parts = cleanUrl.split("/");
 		const pincode = parts[parts.length - 1] || "122001";
@@ -2159,9 +2108,7 @@ export async function handleDevMockRequest(
 	// ─── 29. Endpoint: documents/upload (uploadKycDocument) ──────────────────
 	if (url.includes("documents/upload") && method === "post") {
 		await delay(600);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST documents/upload");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				uploaded: true,
@@ -2184,9 +2131,7 @@ export async function handleDevMockRequest(
 	// ─── 30. Endpoint: address-verification/submit (verifyAddress) ───────────
 	if (url.includes("address-verification/submit") && method === "post") {
 		await delay(600);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST address-verification/submit");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		updateDevMockOptions({ currentStep: "loan_application" });
 
 		return {
@@ -2208,9 +2153,7 @@ export async function handleDevMockRequest(
 	// ─── 31. Endpoint: users/me (getUserProfile) ─────────────────────────────
 	if (url.includes("users/me") && method === "get") {
 		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET users/me");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const mockUserProfile: UserProfileResponseType = {
 			id: "mock_user_id_12345",
 			user_id: "mock_user_id_12345",
@@ -2293,9 +2236,7 @@ export async function handleDevMockRequest(
 	// ─── 32. Endpoint: kyc/fetch-selfie (fetchSelfie) ─────────────────────────
 	if (url.includes("kyc/fetch-selfie") && method === "get") {
 		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET kyc/fetch-selfie");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				selfie_url: null,
@@ -2311,9 +2252,7 @@ export async function handleDevMockRequest(
 	// ─── 33. Endpoint: loans (getLoanHistory / loan-history) ──────────────────
 	if ((url.includes("loans?") || url.endsWith("/loans") || url === "loans") && method === "get") {
 		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loans");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				loans: [
@@ -2377,9 +2316,7 @@ export async function handleDevMockRequest(
 	// ─── 34. Endpoint: loans/:loanNumber/loan-book (getLoanBook) ─────────────
 	if (url.includes("/loan-book") && method === "get") {
 		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loans/:loanNumber/loan-book");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -2475,8 +2412,7 @@ export async function handleDevMockRequest(
 		await delay(300);
 
 		const loanNumber = url.split("/")[1] || "LAI1009172865";
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loans/:loanNumber:", loanNumber);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -2506,9 +2442,7 @@ export async function handleDevMockRequest(
 	// ─── 37. Endpoint: insurance/download-my-policy ───────────────────────────
 	if (url.includes("insurance/download-my-policy") && method === "post") {
 		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for insurance download");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				status: "success",
@@ -2525,9 +2459,7 @@ export async function handleDevMockRequest(
 	// ─── 38. Endpoint: loans/admin/noc/:loanId ────────────────────────────────
 	if (url.includes("loans/admin/noc") && method === "get") {
 		await delay(300);
-
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for NOC download");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -2546,8 +2478,7 @@ export async function handleDevMockRequest(
 		await delay(400);
 
 		const outcome = _mockOptions.mandateMockOutcome || "success";
-		console.log(`🛠️ [DEV MOCK API] ⚡ Mocking response for GET autocollect/mandate/check (outcome: ${outcome})`);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		if (outcome === "failure") {
 			return {
 				data: {
@@ -2560,6 +2491,8 @@ export async function handleDevMockRequest(
 				config,
 			};
 		}
+
+		updateDevMockOptions({ currentStep: "agreement_signing" });
 
 		return {
 			data: {
@@ -2578,8 +2511,7 @@ export async function handleDevMockRequest(
 		await delay(200);
 
 		const userIdParam = config.params?.user_id;
-		console.log(`🛠️ [DEV MOCK API] ⚡ Mocking response for GET rate-us (userId: ${userIdParam || "public"})`);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		if (userIdParam) {
 			const items = _mockUserReview ? [_mockUserReview] : [];
 			return {
@@ -2629,8 +2561,7 @@ export async function handleDevMockRequest(
 		await delay(300);
 
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST rate-us", reqData);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const newReview: MockRateUsReview = {
 			id: "mock-review-" + Date.now(),
 			user_id: "mock-user-current",
@@ -2662,8 +2593,7 @@ export async function handleDevMockRequest(
 		await delay(300);
 
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for PUT rate-us", reqData);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const updatedReview: MockRateUsReview = {
 			id: _mockUserReview?.id || "mock-review-" + Date.now(),
 			user_id: _mockUserReview?.user_id || "mock-user-current",
@@ -2694,7 +2624,7 @@ export async function handleDevMockRequest(
 	// ─── 41. Endpoint: bank-details/bank-accounts (GET) ─────────────────────
 	if ((url.includes("bank-details/bank-accounts") || url.includes("user-all-accounts")) && method === "get") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET bank-details/bank-accounts");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: [
 				{
@@ -2724,8 +2654,9 @@ export async function handleDevMockRequest(
 	// ─── 42. Endpoint: bank-details/submit (POST) ───────────────────────────
 	if (url.includes("bank-details/submit") && method === "post") {
 		await delay(500);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST bank-details/submit");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
+		updateDevMockOptions({ currentStep: "enach_mandate" });
 		return {
 			data: {
 				success: true,
@@ -2750,7 +2681,7 @@ export async function handleDevMockRequest(
 	// ─── 43. Endpoint: users/bank-details-hb-partner (GET) ───────────────────
 	if (url.includes("bank-details-hb-partner") && method === "get") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET bank-details-hb-partner");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				_id: "hb_mock_bank_1",
@@ -2778,7 +2709,17 @@ export async function handleDevMockRequest(
 	// ─── 44. Endpoint: sanction-letter/generate (KFS PDF) ─────────────────────
 	if (url.includes("sanction-letter/generate") && method === "post") {
 		await delay(600);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for generate sanction letter (KFS)");
+Logger.warn("Operation failed", { code: "operation_failed" });
+		const currentStep = _mockOptions.currentStep;
+		if (currentStep === "bank_details" || currentStep === "enach_mandate" || currentStep === "pdq_check") {
+			return {
+				data: { detail: "Complete eNACH mandate first" },
+				status: 409,
+				statusText: "Conflict",
+				headers: {},
+				config,
+			};
+		}
 		// NOTE: the PDF itself is fetched with FileSystem.downloadAsync, which bypasses
 		// this mock. Run against a real backend to see the document.
 		return {
@@ -2800,7 +2741,7 @@ export async function handleDevMockRequest(
 	// ─── 46. Endpoint: loan-status/simple-loan-status (GET) ──────────────────
 	if (url.includes("simple-loan-status") && method === "get") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET simple-loan-status");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				status: "kfs_generated",
@@ -2822,7 +2763,7 @@ export async function handleDevMockRequest(
 	// ─── 47. Endpoint: KFS signing initiate / resend / verify ─────────────────
 	if ((url.includes("loan/kfs/signing/initiate") || url.includes("loan/kfs/signing/resend")) && method === "post") {
 		await delay(400);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for KFS signing OTP");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -2840,7 +2781,8 @@ export async function handleDevMockRequest(
 
 	if (url.includes("loan/kfs/signing/verify") && method === "post") {
 		await delay(600);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for KFS verify OTP and sign");
+Logger.warn("Operation failed", { code: "operation_failed" });
+		updateDevMockOptions({ currentStep: "disbursement" });
 		return {
 			data: {
 				success: true,
@@ -2848,8 +2790,8 @@ export async function handleDevMockRequest(
 				message: "KFS document signed successfully [MOCK MODE]",
 				status: "sanction_letter_accepted",
 				signed_at: new Date().toISOString(),
-				current_step: "enach_mandate",
-				next_step: "pdq_check",
+				current_step: "disbursement",
+				next_step: "disbursement",
 			},
 			status: 200,
 			statusText: "OK",
@@ -2872,7 +2814,7 @@ export async function handleDevMockRequest(
 
 	if (url.includes("consent-document/sign") && method === "post") {
 		await delay(500);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for consent document sign");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -2890,7 +2832,7 @@ export async function handleDevMockRequest(
 	// ─── 47b. Endpoint: loans/loan-terms (GET) ──────────────────────────────
 	if (url.includes("loan-terms") && method === "get") {
 		await delay(350);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET loan-terms");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const now = new Date();
 		const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 		const monthNames = [
@@ -2979,7 +2921,7 @@ export async function handleDevMockRequest(
 	// ─── 48. Endpoint: loans/submit-loan-application (POST) ──────────────────
 	if (url.includes("submit-loan-application") && method === "post") {
 		await delay(600);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST submit-loan-application");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3007,7 +2949,7 @@ export async function handleDevMockRequest(
 	// ─── 49. Endpoint: loans/:id/repayment-options (GET) ─────────────────────
 	if (url.includes("repayment-options") && method === "get") {
 		await delay(350);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET repayment-options");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const futureDueDate = new Date(Date.now() + 15 * 86400000).toISOString();
 		return {
 			data: {
@@ -3038,7 +2980,7 @@ export async function handleDevMockRequest(
 	// ─── 50. Endpoint: MPIN (setup, login, forgot, reset) ───────────────────
 	if ((url.includes("setup-mpin") || url.includes("set-mpin")) && method === "post") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST setup-mpin");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3053,7 +2995,7 @@ export async function handleDevMockRequest(
 
 	if ((url.includes("verify-mpin") || url.includes("mpin-login")) && method === "post") {
 		await delay(400);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST verify-mpin");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3075,7 +3017,7 @@ export async function handleDevMockRequest(
 
 	if (url.includes("forgot-mpin") && method === "post") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST forgot-mpin");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3091,7 +3033,7 @@ export async function handleDevMockRequest(
 
 	if (url.includes("reset-mpin") && method === "post") {
 		await delay(400);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST reset-mpin");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3107,7 +3049,7 @@ export async function handleDevMockRequest(
 	// ─── 51. Endpoint: kyc/get-my-details & kyc/initial-approval ────────────
 	if ((url.includes("get-my-details") || url.includes("my-details")) && method === "get") {
 		await delay(250);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET get-my-details");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3126,7 +3068,7 @@ export async function handleDevMockRequest(
 
 	if (url.includes("initial-approval") && method === "post") {
 		await delay(450);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST initial-approval");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3145,8 +3087,7 @@ export async function handleDevMockRequest(
 	// ─── 46. Endpoint: lender-allocations/allocate-for-user ──────────────────
 	if (url.includes("lender-allocations/allocate-for-user") && method === "post") {
 		await delay(350);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST lender-allocations/allocate-for-user");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				allocated_lender_id: "lender_ruloans_01",
@@ -3190,8 +3131,7 @@ export async function handleDevMockRequest(
 		method === "get"
 	) {
 		await delay(250);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET lenders");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3236,8 +3176,7 @@ export async function handleDevMockRequest(
 		method === "get"
 	) {
 		await delay(250);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET products");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return {
 			data: {
 				success: true,
@@ -3264,8 +3203,7 @@ export async function handleDevMockRequest(
 	// ─── 51. Endpoint: coupons/verify ────────────────────────────────────────
 	if (url.includes("coupons/verify") && method === "post") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for POST coupons/verify");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const reqData =
 			typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
 		const code = reqData?.coupon_code || "RAPID50";
@@ -3289,8 +3227,7 @@ export async function handleDevMockRequest(
 	// ─── 52. Endpoint: auth/me & users/me ─────────────────────────────────────
 	if ((url.includes("auth/me") || url.includes("users/me")) && method === "get") {
 		await delay(300);
-		console.log("🛠️ [DEV MOCK API] ⚡ Mocking response for GET auth/me");
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const currentStep = _mockOptions.currentStep || "basic_details";
 		const isProf = currentStep === "professional_details";
 		const isCkyc = currentStep === "ckyc";

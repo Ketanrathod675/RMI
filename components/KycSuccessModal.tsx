@@ -90,7 +90,7 @@ export const KycSuccessModal: React.FC<KycSuccessModalProps> = ({
 			onRequestClose={handleContinue}
 		>
 			<View style={styles.modalOverlay}>
-				<StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+				<StatusBar barStyle="dark-content" />
 
 				{/* Celebratory confetti burst */}
 				<ConfettiEffect

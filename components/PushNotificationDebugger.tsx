@@ -1,3 +1,5 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { getStorageItem, setStorageItem } from "@/utils/storage";
 import { isRunningInExpoGo } from "expo";
 import React, { useEffect, useState } from "react";
@@ -139,7 +141,7 @@ export function PushNotificationDebugger() {
 
 			setDebugInfo(info);
 		} catch (error) {
-			console.error("Error collecting debug info:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		} finally {
 			setIsLoading(false);
 		}
@@ -206,13 +208,13 @@ export function PushNotificationDebugger() {
 								Alert.alert("Failed", "Could not generate token", [{ text: "OK" }]);
 							}
 						} catch (error: any) {
-							Alert.alert("Error", error.message, [{ text: "OK" }]);
+							Alert.alert("Error", getFriendlyError(error).message, [{ text: "OK" }]);
 
 							// Store error for debugging using centralized storage
 							await setStorageItem(
 								"@fcm-token-error",
 								JSON.stringify({
-									error: error.message,
+									error: getFriendlyError(error).kind,
 									timestamp: new Date().toISOString(),
 								}),
 							);

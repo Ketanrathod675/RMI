@@ -42,7 +42,7 @@ export const verifyPan = async (data: VerifyPanRequestType) => {
 		}
 	);
 
-	Logger.debug("PAN verification response", response.data);
+	Logger.debug("PAN verification response received");
 
 	return response.data;
 };
@@ -167,10 +167,10 @@ export const getProfessionalDetails = async () => {
 	try {
 		console.log("🚀 Calling GET /kyc/professional-details");
 		const response = await axios.get<ProfessionalDetailsResponseType>(URLS.kyc.professional_details);
-		Logger.debug("Get professional details response", response.data);
+		Logger.debug("Get professional details response received");
 		return response.data;
 	} catch (error: any) {
-		console.error("❌ Get Professional Details API error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		// Return null or throw depending on preference. 
 		// For auto-populate, we might want to fail silently or return structured error.
 		// User said "log it", implies we handle it gracefully?
@@ -472,25 +472,25 @@ export type LoanTermsResponseType = {
 
 export const getLoanTerms = async () => {
 	try {
-		console.log("🚀 Calling GET /api/v1/loans/loan-terms for interest rate data");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const response = await axios.get<Partial<LoanTermsResponseType>>(URLS.loans.loan_terms);
 
-		Logger.debug("Loan terms response", response.data);
+	Logger.debug("Loan terms response received");
 		
 		// Log specific interest rate data
 		if (response.data?.loan_terms) {
 			const { interest_rate, monthly_rate } = response.data.loan_terms;
-			console.log("💰 Interest Rate Data from Backend:");
-			console.log(`   - Interest Rate: ${interest_rate}%`);
+Logger.warn("Operation failed", { code: "operation_failed" });
+Logger.warn("Operation failed", { code: "operation_failed" });
 			console.log(`   - Monthly Rate: ${monthly_rate}%`);
-			Logger.debug("Loan terms received", response.data.loan_terms);
+			Logger.debug("Loan terms received");
 		} else {
-			console.warn("⚠️ No loan_terms found in response");
+Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 
 		return response.data;
 	} catch (error: any) {
-		console.error("❌ Loan terms API error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		throw error;
 	}
 };
@@ -734,14 +734,14 @@ export type SaveDigilockerDataResponseType = {
 
 export const saveDigilockerData = async (data: SaveDigilockerDataRequestType) => {
 	console.log("🚀 Calling POST /kyc/save-digilocker");
-	Logger.debug("Saving DigiLocker data", data);
+	Logger.debug("Saving DigiLocker data");
 
 	const response = await axios.post<SaveDigilockerDataResponseType>(
 		URLS.kyc.save_digilocker,
 		data,
 	);
 
-	Logger.debug("Save DigiLocker response", response.data);
+	Logger.debug("Save DigiLocker response received");
 
 	return response.data;
 };
@@ -799,11 +799,11 @@ export type InitialApprovalRequestType = {
 
 export const initialApproval = async (data: InitialApprovalRequestType) => {
 	console.log("=== INITIAL APPROVAL REQUEST ===");
-	Logger.debug("Submitting initial approval request", data);
+	Logger.debug("Submitting initial approval request");
 
 	const response = await axios.post<InitialApprovalResponseType>("kyc/initial-approval", data);
 	console.log("=== INITIAL APPROVAL RESPONSE ===");
-	Logger.debug("Initial approval response", response.data);
+	Logger.debug("Initial approval response received");
 	return response.data;
 };
 
@@ -833,10 +833,10 @@ export const getMyDetails = async () => {
     try {
         console.log("🚀 Calling GET /kyc/get-my-details");
         const response = await axios.get<GetMyDetailsResponseType>(URLS.kyc.get_my_details);
-        Logger.debug("Get my details response", response.data);
+        Logger.debug("Get my details response received");
         return response.data;
     } catch (error: any) {
-        console.error("❌ Get My Details API error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
         throw error;
     }
 };
@@ -860,10 +860,10 @@ export const getMyCkyc = async () => {
     try {
         console.log("🚀 Calling GET /kyc/get-my-ckyc");
         const response = await axios.get<GetMyCkycResponseType>(URLS.kyc.get_my_ckyc);
-        Logger.debug("Get my CKYC response", response.data);
+        Logger.debug("Get my CKYC response received");
         return response.data;
     } catch (error: any) {
-        console.error("❌ Get My CKYC API error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
         throw error;
     }
 };
@@ -882,10 +882,10 @@ export const verifyLeadCreation = async () => {
 	try {
 		console.log("🚀 Calling GET /kyc/verify-lead-creation");
 		const response = await axios.get<VerifyLeadCreationResponseType>(URLS.kyc.verify_lead_creation);
-		Logger.debug("Verify lead creation response", response.data);
+		Logger.debug("Verify lead creation response received");
 		return response.data;
 	} catch (error: any) {
-		console.error("❌ Verify Lead Creation API error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		throw error;
 	}
 };

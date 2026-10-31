@@ -58,7 +58,7 @@ export const registerPushToken = async (
 			data,
 		);
 
-		Logger.debug("Push token registration response", response.data);
+		Logger.debug("Push token registration response received");
 		return response.data;
 	} catch (error: any) {
 		Logger.error("Failed to register push token", error);

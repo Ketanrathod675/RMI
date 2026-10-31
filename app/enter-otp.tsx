@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
@@ -16,7 +17,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -39,7 +42,7 @@ const SUCCESS_ICON = Images.SUCCESS_ICON;
 
 export default function EnterOTP() {
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 
@@ -57,7 +60,7 @@ export default function EnterOTP() {
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [timer, setTimer] = useState(53);
 	const [modalVisible, setModalVisible] = useState(false);
-	const inputRefs = useRef<(TextInput | null)[]>([]);
+	const inputRefs = useRef<(TextInputRef | null)[]>([]);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
 
 	// Verify OTP and Sign Mutation
@@ -79,7 +82,7 @@ export default function EnterOTP() {
 				setModalVisible(true);
 
 				setTimeout(() => {
-					router.replace("/auto-debit-setup");
+					router.replace({ pathname: "/loan-congratulations", params: { final: "1" } } as any);
 
 					setTimeout(() => {
 						setModalVisible(false);
@@ -101,7 +104,7 @@ export default function EnterOTP() {
 			if (info.status === 400) {
 				if (text.includes("already signed")) {
 					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-					router.replace("/auto-debit-setup");
+					router.replace({ pathname: "/loan-congratulations", params: { final: "1" } } as any);
 					return;
 				}
 				setOtp(["", "", "", ""]);
@@ -109,7 +112,7 @@ export default function EnterOTP() {
 				Toast.show({
 					type: "error",
 					text1: t("otpVerificationFailed") || "OTP verification failed",
-					text2: info.detail || info.message || t("invalidOTPTryAgain") || "Invalid OTP, please try again",
+					text2: getFriendlyError(err).message,
 				});
 				return;
 			}
@@ -119,7 +122,7 @@ export default function EnterOTP() {
 				Toast.show({
 					type: "error",
 					text1: t("alert") || "Notice",
-					text2: info.detail || info.message || "Too many attempts. Please wait or tap Resend.",
+					text2: getFriendlyError(err).message,
 				});
 				return;
 			}
@@ -133,7 +136,7 @@ export default function EnterOTP() {
 			Toast.show({
 				type: "error",
 				text1: t("otpVerificationFailed") || "OTP verification failed",
-				text2: info.detail || info.message || t("pleaseTryAgain") || "Please try again",
+				text2: getFriendlyError(err).message,
 			});
 		},
 	});
@@ -174,7 +177,7 @@ export default function EnterOTP() {
 			Toast.show({
 				type: "error",
 				text1: t("failedToResendOTP") || "Failed to resend OTP",
-				text2: info.detail || info.message || t("pleaseTryAgain") || "Please try again",
+				text2: getFriendlyError(err).message,
 			});
 		},
 	});
@@ -222,12 +225,12 @@ export default function EnterOTP() {
 							autoVerify(parsedOtp);
 						}
 					} catch (err: any) {
-						Logger.debug("Error handling SMS parsing", { message: err?.message });
+						Logger.debug("Error handling SMS parsing", { message: getFriendlyError(err).message });
 					}
 				});
 			})
 			.catch((err: any) => {
-				Logger.debug("Failed to start SMS retriever", { message: err?.message });
+				Logger.debug("Failed to start SMS retriever", { message: getFriendlyError(err).message });
 			});
 	};
 

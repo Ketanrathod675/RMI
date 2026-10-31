@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	BackHandler,
@@ -10,7 +11,8 @@ import {
 	View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter, useNavigation } from "expo-router";
+import { useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import Animated, {
 	Easing,
 	useAnimatedStyle,
@@ -47,7 +49,7 @@ export default function VerifyingBank() {
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	const [status, setStatus] = useState<"verifying" | "verified" | "failed" | "timeout">("verifying");
 	const [errorMessage, setErrorMessage] = useState("");
@@ -245,8 +247,8 @@ export default function VerifyingBank() {
 							if (!mountedRef.current) return;
 							const href = currentStep && StepHref[currentStep as keyof typeof StepHref]
 								? StepHref[currentStep as keyof typeof StepHref]
-								: "/sanction-letter";
-							router.replace(href !== "/verify-bank-details" && href !== "/verifying-bank" ? (href as any) : "/sanction-letter");
+								: "/auto-debit-setup";
+							router.replace(href !== "/verify-bank-details" && href !== "/verifying-bank" ? (href as any) : "/auto-debit-setup");
 						}, 2400);
 						return;
 					}
@@ -270,7 +272,7 @@ export default function VerifyingBank() {
 				if (Date.now() - startTimeRef.current >= MAX_POLL_TIME) {
 					isPollingRef.current = false;
 					setStatus("failed");
-					setErrorMessage(err?.message || tRef.current("bankVerificationFailed"));
+					setErrorMessage(getFriendlyError(err).message || tRef.current("bankVerificationFailed"));
 					setErrorModalVisible(true);
 				} else {
 					pollTimerRef.current = setTimeout(poll, INTERVAL);
@@ -315,7 +317,7 @@ export default function VerifyingBank() {
 					paddingBottom: Math.max(insets.bottom, 24),
 				},
 			]}>
-			<StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+			<StatusBar barStyle="dark-content" />
 
 			{/* Centered Content: Concentric Rings + Text directly below */}
 			<View style={styles.contentWrapper}>

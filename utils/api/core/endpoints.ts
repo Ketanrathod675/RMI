@@ -94,6 +94,7 @@ export const URLS = {
 	},
 	address_v2: {
 		status: "address/status",
+		prefill: "address/prefill",
 		document_types: "address/document-types",
 		upload_proof: "address/upload-proof",
 		submit: "address/submit",
@@ -172,6 +173,7 @@ export const URLS = {
 		redirection_url: "kychub-digilocker/redirecting",
 	},
 	workflow: {
+		progress: "workflow/progress",
 		// NOT IN NEW BACKEND
 		start_consent_permission: "workflow/mark-consent-permission",
 	},

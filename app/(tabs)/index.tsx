@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import FAQ from "@/components/FAQ";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 const PushNotificationDebugger = __DEV__ ? require("@/components/PushNotificationDebugger").PushNotificationDebugger : () => null;
@@ -12,9 +13,13 @@ import { VIDEO_TUTORIALS } from "@/constants/videoTutorials";
 import { useAuth } from "@/hooks/useAuth";
 import { useDefault } from "@/hooks/useDefault";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
+import { formatDate } from "@/utils/formatters";
 import { usePermissions } from "@/hooks/usePermissions";
 import { usePendingPaymentRecovery } from "@/hooks/usePendingPaymentRecovery";
 import { useTranslation } from "@/hooks/useTranslation";
+import { pollAssessmentChecks } from "@/hooks/useAssessmentChecks";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
 import { checkCanReapply, checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, reapplyForLoan, Status, StepHref } from "@/utils/api";
@@ -25,6 +30,7 @@ import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useNavigation } from "expo-router";
+import type { ScrollViewRef } from "@/types/rn-refs";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -37,6 +43,7 @@ import {
 	Modal,
 	Platform,
 	Pressable,
+	RefreshControl,
 	ScrollView,
 	StatusBar as RNStatusBar,
 	StyleSheet,
@@ -171,7 +178,7 @@ export default function Home() {
 	const [delayVisible, setDelayVisible] = useState(false);
 	const [delayStageKey, setDelayStageKey] = useState<string>("verifyingPaymentWait");
 	const [isVerifyLeadFlow, setIsVerifyLeadFlow] = useState(false);
-	const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const verifyAbortControllerRef = useRef<AbortController | null>(null);
 
 	useEffect(() => {
 		if (delayVisible) {
@@ -189,9 +196,9 @@ export default function Home() {
 		isMountedRef.current = true;
 		return () => {
 			isMountedRef.current = false;
-			if (pollIntervalRef.current) {
-				clearInterval(pollIntervalRef.current);
-				pollIntervalRef.current = null;
+			if (verifyAbortControllerRef.current) {
+				verifyAbortControllerRef.current.abort();
+				verifyAbortControllerRef.current = null;
 			}
 		};
 	}, []);
@@ -227,17 +234,19 @@ export default function Home() {
 
 	const queryClient = useQueryClient();
 
-	const { data, isPending, refetch } = useNetworkAwareQuery({
+	const { data, isPending, isFetching, isError, error, refetch } = useNetworkAwareQuery({
 		queryKey: ["user", "dashboard"],
 		queryFn: getUserDashboardData,
 		staleTime: 30_000,
 	});
 
 	const startVerifyLeadFlow = (isPostPayment = true) => {
-		if (pollIntervalRef.current) {
-			clearInterval(pollIntervalRef.current);
-			pollIntervalRef.current = null;
+		if (verifyAbortControllerRef.current) {
+			verifyAbortControllerRef.current.abort();
+			verifyAbortControllerRef.current = null;
 		}
+		const controller = new AbortController();
+		verifyAbortControllerRef.current = controller;
 
 		setDelayStageKey(
 			isPostPayment
@@ -247,54 +256,43 @@ export default function Home() {
 		setIsVerifyLeadFlow(true);
 		setDelayVisible(true);
 
-		const startTime = Date.now();
-
-		const checkLead = async () => {
-			if (!isMountedRef.current) return false;
+		(async () => {
 			try {
-				const res = await getHandshakeStatus();
-				console.log("Handshake status:", res.status);
+				const res = await pollAssessmentChecks({
+					signal: controller.signal,
+				});
 
-				if (res.status === "rejected" || res.status === "error") {
-					if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-					setDelayVisible(false);
-					setIsVerifyLeadFlow(false);
-					refetch();
-					return true;
-				}
+				if (!isMountedRef.current || controller.signal.aborted) return;
 
 				if (res.status === "approved") {
-					console.log("✅ Lead approved! Continuing to professional-details...");
-					if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+					Logger.info("Lead approved! Continuing to professional-details...");
 					setDelayVisible(false);
 					setIsVerifyLeadFlow(false);
 					router.push("/professional-details" as any);
-					return true;
+					return;
 				}
-			} catch (err) {
-				Logger.error("Dashboard handshake check failed", err);
-			}
-			return false;
-		};
 
-		// Run immediately
-		checkLead();
-
-		// Poll every 2 seconds
-		pollIntervalRef.current = setInterval(async () => {
-			const elapsed = Date.now() - startTime;
-			if (elapsed >= 60000) {
-				if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-				const isFinished = await checkLead();
-				if (!isFinished) {
-					console.log("❌ Handshake check still pending after 60s on dashboard. Closing loader...");
+				if (
+					res.status === "rejected" ||
+					res.status === "error" ||
+					res.status === "service_unavailable"
+				) {
 					setDelayVisible(false);
 					setIsVerifyLeadFlow(false);
+					refetch();
+					return;
 				}
-			} else {
-				await checkLead();
+			} catch (err: any) {
+				if (err?.aborted || controller.signal.aborted || !isMountedRef.current) {
+					return;
+				}
+				Logger.info("Handshake check finished on dashboard. Closing loader...", {
+					isTimeout: err?.isTimeout,
+				});
+				setDelayVisible(false);
+				setIsVerifyLeadFlow(false);
 			}
-		}, 2000);
+		})();
 	};
 
 	const { logout } = useAuth();
@@ -343,8 +341,8 @@ export default function Home() {
 		useCallback(() => {
 			RNStatusBar.setBarStyle("light-content");
 			if (Platform.OS === "android") {
-				RNStatusBar.setBackgroundColor("transparent");
-				RNStatusBar.setTranslucent(true);
+				(RNStatusBar as any).setBackgroundColor?.("transparent");
+				(RNStatusBar as any).setTranslucent?.(true);
 			}
 			const refreshIfStale = (queryKey: readonly unknown[], staleTime: number, refresh: () => unknown) => {
 				const queryState = queryClient.getQueryState(queryKey);
@@ -357,12 +355,12 @@ export default function Home() {
 			try {
 				console.log("FB _ dashboard_viewed");
 			} catch (error) {
-				console.error("🔥 [Analytics] FB Dashboard event error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			}
 		}, [queryClient, refetch, refetchReviews])
 	);
 
-	Logger.debug("Dashboard response", data);
+	Logger.debug("Dashboard data received");
 
 
 
@@ -397,8 +395,8 @@ export default function Home() {
 		checkNoApprovedAmountFlag();
 		checkLoanRejectedFlag();
 		return () => {
-			if (pollIntervalRef.current) {
-				clearInterval(pollIntervalRef.current);
+			if (verifyAbortControllerRef.current) {
+				verifyAbortControllerRef.current.abort();
 			}
 		};
 	}, []);
@@ -407,7 +405,8 @@ export default function Home() {
 		if (
 			!hasNoApprovedAmountFlag &&
 			data?.workflow_progress?.overall_status === "rejected" &&
-			data?.workflow_progress?.bre_status !== "rejected"
+			data?.workflow_progress?.bre_status !== "rejected" &&
+			data?.workflow_progress?.bre_status !== "needs_update"
 		) {
 			router.replace("/no-approved-amount");
 		}
@@ -579,12 +578,7 @@ export default function Home() {
 						router.push("/(tabs)");
 					}
 				} catch (reapplyErr: any) {
-					const rawDetail =
-						reapplyErr?.response?.data?.detail ||
-						reapplyErr?.detail ||
-						reapplyErr?.message;
-					const detailText =
-						typeof rawDetail === "string" ? rawDetail : t("reApplicationCheckFailed");
+					const detailText = getFriendlyError(reapplyErr).message;
 					Toast.show({
 						type: "error",
 						text1: t("cannotReapply"),
@@ -603,13 +597,8 @@ export default function Home() {
 				});
 			}
 		} catch (error: any) {
-			console.error("Re-apply error:", error);
-			const rawDetail =
-				error?.response?.data?.detail ||
-				error?.detail ||
-				error?.message;
-			const detailText =
-				typeof rawDetail === "string" ? rawDetail : t("reApplicationCheckFailed");
+Logger.warn("Operation failed", { code: "operation_failed" });
+			const detailText = getFriendlyError(error).message;
 			Toast.show({
 				type: "error",
 				text1: t("error"),
@@ -623,6 +612,14 @@ export default function Home() {
 		const overallStatus = data?.workflow_progress?.overall_status;
 		const breStatus = data?.workflow_progress?.bre_status;
 		const breFailedRule = data?.workflow_progress?.bre_failed_rule;
+
+		if (breStatus === "needs_update" || breStatus === "rejected") {
+			const fixRoute = getBreFixRoute(breFailedRule);
+			if (fixRoute) {
+				router.push(fixRoute as any);
+				return;
+			}
+		}
 
 		if (overallStatus === "rejected") {
 			if (breStatus === "rejected") {
@@ -655,7 +652,17 @@ export default function Home() {
 		}
 
 		if (progress === "pan_verification") {
-			router.push("/professional-details" as any);
+			const fixRoute = getBreFixRoute(breFailedRule);
+			if (fixRoute) {
+				router.push(fixRoute as any);
+				return;
+			}
+			router.push("/verify-pan" as any);
+			return;
+		}
+
+		if (progress === "email_verification") {
+			router.push("/verify-email" as any);
 			return;
 		}
 
@@ -665,12 +672,15 @@ export default function Home() {
 			return;
 		}
 
+		if (progress === "pdq_check") {
+			router.push("/emandate-status" as any);
+			return;
+		}
+
 		const href = progress
 			? StepHref[progress as keyof typeof StepHref]
 			: undefined;
-
-		console.log("progress", progress, allPermissionsGranted);
-
+Logger.warn("Operation failed", { code: "operation_failed" });
 		if (href) {
 			if (
 				progress === "personal_details" &&
@@ -803,8 +813,9 @@ export default function Home() {
 	];
 
 	const testimonials = React.useMemo(() => {
-		if (publicReviews && publicReviews.length > 0) {
-			const formatted = publicReviews
+		const reviews = Array.isArray(publicReviews) ? publicReviews : [];
+		if (reviews.length > 0) {
+			const formatted = reviews
 				.filter(
 					(r) =>
 						(r.rating ?? 0) >= 4 &&
@@ -833,7 +844,7 @@ export default function Home() {
 
 	// const handleDeleteAccount = () => {
 	// 	const deleteAccountUrl = "https://rapidmoney.in/delete-my-account";
-	// 	Linking.openURL(deleteAccountUrl).catch((err) => {
+	// 	openExternalUrl(deleteAccountUrl).catch((err) => {
 	// 		console.error("Failed to open delete account URL:", err);
 	// 		Alert.alert("Error", "Failed to open delete account page");
 	// 	});
@@ -908,7 +919,7 @@ export default function Home() {
 	// Local Carousel Component
 	const HomeCarousel = () => {
 		const [currentIndex, setCurrentIndex] = useState(0);
-		const scrollRef = useRef<ScrollView>(null);
+		const scrollRef = useRef<ScrollViewRef>(null);
 		const carouselImages = [
 			Images.BLUE_CAROUSEL,
 			Images.YELLOW_CAROUSEL,
@@ -988,13 +999,17 @@ export default function Home() {
 		});
 	}
 
+	if (isError && !data) return <QueryErrorState error={error} onRetry={() => { void refetch(); }} onGoHome={() => router.replace("/(tabs)")} />;
+
 	return (
 		<View style={{ flex: 1, backgroundColor: "#F5F7F2" }}>
 			<StatusBar style="light" />
 			<ScrollView
 				style={{ flex: 1, backgroundColor: "#F5F7F2" }}
+				refreshControl={<RefreshControl refreshing={isFetching} onRefresh={() => { void refetch(); }} />}
 
 				showsVerticalScrollIndicator={false}>
+				{isError && data && <QueryErrorState error={error} hasData onRetry={() => { void refetch(); }} />}
 				{/* Unified Hero Brand Section from Figma */}
 				<LinearGradient
 					colors={["#436B19", "#2A5200", "#0C1A02"]}
@@ -1062,13 +1077,7 @@ export default function Home() {
 											<IconSymbol name="calendar" size={14} color="#E84D4D" />
 											<Text style={styles.dueDateTextNew}>
 												{t("dueDatePrefix")}
-												{(data as any)?.loan_summary?.next_due_date
-													? new Date((data as any).loan_summary.next_due_date).toLocaleDateString(language === "hindi" ? "hi-IN" : "en-IN", {
-														day: "numeric",
-														month: "long",
-														year: "numeric"
-													})
-													: "-"}
+												{formatDate((data as any)?.loan_summary?.next_due_date)}
 											</Text>
 										</View>
 									</View>

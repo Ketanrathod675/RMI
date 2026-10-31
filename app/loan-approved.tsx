@@ -7,10 +7,14 @@ import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { hasLoanSearchRun } from "@/utils/loanSearchSession";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Logger } from "@/utils/logger";
 import { errorText, getApiErrorInfo } from "@/utils/api/errors";
+import { openExternalUrl } from "@/utils/openExternalUrl";
+import { formatINR } from "@/utils/formatters";
 import {
 	generateSanctionLetter,
 	getLoanOffer,
@@ -20,7 +24,8 @@ import { font, height, width } from "@/utils/dimensions";
 import { Ionicons } from "@expo/vector-icons";
 import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
-import { useNavigation, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -53,7 +58,7 @@ const formatAmount = (amount: number): string => {
 export default function LoanApproved() {
 	const { t } = useTranslation();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const queryClient = useQueryClient();
 
 	// This screen must never appear without the real search loader having run first.
@@ -168,7 +173,7 @@ export default function LoanApproved() {
 			}
 
 			if (status === 400) {
-				const displayErr = detail || info.message || t("failedToLoadLoanTerms");
+				const displayErr = getFriendlyError(queryError).message;
 				Toast.show({
 					type: "error",
 					text1: t("error") || "Error",
@@ -177,7 +182,7 @@ export default function LoanApproved() {
 				return;
 			}
 
-			setError(detail || t("failedToLoadLoanTerms"));
+			setError(getFriendlyError(queryError).message);
 		} else {
 			setError(null);
 		}
@@ -204,14 +209,14 @@ export default function LoanApproved() {
 	const amountOptions: SelectOption[] = useMemo(() => {
 		if (offer?.amount_options && Array.isArray(offer.amount_options) && offer.amount_options.length > 0) {
 			return offer.amount_options.map((amt) => ({
-				label: `₹ ${Number(amt).toLocaleString("en-IN")}`,
+				label: `₹ ${formatINR(amt)}`,
 				value: Number(amt),
 			}));
 		}
 		if (offer?.sanctioned_amount) {
 			return [
 				{
-					label: `₹ ${Number(offer.sanctioned_amount).toLocaleString("en-IN")}`,
+					label: `₹ ${formatINR(offer.sanctioned_amount)}`,
 					value: Number(offer.sanctioned_amount),
 				},
 			];
@@ -261,7 +266,7 @@ export default function LoanApproved() {
 			return offer.processing_fee_breakdown;
 		}
 		if (offer?.gst !== undefined && offer?.gst !== null) {
-			return `₹ ${offer.gst.toLocaleString("en-IN")} ( GST )`;
+			return `₹ ${formatINR(offer.gst)} ( GST )`;
 		}
 		return "";
 	}, [offer?.gst_percent, offer?.processing_fee_breakdown, offer?.gst]);
@@ -473,48 +478,7 @@ export default function LoanApproved() {
 	}
 
 	// Show error state if API fails
-	if (error) {
-		return (
-			<SafeAreaView style={{ flex: 1, backgroundColor: white }}>
-				<View
-					style={[
-						styles.container,
-						{
-							justifyContent: "center",
-							alignItems: "center",
-							padding: 20,
-						},
-					]}>
-					<Text
-						style={{
-							fontSize: 18,
-							fontWeight: "600",
-							color: "#FF6B6B",
-							textAlign: "center",
-							marginBottom: 20,
-						}}>
-						{error}
-					</Text>
-					<TouchableOpacity
-						style={{
-							backgroundColor: "#4F6EF7",
-							paddingHorizontal: 20,
-							paddingVertical: 12,
-							borderRadius: 8,
-						}}
-						onPress={() => {
-							setError(null);
-							refetchLoanOffer();
-						}}>
-						<TranslatedText
-							style={{ color: "white", fontWeight: "600" }}
-							translationKey="retry"
-						/>
-					</TouchableOpacity>
-				</View>
-			</SafeAreaView>
-		);
-	}
+	if (error && !offer) return <QueryErrorState error={queryError ?? new Error(error)} onRetry={() => { setError(null); void refetchLoanOffer(); }} onGoHome={() => router.replace("/(tabs)")} />;
 
 	const displayBannerAmount = selectedAmount || offer?.sanctioned_amount || 0;
 
@@ -525,6 +489,7 @@ export default function LoanApproved() {
 					style={styles.scrollContainer}
 					contentContainerStyle={styles.scrollContentContainer}
 					showsVerticalScrollIndicator={false}>
+					{error && offer && <QueryErrorState error={queryError ?? new Error(error)} hasData onRetry={() => { void refetchLoanOffer(); }} />}
 					<View style={styles.bannerContainer}>
 						<Image
 							source={ASSESSMENT_BANNER}
@@ -593,7 +558,7 @@ export default function LoanApproved() {
 								translationKey="amountApproved"
 							/>
 							<Text style={styles.detailValue}>
-								₹ {(offer?.sanctioned_amount ?? 0).toLocaleString("en-IN")}
+								₹ {formatINR(offer?.sanctioned_amount)}
 							</Text>
 						</View>
 
@@ -627,7 +592,7 @@ export default function LoanApproved() {
 								translationKey="processingFee"
 							/>
 							<Text style={[styles.detailValue, isRequoteLoading && { opacity: 0.5 }]}>
-								₹ {(offer?.processing_fee ?? 0).toLocaleString("en-IN")}
+								₹ {formatINR(offer?.processing_fee)}
 								{gstLabel ? ` + ${gstLabel}` : ""}
 							</Text>
 						</View>
@@ -828,7 +793,7 @@ export default function LoanApproved() {
 							/>
 							<TouchableOpacity
 								onPress={() =>
-									Linking.openURL("mailto:support@rapidmoney.in")
+									void openExternalUrl("mailto:support@rapidmoney.in")
 								}>
 								<Text
 									style={[

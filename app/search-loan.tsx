@@ -9,7 +9,8 @@ import {
 	View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import Animated, {
 	Easing,
 	useAnimatedStyle,
@@ -24,7 +25,7 @@ import { dark, primary } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getBreFixRoute, getLoanOffer, getUserDashboardData, StepHref } from "@/utils/api";
+import { getBreFixRoute, getLoanOffer, getUserDashboardData, getWorkflowProgress, StepHref } from "@/utils/api";
 import { getApiErrorInfo } from "@/utils/api/errors";
 import { markLoanSearchDone } from "@/utils/loanSearchSession";
 import { useQueryClient } from "@tanstack/react-query";
@@ -40,7 +41,7 @@ const DOT_SIZE = 11;
 export default function SearchLoan() {
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const params = useLocalSearchParams<{ is_repeat_user?: string; next_step?: string }>();
 	const isRepeatUser = params.is_repeat_user === "true";
 
@@ -194,13 +195,13 @@ export default function SearchLoan() {
 		};
 
 		// Decide where the workflow wants the borrower. "OFFER" means: fetch the loan offer, then show it.
-		const resolveDestination = (dashboardData: any): "OFFER" | string | { pathname: string; params?: any } => {
-			const workflowProgress = dashboardData?.workflow_progress;
-			const currentStep = workflowProgress?.current_step;
-			const overallStatus = workflowProgress?.overall_status;
-			const breStatus = workflowProgress?.bre_status;
-			const breFailedRule = workflowProgress?.bre_failed_rule;
-
+		const resolveDestination = async (
+			currentStep?: string | null,
+			overallStatus?: string | null,
+			breStatus?: string | null,
+			breFailedRule?: string | null,
+			nextRequiredStep?: string | null,
+		): Promise<"OFFER" | string | { pathname: string; params?: any }> => {
 			if (
 				overallStatus === "rejected" ||
 				overallStatus === "application_rejected" ||
@@ -232,9 +233,11 @@ export default function SearchLoan() {
 
 			let targetStep = currentStep;
 			if (targetStep === "credit_queue" && isRepeatUser) {
-				targetStep = params.next_step || workflowProgress?.next_required_step || "loan_application";
+				targetStep = params.next_step || nextRequiredStep || "loan_application";
 			}
-			if (targetStep === "digilocker") return "/digilocker-kyc";
+			if (targetStep === "digilocker") {
+				return "/digilocker-kyc";
+			}
 			if (targetStep === "credit_queue" || targetStep === "loan_application") return "OFFER";
 
 			return StepHref[targetStep as keyof typeof StepHref] ?? "/(tabs)";
@@ -250,9 +253,42 @@ export default function SearchLoan() {
 				}
 
 				try {
-					const dashboardData = await getUserDashboardData();
+					let currentStep: string | undefined;
+					let overallStatus: string | undefined;
+					let breStatus: string | null = null;
+					let breFailedRule: string | null = null;
+					let nextRequiredStep: string | null = null;
+
+					// Primary source of truth on resume: GET /workflow/progress
+					try {
+						const wfRes = await getWorkflowProgress();
+						if (wfRes?.data?.current_step) {
+							currentStep = wfRes.data.current_step;
+							overallStatus = wfRes.data.overall_status;
+							nextRequiredStep = wfRes.data.next_step ?? null;
+						}
+					} catch {
+						// Fall back to dashboard
+					}
+
+					if (!currentStep || !overallStatus) {
+						const dashboardData = await getUserDashboardData();
+						const workflowProgress = dashboardData?.workflow_progress;
+						currentStep = currentStep || workflowProgress?.current_step;
+						overallStatus = overallStatus || workflowProgress?.overall_status;
+						breStatus = workflowProgress?.bre_status ?? null;
+						breFailedRule = workflowProgress?.bre_failed_rule ?? null;
+						nextRequiredStep = nextRequiredStep || (workflowProgress?.next_required_step ?? null);
+					}
+
 					if (cancelled) return;
-					const destination = resolveDestination(dashboardData);
+					const destination = await resolveDestination(
+						currentStep,
+						overallStatus,
+						breStatus,
+						breFailedRule,
+						nextRequiredStep,
+					);
 
 					if (destination !== "OFFER") {
 						await finish(() => router.replace(destination as any));
@@ -341,7 +377,7 @@ export default function SearchLoan() {
 
 	return (
 		<View style={[styles.container, { paddingTop: Math.max(insets.top, 24) }]}>
-			<StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+			<StatusBar barStyle="dark-content" />
 
 			{/* Upper: 3 Multi-Speed Rings Rotating in Same Direction with Dots & Center Icon */}
 			<View style={styles.ringWrapper}>

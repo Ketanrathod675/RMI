@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 /**
  * Branch MMP — Deep Linking + Attribution Integration
  * Scope: Install / App-Open / Reinstall tracking, UTM attribution mapping, and auto-routing.
@@ -38,7 +39,7 @@ if (hasNativeBranch) {
     const branchModule = require("react-native-branch");
     branch = branchModule.default || branchModule;
   } catch (err) {
-    console.warn("[Branch] ⚠️ Failed to load native react-native-branch module:", err);
+Logger.warn("Operation failed", { code: "operation_failed" });
     branch = null;
   }
 }
@@ -114,14 +115,14 @@ export function initBranch(): () => void {
             "[Branch] ℹ️ Session already initialized (expected in dev — no action needed)"
           );
         } else {
-          console.error("[Branch] ❌ onOpenComplete error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
           return;
         }
       }
 
       // Log Branch params for validation in adb logcat / Branch Liveview.
-      console.log("[Branch] ✅ onOpenComplete | uri:", uri);
-      console.log("[Branch] 📦 Session params:", JSON.stringify(params, null, 2));
+      console.log("[Branch] onOpenComplete");
+      Logger.debug("Branch session received");
 
       // +is_first_session → true on fresh install
       // ~channel           → traffic source channel
@@ -139,8 +140,7 @@ export function initBranch(): () => void {
       if (token) {
         _branchDeviceToken = token;
         console.log(
-          "[Branch] 🔑 randomized_device_token stored:",
-          `${String(token).slice(0, 10)}...`
+          "[Branch] Device attribution token stored"
         );
       }
 
@@ -203,7 +203,7 @@ export function setBranchIdentity(customerId: string): void {
     }
     return;
   }
-  console.log(`[Branch] 👤 Setting identity to: ${customerId}`);
+  Logger.debug("Branch identity updated");
   branch.setIdentity(customerId);
 }
 

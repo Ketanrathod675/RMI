@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import { useCameraPermissions } from "expo-camera";
 import {
 	getPermissionsAsync,
@@ -16,7 +17,7 @@ export const usePermissions = () => {
 			const { status } = await requestCamera();
 			return status === "granted";
 		} catch (err) {
-			console.error("Camera permission error:", err);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			return false;
 		}
 	};

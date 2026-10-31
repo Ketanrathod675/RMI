@@ -1,6 +1,6 @@
 import { AnimatedSplashScreen } from "@/components/splash/AnimatedSplashScreen";
 const DevMockBanner = __DEV__ ? require("@/components/dev/DevMockBanner").DevMockBanner : () => null;
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ErrorBoundary as RootErrorBoundary, RouteErrorBoundary } from "@/components/ErrorBoundary";
 import { ForceUpdateView } from "@/components/splash/ForceUpdateView";
 import { SecurityAlertView } from "@/components/splash/SecurityAlertView";
 import { useColorScheme } from "@/hooks/useColorScheme";
@@ -13,7 +13,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { NavigationBar } from "expo-navigation-bar";
 import React from "react";
-import { Platform, StatusBar as RNStatusBar, StyleSheet, View } from "react-native";
+import { Platform, StatusBar as RNStatusBar, StyleSheet, Text, View } from "react-native";
 import "react-native-reanimated";
 import {
 	useFonts,
@@ -24,9 +24,20 @@ import {
 } from "@expo-google-fonts/plus-jakarta-sans";
 import { Provider } from "react-redux";
 import Toast from "react-native-toast-message";
-import { toastConfig } from "@/utils/toastConfig";
+import { installToastDefaults, toastConfig } from "@/utils/toastConfig";
 import { JourneyLoaderProvider } from "@/context/JourneyLoaderProvider";
 import { initBranch } from "@/utils/branch";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { installNetworkAwareness, useNetworkStatus } from "@/hooks/useNetworkStatus";
+import { useTranslation } from "@/hooks/useTranslation";
+import { installGlobalErrorHandlers, subscribeFatalErrors } from "@/utils/errorHandling";
+import { useRouter } from "expo-router";
+
+installToastDefaults();
+installGlobalErrorHandlers();
+
+export { RouteErrorBoundary as ErrorBoundary };
 
 // Prevent native splash screen from auto-hiding before JavaScript initializes
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -45,6 +56,11 @@ export const queryClient = new QueryClient({
 });
 
 function RootLayoutNav() {
+	const router = useRouter();
+	const [fatalError, setFatalError] = React.useState<unknown>(null);
+	const insets = useSafeAreaInsets();
+	const { isOffline } = useNetworkStatus();
+	const { t } = useTranslation();
 	const colorScheme = useColorScheme();
 	const [fontsLoaded] = useFonts({
 		PlusJakartaSans_400Regular,
@@ -52,9 +68,17 @@ function RootLayoutNav() {
 		PlusJakartaSans_600SemiBold,
 		PlusJakartaSans_700Bold,
 	});
+	React.useEffect(() => {
+		const unsubscribe = subscribeFatalErrors(setFatalError);
+		return () => { unsubscribe(); };
+	}, []);
 
 	// Branch SDK Phase 1: Initialize session tracking (install / open / reinstall)
 	// Must be called once on root mount. Branch auto-tracks all attribution.
+	React.useEffect(() => {
+		return installNetworkAwareness();
+	}, []);
+
 	React.useEffect(() => {
 		const unsubscribeBranch = initBranch();
 		return () => {
@@ -65,11 +89,11 @@ function RootLayoutNav() {
 	React.useEffect(() => {
 		if (Platform.OS === "android") {
 			try {
-				if (typeof RNStatusBar?.setTranslucent === "function") {
-					RNStatusBar.setTranslucent(true);
+				if (typeof (RNStatusBar as any)?.setTranslucent === "function") {
+					(RNStatusBar as any).setTranslucent(true);
 				}
-				if (typeof RNStatusBar?.setBackgroundColor === "function") {
-					RNStatusBar.setBackgroundColor("transparent");
+				if (typeof (RNStatusBar as any)?.setBackgroundColor === "function") {
+					(RNStatusBar as any).setBackgroundColor("transparent");
 				}
 			} catch {
 				// Safely ignore if native status bar module is not ready or unsupported
@@ -107,6 +131,7 @@ function RootLayoutNav() {
 		onAnimationComplete,
 		onNativeSplashHandoff,
 	} = useSplashController();
+	if (fatalError) return <View style={styles.fatalContainer}><Text style={styles.fatalTitle}>{t("somethingWentWrong", "Something went wrong")}</Text><Text style={styles.fatalText}>{t("friendlyError_unknown", "Something went wrong. Please try again.")}</Text><Text onPress={() => setFatalError(null)} style={styles.fatalButton}>{t("tryAgain", "Try again")}</Text><Text onPress={() => { setFatalError(null); router.replace("/(tabs)"); }} style={styles.fatalButton}>{t("goToHome", "Go to Home")}</Text></View>;
 
 	return (
 		<ThemeProvider value={DefaultTheme}>
@@ -219,11 +244,12 @@ function RootLayoutNav() {
 				)}
 
 				<StatusBar style="dark" />
+				{isOffline && <View style={[styles.offlineBanner, { top: insets.top }]} pointerEvents="none"><Text style={styles.offlineText}>{t("noInternetConnection", "No internet connection")}</Text></View>}
 				{__DEV__ && <DevMockBanner />}
 				<Toast
 					config={toastConfig}
-					position="bottom"
-					bottomOffset={65}
+					position="top"
+					topOffset={insets.top + 8}
 					visibilityTime={3000}
 				/>
 			</View>
@@ -233,7 +259,8 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
 	return (
-		<ErrorBoundary>
+		<SafeAreaProvider>
+		<RootErrorBoundary>
 			<Provider store={store}>
 				<QueryClientProvider client={queryClient}>
 					<JourneyLoaderProvider>
@@ -241,7 +268,8 @@ export default function RootLayout() {
 					</JourneyLoaderProvider>
 				</QueryClientProvider>
 			</Provider>
-		</ErrorBoundary>
+		</RootErrorBoundary>
+		</SafeAreaProvider>
 	);
 }
 
@@ -250,4 +278,10 @@ const styles = StyleSheet.create({
 		flex: 1,
 		backgroundColor: "#ffffff",
 	},
+	offlineBanner: { position: "absolute", left: 0, right: 0, zIndex: 999, backgroundColor: "#334155", paddingVertical: 7, alignItems: "center" },
+	offlineText: { color: "#FFFFFF", fontSize: 12, fontWeight: "600" },
+	fatalContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, backgroundColor: "#fff" },
+	fatalTitle: { fontSize: 20, fontWeight: "700", color: "#11181C", marginBottom: 8 },
+	fatalText: { fontSize: 14, color: "#64748B", marginBottom: 20 },
+	fatalButton: { color: "#047857", padding: 12, fontWeight: "700" },
 });

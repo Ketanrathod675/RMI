@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { clearTransactionId, setTransactionId, useDispatch } from "@/store";
@@ -11,6 +12,7 @@ import {
 } from "@/utils/api";
 import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
@@ -38,7 +40,7 @@ export type VerifySource =
 const WINDOW_MS: Record<VerifySource, number> = {
 	deeplink_success: 90_000,
 	deeplink_failure: 8_000,
-	browser_closed: 20_000,
+	browser_closed: 10_000,
 	manual: 30_000,
 };
 
@@ -49,7 +51,7 @@ export type PaymentOutcome =
 		// failed      : gateway reported failure
 		// expired     : the attempt timed out on the server
 		// unconfirmed : we could not confirm either way (money might have been debited)
-		type: "cancelled" | "failed" | "expired" | "unconfirmed";
+			type: "cancelled" | "failed" | "expired" | "unconfirmed" | "not_completed";
 		txnId: string;
 	};
 
@@ -67,7 +69,10 @@ const classify = (res: any): { kind: Classified; notStarted: boolean } => {
 	return { kind: "PENDING", notStarted };
 };
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => new Promise((resolve) => {
+	const timer = setTimeout(() => resolve(fallback), Math.max(0, timeoutMs));
+	promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(fallback); });
+});
 
 export type InitiatePaymentResponse = {
 	status: string;
@@ -115,11 +120,21 @@ export const useAssessmentFeePayment = ({
 	const windowSecRef = useRef(0);
 	const mountedRef = useRef(true);
 	const retriedInProgressRef = useRef(false);
+	const submitGuardRef = useRef(false);
 	const onSuccessRef = useRef(onPaymentSuccess);
 	onSuccessRef.current = onPaymentSuccess;
 	const successHandledRef = useRef<Set<string>>(new Set());
 	const outcomeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const outcomeVisibleRef = useRef(false);
+	const requestControllerRef = useRef<AbortController | null>(null);
+	const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const browserLaunchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const urlHook = Linking.useLinkingURL();
+	const waitForPoll = (ms: number) => new Promise<void>((resolve) => {
+		if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+		pollTimerRef.current = setTimeout(() => { pollTimerRef.current = null; resolve(); }, ms);
+	});
 
 	const clearTimer = async () => {
 		await removeStorageItem(STORAGE_KEYS["@assessment-timer-id"]);
@@ -140,8 +155,19 @@ export const useAssessmentFeePayment = ({
 				clearTimeout(outcomeTimerRef.current);
 				outcomeTimerRef.current = null;
 			}
+			if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+			if (browserLaunchTimerRef.current) { clearTimeout(browserLaunchTimerRef.current); browserLaunchTimerRef.current = null; }
+			if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+			requestControllerRef.current?.abort();
 		};
 	}, []);
+	useEffect(() => { outcomeVisibleRef.current = Boolean(paymentOutcome || outcomePending); }, [paymentOutcome, outcomePending]);
+	useEffect(() => {
+		if (__DEV__ && !isPaymentPolling && !paymentStatus.paymentPending && !isPaymentInitiated &&
+			(activeRef.current !== null || gatewayOpenRef.current)) {
+			Logger.warn("Payment flow did not reset to idle");
+		}
+	}, [isPaymentPolling, paymentStatus.paymentPending, isPaymentInitiated, paymentOutcome]);
 
 	// Countdown shown on the button. Display only: it never touches storage or navigation.
 	useEffect(() => {
@@ -162,13 +188,12 @@ export const useAssessmentFeePayment = ({
 	};
 
 	/** One server check. Never throws. */
-	const checkOnce = async (txnId: string): Promise<{ kind: Classified; notStarted: boolean; res?: any }> => {
+	const checkOnce = async (txnId: string, timeoutMs = 8000, signal?: AbortSignal): Promise<{ kind: Classified; notStarted: boolean; res?: any }> => {
 		try {
-			const res = await checkPaymentStatus(txnId);
-			Logger.debug("Payment status response", res);
+			const res = await checkPaymentStatus(txnId, { timeoutMs, signal });
 			return { ...classify(res), res };
 		} catch (err) {
-			Logger.warn("Payment status check failed (will retry)", err);
+			Logger.warn("Payment status check failed (will retry)");
 			return { kind: "ERROR", notStarted: false };
 		}
 	};
@@ -182,9 +207,10 @@ export const useAssessmentFeePayment = ({
 		"address_submission",
 		"loan_application",
 		"bank_details",
-		"kfs_signing",
 		"enach_mandate",
+		"pdq_check",
 		"agreement_signing",
+		"kfs_signing",
 		"disbursement",
 		"credit_queue",
 		"digilocker",
@@ -192,9 +218,10 @@ export const useAssessmentFeePayment = ({
 	];
 
 	/** Safety net: did the workflow already move past the fee step on the server? */
-	const workflowAdvanced = async (): Promise<boolean> => {
+	const workflowAdvanced = async (timeoutMs = 6000): Promise<boolean> => {
 		try {
-			const dash: any = await getUserDashboardData();
+			const dash: any = await withTimeout(getUserDashboardData(), timeoutMs, null);
+			if (!dash) return false;
 			const step = String(
 				dash?.current_step || dash?.workflow_progress?.current_step || dash?.current_step_info?.step || "",
 			).toLowerCase().trim();
@@ -238,7 +265,7 @@ export const useAssessmentFeePayment = ({
 		txnId: string,
 	) => {
 		// "unconfirmed" keeps the txn id so we can re-check later (money may have left the account).
-		if (type !== "unconfirmed") await clearStoredPayment();
+		if (type !== "unconfirmed" && type !== "not_completed") await clearStoredPayment();
 		gatewayOpenRef.current = false;
 		activeRef.current = null;
 		resetPendingUi();
@@ -284,9 +311,18 @@ export const useAssessmentFeePayment = ({
 		const isStale = () => runIdRef.current !== runId || !mountedRef.current;
 		let notStartedHits = 0;
 		let consecutiveErrors = 0;
+		let checks = 0;
 
 		while (!isStale()) {
-			const r = await checkOnce(txnId);
+			if (source === "browser_closed" && checks >= 2) break;
+			checks += 1;
+			const remaining = Math.max(0, windowMs - (Date.now() - startedAt));
+			if (!remaining) break;
+			const controller = new AbortController();
+			requestControllerRef.current = controller;
+			const r = await withTimeout(checkOnce(txnId, Math.min(8000, remaining), controller.signal), remaining, { kind: "ERROR" as const, notStarted: false });
+			controller.abort();
+			requestControllerRef.current = null;
 			if (isStale()) return;
 
 			if (r.kind === "SUCCESS") return finishSuccess(txnId, r.res);
@@ -296,7 +332,7 @@ export const useAssessmentFeePayment = ({
 
 			if (r.kind === "ERROR") {
 				consecutiveErrors += 1;
-				if (consecutiveErrors >= 2 && (await workflowAdvanced())) {
+				if (consecutiveErrors >= 2 && Date.now() - startedAt < windowMs && (await withTimeout(workflowAdvanced(Math.min(6000, windowMs - (Date.now() - startedAt))), Math.max(1, windowMs - (Date.now() - startedAt)), false))) {
 					return finishSuccess(txnId);
 				}
 			} else {
@@ -304,62 +340,80 @@ export const useAssessmentFeePayment = ({
 			}
 
 			// The user left the gateway and the server has no payment attempt at all -> they backed out.
-			if (source === "browser_closed" && r.kind === "PENDING" && r.notStarted) {
+			if (source === "browser_closed" && r.kind === "PENDING") {
 				notStartedHits += 1;
-				if (notStartedHits >= 2) return finishWithOutcome("cancelled", txnId);
+				if (notStartedHits >= 2) return finishWithOutcome("not_completed", txnId);
 			}
 
 			if (Date.now() - startedAt >= windowMs) break;
-			await sleep(POLL_INTERVAL_MS);
+			await waitForPoll(source === "browser_closed" ? 3000 : POLL_INTERVAL_MS);
 		}
 		if (isStale()) return;
 
 		// Window over, still no answer.
-		if (await workflowAdvanced()) return finishSuccess(txnId);
+		if (Date.now() - startedAt < windowMs && await workflowAdvanced(Math.min(6000, windowMs - (Date.now() - startedAt)))) return finishSuccess(txnId);
 
 		if (source === "deeplink_failure") return finishWithOutcome("failed", txnId);
 		// Could not confirm: never auto-navigate away and never silently drop the txn.
-		return finishWithOutcome("unconfirmed", txnId);
+		return finishWithOutcome(source === "browser_closed" ? "not_completed" : "unconfirmed", txnId);
 	};
+
+	const cancelVerification = useCallback(() => {
+		runIdRef.current += 1;
+		requestControllerRef.current?.abort();
+		requestControllerRef.current = null;
+		const txnId = activeRef.current?.txnId;
+		activeRef.current = null;
+		gatewayOpenRef.current = false;
+		resetPendingUi();
+		if (txnId) void finishWithOutcome("not_completed", txnId);
+	}, []);
 
 	// ---- Recover a payment that was in flight when the app was killed / backgrounded ----
 	useEffect(() => {
+		let cancelled = false;
 		(async () => {
 			const pendingTxn = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
-			if (!pendingTxn) return;
+			if (!pendingTxn || cancelled || !mountedRef.current) return;
 			await removeStorageItem(STORAGE_KEYS["@payment-timer-start"]);
-			const r = await checkOnce(pendingTxn);
+			if (cancelled || !mountedRef.current) return;
+			const r = await checkOnce(pendingTxn, 8000);
+			if (cancelled || !mountedRef.current) return;
 			if (r.kind === "SUCCESS") return finishSuccess(pendingTxn, r.res);
 			if (["FAILED", "CANCELLED", "EXPIRED"].includes(r.kind)) await clearStoredPayment();
 			// The user never reached the gateway / never paid: forget this attempt so no stale state is carried over.
 			if (r.kind === "PENDING" && r.notStarted) await clearStoredPayment();
 			// Other PENDING / ERROR: leave it; the server supersedes abandoned attempts when the user pays again.
-		})();
+		})().catch(() => {});
+		return () => { cancelled = true; };
 	}, []);
 
 	// ---- Deep link return (rapid-money://assessment-fee-success?txnid=..&status=..) ----
 	useEffect(() => {
+		let cancelled = false;
 		(async () => {
-			if (!urlHook) return;
+			if (!urlHook || cancelled || !mountedRef.current) return;
 			const { hostname, queryParams } = Linking.parse(urlHook);
 			if (!hostname?.includes("assessment-fee")) return;
 			const txnId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
-			if (!txnId || queryParams?.txnid !== txnId) return;
+			if (cancelled || !mountedRef.current || !txnId || queryParams?.txnid !== txnId) return;
 			const ok = String(queryParams?.status).toLowerCase() === "success";
 			verifyPayment(txnId, ok ? "deeplink_success" : "deeplink_failure");
-		})();
+		})().catch(() => {});
+		return () => { cancelled = true; };
 	}, [urlHook]);
 
 	// ---- User came back to the app (app switcher / back) while the gateway was open ----
 	useEffect(() => {
 		const sub = AppState.addEventListener("change", (state) => {
-			if (state !== "active" || !gatewayOpenRef.current || activeRef.current) return;
+			if (state !== "active" || outcomeVisibleRef.current || !gatewayOpenRef.current || activeRef.current) return;
 			// Set verifying state synchronously FIRST to avoid visible assessment screen gap
 			setIsPaymentPolling(true);
 			setDelayVisible(true);
 			setPaymentStatus((prev) => ({ ...prev, paymentPending: true }));
 			(async () => {
 				const txnId = await getStorageItem(STORAGE_KEYS["@transaction-id"]);
+				if (!mountedRef.current) return;
 				if (txnId) {
 					verifyPayment(txnId, "browser_closed");
 				} else {
@@ -371,7 +425,7 @@ export const useAssessmentFeePayment = ({
 	}, []);
 
 	// ---- Start payment ----
-	const { mutate: initiatePayment, isPending } = useNetworkAwareMutation({
+	const { mutate: rawInitiatePayment, isPending } = useNetworkAwareMutation({
 		mutationFn: async () => {
 			setPaymentOutcome(null);
 			let targetLeadId = leadId;
@@ -481,9 +535,11 @@ export const useAssessmentFeePayment = ({
 			gatewayOpenRef.current = true;
 
 			// No loader, no polling while the user is inside the gateway (they may take minutes).
-			setTimeout(async () => {
+			browserLaunchTimerRef.current = setTimeout(async () => {
+				browserLaunchTimerRef.current = null;
 				try {
 					const result: any = await WebBrowser.openAuthSessionAsync(url, PAYMENT_RETURN_SCHEME);
+					if (!mountedRef.current) return;
 					Logger.debug("Payment browser session closed", result?.type);
 
 					// Set verifying state synchronously immediately upon browser return
@@ -500,9 +556,10 @@ export const useAssessmentFeePayment = ({
 						// so we never trust the result type: the server is the source of truth.
 						verifyPayment(txnid, "browser_closed");
 					}
-				} catch (err) {
-					Logger.warn("openAuthSessionAsync failed, falling back to Linking.openURL", err);
-					await Linking.openURL(url).catch((e) => Logger.error("Failed to open payment URL", e));
+				} catch {
+					if (!mountedRef.current) return;
+					Logger.warn("Payment browser session failed; opening the validated payment link");
+					await openExternalUrl(url);
 					// Return is picked up by the deep-link effect or the AppState listener.
 				}
 			}, 300);
@@ -529,7 +586,8 @@ export const useAssessmentFeePayment = ({
 						if (r.kind === "SUCCESS") return finishSuccess(storedTxn, r.res);
 						await clearStoredPayment();
 					}
-					setTimeout(() => {
+					retryTimerRef.current = setTimeout(() => {
+						retryTimerRef.current = null;
 						retriedInProgressRef.current = false;
 						initiatePayment();
 					}, 1200);
@@ -539,10 +597,22 @@ export const useAssessmentFeePayment = ({
 			retriedInProgressRef.current = false;
 
 			if (rawDetail && /coupon/i.test(String(rawDetail))) onCouponRejected?.();
-			const displayMessage = typeof rawDetail === "string" ? rawDetail : error?.message ?? t("pleaseRetryPayment");
+			const displayMessage = getFriendlyError(err).message;
 			Toast.show({ type: "error", text1: t("errorInitiatingPayment"), text2: displayMessage });
 		},
+		onSettled: () => { submitGuardRef.current = false; },
 	});
+
+	const resetPaymentCompleted = useCallback(() => {
+		setIsPaymentCompleted(false);
+	}, []);
+
+	const initiatePayment = useCallback(() => {
+		setIsPaymentCompleted(false);
+		if (submitGuardRef.current) return;
+		submitGuardRef.current = true;
+		rawInitiatePayment();
+	}, [rawInitiatePayment]);
 
 	/** "Check again" from the unconfirmed dialog. */
 	const recheckPayment = async () => {
@@ -567,12 +637,14 @@ export const useAssessmentFeePayment = ({
 		isPaymentInitiated,
 		isPaymentPolling,
 		isPaymentCompleted,
+		resetPaymentCompleted,
 		delayVisible,
 		setDelayVisible,
 		paymentStatus,
 		paymentOutcome,
 		outcomePending,
 		recheckPayment,
+		cancelVerification,
 		dismissPaymentOutcome,
 		simulateDeepLinkReturn,
 		clearTimer,

@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -333,7 +334,7 @@ export default function CustomerDataConsentScreen() {
 			}
 			Toast.show({
 				type: "error",
-				text1: info.detail || "Unable to submit your consent. Please try again.",
+				text1: getFriendlyError(err).message,
 				visibilityTime: 4000,
 			});
 		} finally {

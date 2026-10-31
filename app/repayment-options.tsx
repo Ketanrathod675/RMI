@@ -1,11 +1,16 @@
-﻿import { dark, primary, white } from "@/constants/Colors";
+import { useMountedRef } from "@/hooks/useMountedRef";
+import { dark, primary, white } from "@/constants/Colors";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useTranslation } from "@/hooks/useTranslation";
 import { axios } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import { STORAGE_KEYS, setStorageItem, getStorageItem, removeStorageItem } from "@/utils/storage";
 import { checkPaymentStatus } from "@/utils/api";
+import { openExternalUrl } from "@/utils/openExternalUrl";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatDate as safeFormatDate } from "@/utils/formatters";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -15,6 +20,7 @@ import {
 	ActivityIndicator,
 	AppState,
 	Platform,
+	RefreshControl,
 	ScrollView,
 	StyleSheet,
 	Text,
@@ -22,6 +28,7 @@ import {
 	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Toast from "react-native-toast-message";
 
 interface RepaymentOption {
 	type: string;
@@ -63,21 +70,13 @@ const formatIndianRupees = (amount: number): string => {
 };
 
 const formatDate = (dateString: string): string => {
-	try {
-		const date = new Date(dateString);
-		return date.toLocaleDateString("en-IN", {
-			day: "2-digit",
-			month: "short",
-			year: "numeric",
-		});
-	} catch {
-		return dateString;
-	}
+	return safeFormatDate(dateString);
 };
 
 const formatDueDate = (dateString: string): string => {
 	try {
 		const dueDate = new Date(dateString);
+		if (!Number.isFinite(dueDate.getTime())) return "-";
 		const today = new Date();
 
 		// Set time to midnight for accurate date comparison
@@ -152,10 +151,12 @@ const translateDescription = (description: string, isHindi: boolean): string => 
 };
 
 export default function RepaymentOptions() {
+	const mountedRef = useMountedRef();
 	const router = useRouter();
 	const { t, isHindi } = useTranslation();
 	const { loanNumber } = useLocalSearchParams<{ loanNumber: string }>();
 	const [isPaymentLoading, setIsPaymentLoading] = useState(false);
+	const paymentSubmittingRef = useRef(false);
 	const [paymentInitiated, setPaymentInitiated] = useState(false);
 	const [isHBPartner, setIsHBPartner] = useState(false);
 	const [isLoadingHbCondition, setIsLoadingHbCondition] = useState(false);
@@ -199,7 +200,7 @@ export default function RepaymentOptions() {
 		return () => subscription.remove();
 	}, [loanNumber, router]);
 
-	const { data: apiData, isLoading } = useNetworkAwareQuery<RepaymentOptionsResponse>({
+	const { data: apiData, isLoading, isFetching, isError, error, refetch } = useNetworkAwareQuery<RepaymentOptionsResponse>({
 		queryKey: ["repaymentOptions", loanNumber],
 		queryFn: () => getRepaymentOptions(loanNumber || ""),
 		enabled: !!loanNumber,
@@ -207,15 +208,13 @@ export default function RepaymentOptions() {
 
 	// Filter options to only show full_payment
 	const filteredOptions =
-		apiData?.repayment_options?.filter((option) => option.type === "full_payment") || [];
+		(Array.isArray(apiData?.repayment_options) ? apiData.repayment_options : []).filter((option) => option.type === "full_payment");
 
 	// Map display names
 	const displayOptions = filteredOptions.map((option) => ({
 		...option,
 		display_name: option.type === "full_payment" ? t("closeYourLoan") : option.display_name,
 	}));
-
-
 	useEffect(() => {
 		const checkHBRepaymentCondition = async () => {
 			try {
@@ -249,7 +248,8 @@ export default function RepaymentOptions() {
 	}, [apiData?.loan_id]);
 
 	const handlePayNow = async (option: RepaymentOption) => {
-
+		if (paymentSubmittingRef.current) return;
+		paymentSubmittingRef.current = true;
 		setIsPaymentLoading(true);
 
 		try {
@@ -264,16 +264,19 @@ export default function RepaymentOptions() {
 				`loans/${loanNumber}/initiate-repayment`,
 				requestBody,
 			);
+			if (!mountedRef.current) return;
 
 
 			// Navigate to payment URL
 			if (response.data?.payment_url) {
 				const canOpen = await Linking.canOpenURL(response.data.payment_url);
+				if (!mountedRef.current) return;
 
 				if (canOpen) {
 					const paymentData = response.data?.data || response.data;
 					const txnid = paymentData?.txnid || paymentData?.transaction_id || paymentData?.payment_id;
 					if (txnid) await setStorageItem(STORAGE_KEYS["@repayment-txnid"], String(txnid));
+					if (!mountedRef.current) return;
 					// Mark that payment was initiated - this allows the redirect handler to process the response
 					setPaymentInitiated(true);
 
@@ -287,18 +290,20 @@ export default function RepaymentOptions() {
 					if (Platform.OS === "ios") {
 						const result = await WebBrowser.openAuthSessionAsync(response.data.payment_url, "rapid-money://");
 						if (result.type === "success" && result.url) {
-							await Linking.openURL(result.url);
+							// The app deep link is handled by the route listener.
 						}
 					} else {
-						await Linking.openURL(response.data.payment_url);
+						await openExternalUrl(response.data.payment_url);
 					}
 				} else {
 				}
 			} else {
 			}
 		} catch (error: any) {
+			Toast.show({ type: "error", text1: getFriendlyError(error).message });
 		} finally {
-			setIsPaymentLoading(false);
+			paymentSubmittingRef.current = false;
+					if (mountedRef.current) setIsPaymentLoading(false);
 		}
 	};
 
@@ -313,6 +318,7 @@ export default function RepaymentOptions() {
 		);
 	}
 
+	if (isError && !apiData) return <QueryErrorState error={error} onRetry={() => { void refetch(); }} onGoHome={() => router.replace("/(tabs)")} />;
 	if (!apiData || displayOptions.length === 0) {
 		return (
 			<SafeAreaView style={styles.container}>
@@ -333,7 +339,8 @@ export default function RepaymentOptions() {
 	return (
 		<>
 			<SafeAreaView style={styles.container}>
-				<ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+				<ScrollView style={styles.content} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={isFetching} onRefresh={() => { void refetch(); }} />}>
+					{isError && apiData && <QueryErrorState error={error} hasData onRetry={() => { void refetch(); }} />}
 					{/* Loan Info */}
 					<View style={styles.loanInfoCard}>
 						<Text style={styles.loanInfoLabel}>{t("loanNumber")}</Text>

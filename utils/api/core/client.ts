@@ -19,6 +19,7 @@ import Toast from "react-native-toast-message";
 import { API_URL } from "./config";
 import { URLS } from "./endpoints";
 import { isSessionReplacedError } from "./sessionErrors";
+import { getFriendlyError } from "./friendlyError";
 
 let networkToastShown = false;
 let refreshAccessTokenPromise: Promise<string | null> | null = null;
@@ -67,7 +68,11 @@ const refreshAccessToken = async (): Promise<string | null> => {
 
 		const { refreshSession } = await import("../services/auth.service");
 		const newTokens = await refreshSession(refreshToken);
-		if (!newTokens?.access_token) return null;
+		if (!newTokens?.access_token) {
+			const refreshResponseError = new Error("Token refresh returned no access token") as Error & { code: string };
+			refreshResponseError.code = "ERR_REFRESH_INVALID_RESPONSE";
+			throw refreshResponseError;
+		}
 
 		await SecureStorage.setSensitive(STORAGE_KEYS["@access-token"], newTokens.access_token);
 		await SecureStorage.setSensitive(STORAGE_KEYS["@token"], newTokens.access_token);
@@ -86,14 +91,10 @@ const refreshAccessToken = async (): Promise<string | null> => {
 	}
 };
 
-const showNetworkUnavailableToast = async () => {
+const showNetworkUnavailableToast = async (error?: unknown) => {
 	if (!networkToastShown) {
-		await showLocalizedToast(Toast.show, {
-			type: "error",
-			text1Key: "networkUnavailable",
-			text2Key: "pleaseCheckInternetConnection",
-			visibilityTime: 4000,
-		});
+		const friendly = getFriendlyError(error);
+		Toast.show({ type: "error", text1: friendly.message, visibilityTime: 3200 });
 		networkToastShown = true;
 
 		setTimeout(() => {
@@ -174,6 +175,10 @@ axios.interceptors.request.use(async (config) => {
 		}
 	}
 
+	if (config.data instanceof FormData || (config.data && Array.isArray((config.data as any)._parts))) {
+		delete config.headers["Content-Type"];
+	}
+
 	return config;
 });
 
@@ -182,15 +187,27 @@ axios.interceptors.response.use(
 		return res;
 	},
 	async (error: AxiosError) => {
+		const failedConfig = error.config as (typeof error.config & { _networkRetryCount?: number }) | undefined;
+		const statusCode = error.response?.status;
+		const retryableGetFailure = error.code === "ERR_NETWORK" || [502, 503, 504].includes(statusCode ?? 0);
+		if (failedConfig?.method?.toLowerCase() === "get" && retryableGetFailure && (failedConfig._networkRetryCount ?? 0) < 2) {
+			failedConfig._networkRetryCount = (failedConfig._networkRetryCount ?? 0) + 1;
+			await new Promise((resolve) => setTimeout(resolve, failedConfig._networkRetryCount === 1 ? 600 : 1500));
+			return axios(failedConfig);
+		}
 		// Handle network errors
 		if (error.code === "ERR_NETWORK" || error.message === "Network Error" || !error.response) {
-			await showNetworkUnavailableToast();
+			const url = error.config?.url ?? "";
+			const foregroundAction = error.config?.method?.toLowerCase() !== "get" && !/(register[_/-]?token|push[_/-]?token|analytics)/i.test(url);
+			if (foregroundAction) await showNetworkUnavailableToast(error);
 			return Promise.reject(error);
 		}
 
 		// Handle timeout errors
 		if (error.code === "ECONNABORTED" || error.message?.includes("timeout")) {
-			await showNetworkUnavailableToast();
+			const url = error.config?.url ?? "";
+			const foregroundAction = error.config?.method?.toLowerCase() !== "get" && !/(register[_/-]?token|push[_/-]?token|analytics)/i.test(url);
+			if (foregroundAction) await showNetworkUnavailableToast(error);
 			return Promise.reject(error);
 		}
 
@@ -228,12 +245,16 @@ axios.interceptors.response.use(
 						return axios(originalRequest);
 					}
 				} catch (refreshError: any) {
-					Logger.error("Background token refresh failed", refreshError);
+					Logger.error("Background token refresh failed", { code: refreshError?.response?.status ?? refreshError?.code ?? "unknown" });
 					// If the refresh call itself returned SESSION_REPLACED, handle that directly
 					// without triggering a generic session expired toast
 					if (isSessionReplacedError(refreshError)) {
 						await handleSessionReplaced();
 						return Promise.reject(error);
+					}
+					const refreshStatus = refreshError?.response?.status;
+					if (![400, 401, 403].includes(refreshStatus)) {
+					return Promise.reject(refreshError);
 					}
 				}
 			}
@@ -268,10 +289,11 @@ export const errorHandler = <T extends unknown = unknown>(
 ) => {
 	if (isAxiosError<T & GenericErrorResponse>(error)) {
 		const data = error.response?.data;
+		const friendly = getFriendlyError(error);
 
 		if (error.code === "ERR_NETWORK") {
 			return {
-				error: data,
+				error: { ...friendly, message: friendly.message },
 				errorType: "network-error",
 				variables,
 				ctx,
@@ -280,7 +302,7 @@ export const errorHandler = <T extends unknown = unknown>(
 
 		if (error.response?.status === 401) {
 			return {
-				error: data,
+				error: { ...friendly, message: friendly.message },
 				errorType: "unauthorized",
 				variables,
 				ctx,
@@ -289,7 +311,7 @@ export const errorHandler = <T extends unknown = unknown>(
 
 		if (error.code === "ECONNABORTED") {
 			return {
-				error: data,
+				error: { ...friendly, message: friendly.message },
 				errorType: "timeout",
 				variables,
 				ctx,
@@ -310,7 +332,7 @@ export const errorHandler = <T extends unknown = unknown>(
 			};
 
 			return {
-				error: normalizedData as any,
+				error: { ...friendly, message: friendly.message || normalizedData.message },
 				errorType: "bad-request",
 				variables,
 				ctx,
@@ -335,7 +357,7 @@ export const errorHandler = <T extends unknown = unknown>(
 			};
 
 			return {
-				error: normalizedData as any,
+				error: { ...friendly, message: friendly.message || normalizedData.message },
 				errorType: error.response?.status === 404 ? "not-found" : "validation-error",
 				variables,
 				ctx,
@@ -344,7 +366,7 @@ export const errorHandler = <T extends unknown = unknown>(
 	}
 
 	return {
-		error,
+		error: getFriendlyError(error),
 		errorType: "unknown",
 		variables,
 		ctx,

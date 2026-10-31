@@ -1,3 +1,4 @@
+import { useMountedRef } from "@/hooks/useMountedRef";
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { Select, SelectOption } from "@/components";
 import Input from "@/components/Input";
@@ -7,6 +8,7 @@ import { Images } from "@/constants/images";
 import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
 import { errorHandler, getUserProfile } from "@/utils/api";
@@ -22,7 +24,8 @@ import {
 } from "@/utils/api/bank";
 import { font, height, width } from "@/utils/dimensions";
 import { useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
@@ -43,8 +46,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 
 export default function VerifyBankDetails() {
+	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const insets = useSafeAreaInsets();
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
@@ -83,6 +87,7 @@ export default function VerifyBankDetails() {
 		accountType: "",
 	});
 	const ifscDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	useEffect(() => () => { if (ifscDebounceTimerRef.current) clearTimeout(ifscDebounceTimerRef.current); }, []);
 	const requestedIfscRef = useRef<string>("");
 
 	// Keep latestValuesRef in sync with formData so prefilled or programmatic updates aren't treated as massive pastes
@@ -182,7 +187,7 @@ export default function VerifyBankDetails() {
 			const info = getApiErrorInfo(hbBankError);
 			Logger.error("HB Bank Data Error", { status: info.status });
 			const message =
-				info.detail || info.message || t("failedToFetchDetails");
+				getFriendlyError(hbBankError).message;
 
 			if (info.status === 404) {
 				Toast.show({
@@ -223,7 +228,7 @@ export default function VerifyBankDetails() {
 				}
 			})
 			.catch((err) => {
-				Logger.error("Error fetching bank accounts", { message: err?.message });
+				Logger.error("Error fetching bank accounts", { message: getFriendlyError(err).message });
 			});
 	}, []);
 
@@ -252,6 +257,8 @@ export default function VerifyBankDetails() {
 	const { mutate: lookupIFSCMutation, isPending: isLookingUpIFSC } = useNetworkAwareMutation({
 		mutationFn: lookupIFSC,
 		onSuccess: (data: Partial<IFSCLookupResponseType>) => {
+			if (!mountedRef.current) return;
+			if (!mountedRef.current) return;
 			Logger.debug("IFSC Lookup API Response", { success: data?.success });
 
 			// Ignore out-of-order response if user changed IFSC while request was in-flight
@@ -297,6 +304,8 @@ export default function VerifyBankDetails() {
 			}
 		},
 		onError: (err, variables, ctx) => {
+			if (!mountedRef.current) return;
+			if (!mountedRef.current) return;
 			Logger.error("IFSC Lookup API Error");
 			const { error, errorType } = errorHandler(err, variables, ctx);
 
@@ -319,6 +328,8 @@ export default function VerifyBankDetails() {
 	const { mutate: submitBankDetailsMutation, isPending: isSubmitting } = useNetworkAwareMutation({
 		mutationFn: submitBankDetails,
 		onSuccess: (data) => {
+			if (!mountedRef.current) return;
+			if (!mountedRef.current) return;
 			Logger.debug("Bank details submitted successfully");
 
 			// Invalidate user dashboard and bank accounts query to refetch fresh data
@@ -339,13 +350,15 @@ export default function VerifyBankDetails() {
 			router.push("/verifying-bank");
 		},
 		onError: (err) => {
+			if (!mountedRef.current) return;
+			if (!mountedRef.current) return;
 			const info = getApiErrorInfo(err);
 			Logger.error("Bank details submission failed", { status: info.status });
 
 			Toast.show({
 				type: "error",
 				text1: t("bankSubmissionFailed"),
-				text2: info.detail || info.message || t("pleaseCheckYourBankDetails"),
+				text2: getFriendlyError(err).message,
 			});
 		},
 	});

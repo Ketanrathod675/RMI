@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/openExternalUrl";
 import { dark, dark_primary, primary } from "@/constants/Colors";
 import { useDefault } from "@/hooks/useDefault";
 import { height } from "@/utils/dimensions";
@@ -65,7 +66,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 									<Text style={styles.paragraph}>
 										This document / terms of use (&quot;Terms&quot;) sets forth
 										the general terms and conditions that apply to the access
-										and use of website at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("https://www.rapidmoney.in")}>https://www.rapidmoney.in</Text>{" "}
+										and use of website at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("https://www.rapidmoney.in")}>https://www.rapidmoney.in</Text>{" "}
 										(&quot;Website&quot;) and its mobile application
 										&apos;RapidMoney.&apos; (&quot;App&quot;) powered by
 										MoneyTime Technology Solutions Pvt. Ltd. (herewith referred
@@ -166,7 +167,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 									</Text>
 
 									<Text style={styles.numberedItem}>
-										1.3 By accepting the Terms of Use (<Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("https://www.rapidmoney.in")}>https://www.rapidmoney.in</Text>), the
+										1.3 By accepting the Terms of Use (<Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("https://www.rapidmoney.in")}>https://www.rapidmoney.in</Text>), the
 										Participant(s) irrevocably declares and undertakes that: (i)
 										he/she is above 18 (eighteen) years of age; (ii) he/she/ it
 										has the authority to enter into this Agreement; (ii) this
@@ -180,7 +181,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
   <Text
     style={{ color: dark_primary, textDecorationLine: "underline" }}
     onPress={() =>
-      Linking.openURL("https://www.rapidmoney.in/privacy-policy/")
+      openExternalUrl("https://www.rapidmoney.in/privacy-policy/")
     }
   >
     here
@@ -280,7 +281,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										provision and/or collection, storage, retention, use and
 										disclosure of the personal information of the Users shall be
 										subject to the application/Website&apos;s privacy policy
-										available (<Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("https://www.rapidmoney.in/privacy-policy/")}>https://www.rapidmoney.in/privacy-policy/</Text>)
+										available (<Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("https://www.rapidmoney.in/privacy-policy/")}>https://www.rapidmoney.in/privacy-policy/</Text>)
 									</Text>
 
 									<Text style={styles.numberedItem}>
@@ -301,7 +302,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										3.1 To borrow through the App/Website You must log on to{" "}
 										<Text
 											style={[styles.numberedItem, { color: dark_primary, textDecorationLine: "underline" }]}
-											onPress={() => Linking.openURL("https://web.rapidmoney.in/borrower/login")}>
+											onPress={() => openExternalUrl("https://web.rapidmoney.in/borrower/login")}>
 											https://web.rapidmoney.in/borrower/login
 										</Text>
 										.
@@ -549,7 +550,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										happens when the payment is received by the lending partners
 										via auto-debit mode and the borrower makes payment on their
 										own. The request can be raised by writing to customer
-										support at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text> on such debits from the
+										support at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text> on such debits from the
 										account. If a refund is eligible, it shall be processed by
 										the lending partner within 2 (two) days of resolution.
 									</Text>
@@ -583,7 +584,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										for any reason whatsoever the Borrower will not be able to
 										repay as per the repayment schedule under the Loan
 										Agreement, then the Borrower should promptly contact the
-										Company by sending an email to <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text> Upon
+										Company by sending an email to <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text> Upon
 										receipt, of the e-mail, our partnered regulated entities
 										along with its Lending Service Provider; MoneyTime
 										Technology Solutions Pvt. Ltd., shall undertake the
@@ -639,7 +640,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 
 									<Text style={styles.numberedItem}>
 										7.1 Once your Loan is repaid, you may terminate your
-										registration by sending us an email to <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>{" "}
+										registration by sending us an email to <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>{" "}
 										and you will no longer be able to access the App/Website.
 										However, the lending partner and the company will continue
 										to maintain records to the extent that we are required by
@@ -709,7 +710,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										preferences in the &quot;My Contact Preferences&quot; area
 										once you are logged in to your MoneyTime Technology
 										Solutions Pvt. Ltd. Account or email your preference to us
-										at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>
+										at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>
 									</Text>
 
 									<Text style={styles.subSectionTitle}>
@@ -890,7 +891,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 									<Text style={styles.numberedItem}>
 										10.3 All those IPR arising as a result of domain names,
 										internet or any other right available under applicable law
-										shall vest in the domain of <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("https://www.rapidmoney.in")}>www.rapidmoney.in</Text> as the owner
+										shall vest in the domain of <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("https://www.rapidmoney.in")}>www.rapidmoney.in</Text> as the owner
 										of such domain name.
 									</Text>
 
@@ -1003,7 +1004,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 									<Text style={styles.numberedItem}>
 										12.2 For any reporting in respect of the aforesaid, the User
 										should contact the Application/Website at{" "}
-										<Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>
+										<Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>
 									</Text>
 
 									<Text style={styles.numberedItem}>
@@ -1110,7 +1111,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 
 									<Text style={styles.numberedItem}>
 										17.1 If you want to make a complaint about the Loan
-										Agreement you can email <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text> with brief
+										Agreement you can email <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text> with brief
 										details of your complaint and your account reference.
 										MoneyTime Technology Solutions Pvt. Ltd. will acknowledge
 										your complaint within one working day. MoneyTime Technology
@@ -1134,7 +1135,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										general notification on the Website. Any notice to be sent
 										to the Website pursuant to these Terms of Use shall be sent
 										to the Application/Website&apos;s grievance officer by
-										e-mail at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => Linking.openURL("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>
+										e-mail at <Text style={{ color: dark_primary, textDecorationLine: "underline" }} onPress={() => openExternalUrl("mailto:support@rapidmoney.in")}>support@rapidmoney.in</Text>
 									</Text>
 
 									<Text style={styles.numberedItem}>
@@ -1312,7 +1313,7 @@ export const TermsAndConditions: FC<TermsAndConditionsProps> = ({ showModal, set
 										शर्तें निर्धारित करता है, जो कि{" "}
 										<Text
 											style={[styles.paragraph, { color: dark_primary, textDecorationLine: "underline" }]}
-											onPress={() => Linking.openURL("https://www.rapidmoney.in")}>
+											onPress={() => openExternalUrl("https://www.rapidmoney.in")}>
 											https://www.rapidmoney.in
 										</Text>
 										{" "}(&quot;Website&quot;) और इसके मोबाइल एप्लिकेशन &apos;RapidMoney&apos; (&quot;App&quot;)

@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "./storage";
 
 /**
@@ -11,7 +12,7 @@ export const updateUserSelfie = async (imageUri: string): Promise<void> => {
 			console.log("📸 Selfie updated in storage successfully");
 		}
 	} catch (error) {
-		console.error("Error saving selfie:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		throw error;
 	}
 };
@@ -23,7 +24,7 @@ export const getUserSelfie = async (): Promise<string | null> => {
 	try {
 		return await getStorageItem(STORAGE_KEYS["@user-selfie"]);
 	} catch (error) {
-		console.error("Error loading selfie:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		return null;
 	}
 };

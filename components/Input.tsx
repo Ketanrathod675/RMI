@@ -2,6 +2,7 @@ import { dark, white } from "@/constants/Colors";
 import { font, height, width } from "@/utils/dimensions";
 import React, { forwardRef } from "react";
 import { StyleSheet, Text, TextInput, TextInputProps, View } from "react-native";
+import type { TextInputRef } from "@/types/rn-refs";
 
 interface InputProps extends TextInputProps {
 	label?: string;
@@ -13,7 +14,7 @@ interface InputProps extends TextInputProps {
 	rightIcon?: React.ReactNode;
 }
 
-const Input = forwardRef<TextInput, InputProps>(
+const Input = forwardRef<TextInputRef, InputProps>(
 	(
 		{
 			label,

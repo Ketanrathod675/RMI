@@ -23,6 +23,7 @@ import {
 import {
 	allocateLenderForUser,
 	getHandshakeStatus,
+	getUserDashboardData,
 	getUserProfile,
 	retryAssessmentChecks,
 	triggerPostKycAllocationAdapter,
@@ -30,8 +31,11 @@ import {
 	type AssessmentChecks,
 	type RetryAssessmentChecksPayload,
 } from "@/utils/api";
+
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { getUserIdFromToken } from "@/utils/encode_decode";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import Logger from "@/utils/logger";
 import SecureStorage from "@/utils/secure-storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getMyDetails } from "@/utils/api/kyc";
@@ -40,7 +44,8 @@ import { font, height, width } from "@/utils/dimensions";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -109,7 +114,7 @@ export default function AssessmentFeeScreen() {
 	const router = useRouter();
 	const params = useLocalSearchParams();
 	const insets = useSafeAreaInsets();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	// Track this screen in journey
 	useJourneyTracker("/new-assessment-fee");
@@ -130,7 +135,32 @@ export default function AssessmentFeeScreen() {
 	const pollingLoaderTokenRef = useRef<number | null>(null);
 	const verifyFlowRunningRef = useRef<string | null>(null);
 
+	const lastRetryAtRef = useRef<number>(0);
+	const retryCooldownSecondsRef = useRef<number>(60);
+	const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+
+	useEffect(() => {
+		if (cooldownRemaining <= 0) return;
+		const timer = setInterval(() => {
+			setCooldownRemaining((prev) => {
+				if (prev <= 1) {
+					clearInterval(timer);
+					return 0;
+				}
+				return prev - 1;
+			});
+		}, 1000);
+		return () => clearInterval(timer);
+	}, [cooldownRemaining]);
+
+	const startCooldown = (seconds: number) => {
+		const s = Math.max(1, seconds);
+		retryCooldownSecondsRef.current = s;
+		setCooldownRemaining(s);
+	};
+
 	const leadPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const retryPaymentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const shimmerAnim = useRef(new Animated.Value(0)).current;
 
 	const { userId } = useAuth();
@@ -193,7 +223,7 @@ export default function AssessmentFeeScreen() {
 						await AsyncStorage.setItem(STORAGE_KEYS["@af-flag"], String(kycResp.af));
 					}
 				} catch (profileErr) {
-					console.warn("⚠️ [new-assessment-fee] Failed to recover lead/fee from /auth/me:", profileErr);
+					Logger.warn("Failed to recover lead/fee from /auth/me:", profileErr);
 				}
 			}
 		} catch { } finally {
@@ -237,11 +267,11 @@ export default function AssessmentFeeScreen() {
 							setAllocatedLender({ id: lId, name: lName });
 						}
 					} catch (allocErr) {
-						console.warn("⚠️ [AssessmentFee] Allocation adapter fallback failed:", allocErr);
+						Logger.warn("Allocation adapter fallback failed:", allocErr);
 					}
 				}
 			} catch (err) {
-				console.warn("⚠️ [AssessmentFee] Error loading allocation or af flag:", err);
+				Logger.warn("Error loading allocation or af flag:", err);
 			}
 		};
 		loadAllocationAndAf();
@@ -268,11 +298,7 @@ export default function AssessmentFeeScreen() {
 			}
 		} catch (err: any) {
 			const rawDetail = err?.response?.data?.detail;
-			const errorMsg =
-				typeof rawDetail === "string"
-					? rawDetail
-					: err?.response?.data?.message || err?.message || "Invalid coupon.";
-			setCouponError(errorMsg);
+			setCouponError(getFriendlyError(err).message);
 		} finally {
 			setIsCouponVerifying(false);
 		}
@@ -343,7 +369,7 @@ export default function AssessmentFeeScreen() {
 		try {
 			detailsResponse = await getMyDetails();
 		} catch (e) {
-			console.error("Failed to fetch user details", e);
+			Logger.error("Failed to fetch user details", e);
 		}
 
 		const isReapp = detailsResponse?.reapplication;
@@ -363,20 +389,47 @@ export default function AssessmentFeeScreen() {
 			}
 			activeTxnidRef.current = txnid;
 			const leadId = await resolveLeadId();
+
+			// Always call getHandshakeStatus first
+			let initialChecks: AssessmentChecks | null = null;
 			try {
-				await retryAssessmentChecks({
-					lead_id: leadId,
-					txnid: activeTxnidRef.current || undefined,
-				});
-			} catch (e) {
-				console.warn("retryAssessmentChecks in reapplication failed, continuing to check flow", e);
+				initialChecks = await getHandshakeStatus(txnid);
+			} catch (err) {
+				Logger.warn("Failed to fetch initial handshake status in reapplication", err);
 			}
+
+			if (initialChecks?.status === "approved") {
+				await proceedToProfessionalDetails();
+				return;
+			}
+
+			// Only call retryAssessmentChecks if status is "error" or "service_unavailable"
+			if (initialChecks?.status === "error" || initialChecks?.status === "service_unavailable") {
+				const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
+				if (timeSinceLastRetry >= retryCooldownSecondsRef.current) {
+					lastRetryAtRef.current = Date.now();
+					startCooldown(
+						typeof initialChecks.retry_after_seconds === "number"
+							? initialChecks.retry_after_seconds
+							: retryCooldownSecondsRef.current,
+					);
+					try {
+						await retryAssessmentChecks({
+							lead_id: leadId,
+							txnid: activeTxnidRef.current || undefined,
+						});
+					} catch (e) {
+						Logger.warn("retryAssessmentChecks in reapplication failed, continuing to check flow", e);
+					}
+				}
+			}
+
 			await startVerifyLeadFlow(txnid);
 			return;
 		}
 
 		// Standard first-time flow: User moved from Assessment Fee queue to Professional Details queue
-		console.log("➡️ [Payment Flow] Moving user to Professional Details queue (/professional-details)");
+		Logger.info("Moving user to Professional Details queue (/professional-details)");
 		await proceedToProfessionalDetails();
 	};
 
@@ -396,7 +449,7 @@ export default function AssessmentFeeScreen() {
 			(await getStorageItem(STORAGE_KEYS["@transaction-id"]));
 
 		if (!activeTxnid) {
-			console.warn("⚠️ [startVerifyLeadFlow] No transaction ID found, redirecting to dashboard");
+			Logger.warn("startVerifyLeadFlow: No transaction ID found, redirecting to dashboard");
 			if (pollingLoaderTokenRef.current !== null) {
 				hide(pollingLoaderTokenRef.current);
 				pollingLoaderTokenRef.current = null;
@@ -406,7 +459,7 @@ export default function AssessmentFeeScreen() {
 		}
 
 		if (verifyFlowRunningRef.current === activeTxnid) {
-			console.log("⚠️ [startVerifyLeadFlow] Flow already running for txn:", activeTxnid);
+			Logger.info("startVerifyLeadFlow: Flow already running for txn:", { activeTxnid });
 			if (pollingLoaderTokenRef.current !== null) {
 				hide(pollingLoaderTokenRef.current);
 				pollingLoaderTokenRef.current = null;
@@ -435,8 +488,6 @@ export default function AssessmentFeeScreen() {
 					const res = await pollAssessmentChecks({
 						txnid: activeTxnid,
 						signal: signal || checksSignal,
-						timeoutMs: 60000,
-						intervalMs: 2000,
 					});
 
 					if (res.status === "approved") {
@@ -449,7 +500,7 @@ export default function AssessmentFeeScreen() {
 						return { outcome: "approved", checks: res };
 					}
 
-					if (res.status === "rejected") {
+					if (res.status === "rejected" || res.status === "needs_update") {
 						if (isEmailFixable(res)) {
 							navTarget = () => {
 								router.replace({
@@ -472,6 +523,14 @@ export default function AssessmentFeeScreen() {
 
 						// Final rejection: return non-throwing outcome
 						return { outcome: "final_rejected", checks: res };
+					}
+
+					if (res.status === "service_unavailable") {
+						lastStatusRef.current = "service_unavailable";
+						if (typeof res.retry_after_seconds === "number") {
+							startCooldown(res.retry_after_seconds);
+						}
+						throw { isServiceUnavailable: true, checks: res };
 					}
 
 					// error or unexpected status
@@ -498,7 +557,29 @@ export default function AssessmentFeeScreen() {
 		} catch (error: any) {
 			verifyFlowRunningRef.current = null;
 			// Error or timeout: Fail-closed (NEVER navigate to /professional-details)
-			lastStatusRef.current = error?.isError ? "error" : "timeout";
+			const checks = error?.checks;
+			if (isEmailFixable(checks)) {
+				router.replace({
+					pathname: "/verify-email" as any,
+					params: { paymentConfirmed: "true", txnid: activeTxnid },
+				});
+				return;
+			}
+			if (isPanFixable(checks)) {
+				router.replace({
+					pathname: "/verify-pan" as any,
+					params: { paymentConfirmed: "true", txnid: activeTxnid },
+				});
+				return;
+			}
+			if (checks?.status === "service_unavailable" || error?.isServiceUnavailable) {
+				lastStatusRef.current = "service_unavailable";
+				if (typeof checks?.retry_after_seconds === "number") {
+					startCooldown(checks.retry_after_seconds);
+				}
+			} else {
+				lastStatusRef.current = error?.isError ? "error" : "timeout";
+			}
 			setStillCheckingModalVisible(true);
 		}
 	};
@@ -510,7 +591,15 @@ export default function AssessmentFeeScreen() {
 			router.replace("/(tabs)");
 			return;
 		}
-		if (lastStatusRef.current === "error") {
+
+		const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
+		const canRetryBackend =
+			(lastStatusRef.current === "error" || lastStatusRef.current === "service_unavailable") &&
+			timeSinceLastRetry >= retryCooldownSecondsRef.current;
+
+		if (canRetryBackend) {
+			lastRetryAtRef.current = Date.now();
+			startCooldown(retryCooldownSecondsRef.current);
 			try {
 				const leadId = await resolveLeadId();
 				await retryAssessmentChecks({
@@ -518,7 +607,7 @@ export default function AssessmentFeeScreen() {
 					txnid: activeTxnidRef.current || undefined,
 				});
 			} catch (e) {
-				console.warn("retryAssessmentChecks on retry failed", e);
+				Logger.warn("retryAssessmentChecks on retry failed", e);
 			}
 		}
 		startVerifyLeadFlow(txnid);
@@ -546,6 +635,7 @@ export default function AssessmentFeeScreen() {
 		initiatePayment,
 		isPending,
 		isPaymentCompleted,
+		resetPaymentCompleted,
 		isPaymentPolling,
 		delayVisible,
 		setDelayVisible,
@@ -553,6 +643,7 @@ export default function AssessmentFeeScreen() {
 		paymentOutcome,
 		outcomePending,
 		recheckPayment,
+		cancelVerification,
 		dismissPaymentOutcome,
 		simulateDeepLinkReturn,
 		clearTimer,
@@ -567,27 +658,49 @@ export default function AssessmentFeeScreen() {
 		onCouponRejected: handleRemoveCoupon,
 	});
 
+	// Reset isPaymentCompleted on screen focus when still on the assessment fee step
+	useFocusEffect(
+		useCallback(() => {
+			getUserDashboardData()
+				.then((dash: any) => {
+					const step = String(
+						dash?.current_step || dash?.workflow_progress?.current_step || dash?.current_step_info?.step || "",
+					).toLowerCase().trim();
+					const isStillFeeStep = !step || step.includes("fee") || step.includes("assessment") || step === "basic_details";
+					if (isStillFeeStep) {
+						resetPaymentCompleted();
+					}
+				})
+				.catch(() => {});
+		}, [resetPaymentCompleted])
+	);
+
 	// Sync payment polling stage with loader
 	useEffect(() => {
 		if (isPaymentPolling) {
 			if (pollingLoaderTokenRef.current === null) {
-				pollingLoaderTokenRef.current = show("assessment_fee", t("verifyingPaymentWait"));
+				pollingLoaderTokenRef.current = show("assessment_fee", t("verifyingPaymentWait"), { onCancel: cancelVerification });
 			}
 		} else {
 			// Polling ended: only hide if outcome is NOT success.
 			// Dismiss the loader immediately when outcomePending or paymentOutcome is set,
 			// so the loader is already hidden when PaymentStatusModal appears 450ms later (avoids iOS modal drop).
-			if (outcomePending || paymentOutcome) {
+			// NOTE: On successful payment, startVerifyLeadFlow / runStepThenNavigate already took
+			// ownership and bumped ownerTokenRef. When this hide runs with the old pollingLoaderTokenRef,
+			// JourneyLoaderProvider's token check makes this hide a safe no-op, preventing any screen flash.
+			if (outcomePending || paymentOutcome || isPaymentCompleted) {
 				if (pollingLoaderTokenRef.current !== null) {
 					hide(pollingLoaderTokenRef.current);
 					pollingLoaderTokenRef.current = null;
 				}
 			}
 		}
-	}, [isPaymentPolling, outcomePending, paymentOutcome]);
+	}, [isPaymentPolling, outcomePending, paymentOutcome, isPaymentCompleted, cancelVerification]);
+
 
 	useEffect(() => {
 		return () => {
+			if (retryPaymentTimerRef.current) { clearTimeout(retryPaymentTimerRef.current); retryPaymentTimerRef.current = null; }
 			if (pollingLoaderTokenRef.current !== null) {
 				hide(pollingLoaderTokenRef.current);
 				pollingLoaderTokenRef.current = null;
@@ -827,7 +940,7 @@ export default function AssessmentFeeScreen() {
 				type={paymentOutcome?.type ?? null}
 				onRetry={() => {
 					dismissPaymentOutcome();
-					setTimeout(() => initiatePayment(), 350);
+					retryPaymentTimerRef.current = setTimeout(() => { retryPaymentTimerRef.current = null; initiatePayment(); }, 350);
 				}}
 				onCheckAgain={recheckPayment}
 				onContactSupport={() => {
@@ -867,14 +980,29 @@ export default function AssessmentFeeScreen() {
 							<Ionicons name="time-outline" size={42} color="#0284C7" />
 						</View>
 						<Text style={styles.modalTitle}>{t("stillCheckingDetailsTitle")}</Text>
-						<Text style={styles.modalDescription}>{t("stillCheckingDetailsDesc")}</Text>
+						<Text style={styles.modalDescription}>
+							{lastStatusRef.current === "service_unavailable"
+								? t(
+										"verificationServiceUnavailable",
+										"Our verification partner is temporarily unavailable. Please try again in a few minutes.",
+								  )
+								: t("stillCheckingDetailsDesc")}
+						</Text>
 
 						<View style={styles.modalActions}>
 							<TouchableOpacity
-								style={styles.primaryModalBtn}
+								style={[
+									styles.primaryModalBtn,
+									cooldownRemaining > 0 && styles.buttonDisabled,
+								]}
 								onPress={handleRetryChecking}
+								disabled={cooldownRemaining > 0}
 								activeOpacity={0.85}>
-								<Text style={styles.primaryModalBtnText}>{t("tryAgain")}</Text>
+								<Text style={styles.primaryModalBtnText}>
+									{cooldownRemaining > 0
+										? `${t("tryAgain", "Try Again")} (${cooldownRemaining}s)`
+										: t("tryAgain", "Try Again")}
+								</Text>
 							</TouchableOpacity>
 
 							<TouchableOpacity
@@ -1162,6 +1290,9 @@ const styles = StyleSheet.create({
 		fontWeight: "600",
 		fontSize: font(1.5),
 		textDecorationLine: "underline",
+	},
+	buttonDisabled: {
+		opacity: 0.6,
 	},
 });
 

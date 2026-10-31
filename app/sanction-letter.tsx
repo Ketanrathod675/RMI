@@ -5,6 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
+import { QueryErrorState } from "@/components/QueryErrorState";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	getSanctionLetterStatus,
@@ -18,7 +20,8 @@ import { getApiErrorInfo, errorText } from "@/utils/api/errors";
 import { font, height, width } from "@/utils/dimensions";
 import Logger from "@/utils/logger";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -139,7 +142,7 @@ class PdfErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundary
 	}
 
 	componentDidCatch(error: any) {
-		Logger.debug("PdfErrorBoundary caught error", { message: error?.message });
+		Logger.debug("PdfErrorBoundary caught error", { message: getFriendlyError(error).message });
 	}
 
 	render() {
@@ -206,7 +209,7 @@ const PdfFallbackPreview = ({
 export default function SanctionLetter() {
 	const { t } = useTranslation();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const queryClient = useQueryClient();
 
 	// Track this screen in the journey
@@ -229,7 +232,7 @@ export default function SanctionLetter() {
 		queryKey: ["sanction-letter", "document"],
 		queryFn: async () => {
 			const status = await getSanctionLetterStatus();
-			if (status.is_signed || status.status === "accepted") {
+			if (status.is_signed) {
 				return { signed: true as const, uri: null, sanctionNumber: status.sanction_number, validUntil: status.valid_until };
 			}
 			let currentStatus = status;
@@ -257,11 +260,11 @@ export default function SanctionLetter() {
 		retry: 1,
 	});
 
-	// If already signed, navigate forward to auto debit setup
+	// If already signed, navigate forward to final loan completion screen
 	useEffect(() => {
 		if (docData?.signed) {
 			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-			router.replace("/auto-debit-setup");
+			router.replace({ pathname: "/loan-congratulations", params: { final: "1" } } as any);
 		}
 	}, [docData, queryClient, router]);
 
@@ -272,6 +275,10 @@ export default function SanctionLetter() {
 			const text = errorText(info);
 			Logger.debug("Sanction letter document query error", { status: info.status });
 
+			if (info.status === 409 && (text.includes("enach") || text.includes("mandate"))) {
+				router.replace("/auto-debit-setup");
+				return;
+			}
 			if ((info.status === 409 || info.status === 404) && text.includes("bank details")) {
 				router.replace("/verify-bank-details");
 				return;
@@ -328,18 +335,22 @@ export default function SanctionLetter() {
 					Toast.show({
 						type: "error",
 						text1: t("alert") || "Notice",
-						text2: info.detail || info.message || "Too many requests. Please try again later.",
+						text2: getFriendlyError(err).message,
 					});
 					return;
 				}
 
 				if (info.status === 400 && text.includes("already signed")) {
 					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-					router.replace("/auto-debit-setup");
+					router.replace({ pathname: "/loan-congratulations", params: { final: "1" } } as any);
 					return;
 				}
 
 				if (info.status === 409) {
+					if (text.includes("enach") || text.includes("mandate")) {
+						router.replace("/auto-debit-setup");
+						return;
+					}
 					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 					router.replace("/(tabs)");
 					return;
@@ -348,7 +359,7 @@ export default function SanctionLetter() {
 				Toast.show({
 					type: "error",
 					text1: t("failedToSendOTP") || "Failed to send OTP",
-					text2: info.detail || info.message || t("pleaseTryAgain") || "Please try again",
+					text2: getFriendlyError(err).message,
 				});
 			},
 		});
@@ -385,7 +396,7 @@ export default function SanctionLetter() {
 			if (!docData?.uri) throw new Error("PDF not downloaded");
 			await openLocalPdf(docData.uri);
 		} catch (error: any) {
-			Logger.debug("Could not open local PDF viewer", { message: error?.message });
+			Logger.debug("Could not open local PDF viewer", { message: getFriendlyError(error).message });
 			Toast.show({
 				type: "info",
 				text1: "Opening Document",
@@ -394,8 +405,7 @@ export default function SanctionLetter() {
 		}
 	}, [docData?.uri]);
 
-	const errorInfo = docError ? getApiErrorInfo(docError) : null;
-	const errorMessage = errorInfo?.detail || errorInfo?.message;
+	const errorMessage = docError ? getFriendlyError(docError).message : undefined;
 
 	const isPdfReady = Boolean(docData?.uri && !docData.signed);
 	const isBusy = isLoading || isFetching || isInitiatingSign;
@@ -414,6 +424,7 @@ export default function SanctionLetter() {
 
 				{/* Content */}
 				<ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+					{docError && docData && <QueryErrorState error={docError} hasData onRetry={() => { void refetchDocument(); }} />}
 					<View style={styles.documentContainer}>
 						<Text style={styles.sectionTitle}>{t("sanctionLetter")}</Text>
 
@@ -446,19 +457,7 @@ export default function SanctionLetter() {
 								)}
 							</View>
 						) : (
-							<View style={styles.loadingContainer}>
-								<Ionicons name="alert-circle-outline" size={48} color="#FF6B6B" style={{ marginBottom: 12 }} />
-								<Text style={[styles.loadingText, { textAlign: "center", paddingHorizontal: 16 }]}>
-									{errorMessage || t("errorLoadingPDF") || "Error Loading PDF"}
-								</Text>
-								<TouchableOpacity
-									onPress={() => refetchDocument()}
-									style={styles.retryButton}
-									activeOpacity={0.7}>
-									<Ionicons name="refresh-outline" size={18} color="#FFFFFF" />
-									<Text style={styles.retryButtonText}>{t("retry") || "Retry"}</Text>
-								</TouchableOpacity>
-							</View>
+							<QueryErrorState error={docError ?? new Error(errorMessage || t("errorLoadingPDF"))} onRetry={() => { void refetchDocument(); }} onGoHome={() => router.replace("/(tabs)")} />
 						)}
 					</View>
 

@@ -1,3 +1,5 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import Logger from "@/utils/logger";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -14,7 +16,9 @@ import {
 	View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter, useLocalSearchParams, useNavigation } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import Toast from "react-native-toast-message";
 import * as DocumentPicker from "expo-document-picker";
 import { Image } from "expo-image";
@@ -30,8 +34,10 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	getAddressDocumentTypes,
+	getAddressPrefill,
 	getAddressStatus,
 	getPincodeDetails,
+	getSelfieStatus,
 	getUserDashboardData,
 	StepHref,
 	submitAddress,
@@ -95,12 +101,13 @@ const DEFAULT_DOCUMENT_TYPE_OPTIONS: SelectOption[] = [
 export default function AadhaarKyc() {
 	const { t } = useTranslation();
 	const router = useRouter();
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 	const insets = useSafeAreaInsets();
 	const params = useLocalSearchParams<{
 		startFromAddress?: string;
 		permAddressData?: string;
 		nextStep?: string;
+		fromSelfie?: string;
 	}>();
 
 	// Track this screen in the journey
@@ -112,8 +119,40 @@ export default function AadhaarKyc() {
 	const queryClient = useQueryClient();
 	const [address, setAddress] = useState<AddressType | null>(DEFAULT_EMPTY_ADDRESS);
 	const [isAddressLoading, setIsAddressLoading] = useState(true);
-	const [addressLoadError, setAddressLoadError] = useState<string | null>(null);
 	const [documentTypeOptions, setDocumentTypeOptions] = useState<SelectOption[]>(DEFAULT_DOCUMENT_TYPE_OPTIONS);
+	const [isCheckingSelfie, setIsCheckingSelfie] = useState(params.fromSelfie !== "true");
+	const [selfieCheckError, setSelfieCheckError] = useState<string | null>(null);
+
+	const verifySelfieGuard = useCallback(async () => {
+		if (params.fromSelfie === "true") {
+			setIsCheckingSelfie(false);
+			return;
+		}
+		setIsCheckingSelfie(true);
+		setSelfieCheckError(null);
+		try {
+			const res = await getSelfieStatus();
+			const data = res?.data;
+			const isPassed =
+				(data?.selfie_uploaded && data?.face_match_status === "passed") ||
+				data?.status === "completed";
+
+			if (!isPassed) {
+				router.replace({ pathname: "/ckyc-instructions", params: { startSelfie: "true" } });
+				return;
+			}
+			setIsCheckingSelfie(false);
+		} catch (err: any) {
+			setSelfieCheckError(
+				"We couldn't verify your verification status yet. Please check your connection and try again."
+			);
+		}
+	}, [params.fromSelfie, router]);
+
+	useEffect(() => {
+		verifySelfieGuard();
+	}, [verifySelfieGuard]);
+
 	const [selectedDocumentType, setSelectedDocumentType] = useState<string>("electricity_bill");
 	const [currentAddress, setCurrentAddress] = useState<"Yes" | "No">("Yes");
 	const [commAddressLine1, setCommAddressLine1] = useState("");
@@ -122,9 +161,9 @@ export default function AadhaarKyc() {
 	const [commPincode, setCommPincode] = useState("");
 	const [commState, setCommState] = useState("");
 	const [commErrors, setCommErrors] = useState({ addressLine1: "", pincode: "" });
-	const commAddressLine1Ref = useRef<TextInput>(null);
-	const commAddressLine2Ref = useRef<TextInput>(null);
-	const commPincodeRef = useRef<TextInput>(null);
+	const commAddressLine1Ref = useRef<TextInputRef>(null);
+	const commAddressLine2Ref = useRef<TextInputRef>(null);
+	const commPincodeRef = useRef<TextInputRef>(null);
 	const [uploadedFiles, setUploadedFiles] = useState<UploadedFileType[]>([]);
 	const [isLoading, setIsLoading] = useState(false);
 	const [isUploading, setIsUploading] = useState(false);
@@ -146,11 +185,29 @@ export default function AadhaarKyc() {
 
 	const loadAddressData = useCallback(async () => {
 		setIsAddressLoading(true);
-		setAddressLoadError(null);
 		try {
-			const res = await getAddressStatus();
-			if (res.success && res.data) {
-				const d = res.data;
+			let d: any = null;
+			try {
+				const prefillRes = await getAddressPrefill();
+				if (prefillRes?.success && prefillRes?.data) {
+					d = prefillRes.data;
+				}
+			} catch {
+				// Fall back to getAddressStatus if prefill fails
+			}
+
+			if (!d) {
+				try {
+					const statusRes = await getAddressStatus();
+					if (statusRes?.success && statusRes?.data) {
+						d = statusRes.data;
+					}
+				} catch {
+					// Fall back silently
+				}
+			}
+
+			if (d) {
 				setAddress({
 					house: d.kyc_address || "",
 					street: "",
@@ -164,6 +221,22 @@ export default function AadhaarKyc() {
 					po: "",
 					landmark: "",
 				});
+
+				if (d.communication_address) {
+					setCommAddressLine1(d.communication_address);
+				}
+				if (d.communication_city) {
+					setCommCity(d.communication_city);
+				}
+				if (d.communication_pin_code) {
+					setCommPincode(d.communication_pin_code);
+				}
+				if (d.communication_state) {
+					setCommState(d.communication_state);
+				}
+				if (d.is_current_address !== undefined) {
+					setCurrentAddress(d.is_current_address ? "Yes" : "No");
+				}
 
 				let rawTypes = d.supported_document_types;
 				if (!rawTypes || rawTypes.length === 0) {
@@ -211,10 +284,10 @@ export default function AadhaarKyc() {
 					});
 				}
 			} else {
-				setAddressLoadError(res.message || "Failed to load KYC address");
+				setAddress(DEFAULT_EMPTY_ADDRESS);
 			}
-		} catch (err: any) {
-			setAddressLoadError(err?.detail || err?.message || "Failed to load KYC address");
+		} catch {
+			setAddress(DEFAULT_EMPTY_ADDRESS);
 			setDocumentTypeOptions((prev) => (prev.length > 0 ? prev : DEFAULT_DOCUMENT_TYPE_OPTIONS));
 		} finally {
 			setIsAddressLoading(false);
@@ -333,7 +406,7 @@ export default function AadhaarKyc() {
 			Toast.show({
 				type: "error",
 				text1: t("documentUploadFailed", "Document upload failed"),
-				text2: error?.detail || error?.message || t("pleaseRetryPayment", "Please try again"),
+				text2: getFriendlyError(error).message || t("pleaseRetryPayment", "Please try again"),
 			});
 		} finally {
 			setIsUploading(false);
@@ -424,12 +497,44 @@ export default function AadhaarKyc() {
 			Toast.show({
 				type: "error",
 				text1: t("failedToVerifyAddress", "Failed to verify address"),
-				text2: error?.detail || error?.message || t("pleaseRetryPayment", "Please try again"),
+				text2: getFriendlyError(error).message || t("pleaseRetryPayment", "Please try again"),
 			});
 		} finally {
 			setIsLoading(false);
 		}
 	};
+
+	if (isCheckingSelfie) {
+		return (
+			<SafeAreaView style={[styles.bg, { justifyContent: "center", alignItems: "center", padding: 24 }]}>
+				{selfieCheckError ? (
+					<>
+						<Text style={{ fontSize: font(2), fontWeight: "700", color: dark, marginBottom: 8 }}>
+							{t("alert", "Alert")}
+						</Text>
+						<Text style={{ fontSize: font(1.5), color: "#666", textAlign: "center", marginBottom: 20 }}>
+							{selfieCheckError}
+						</Text>
+						<TouchableOpacity
+							style={{ backgroundColor: dark, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 }}
+							onPress={verifySelfieGuard}
+						>
+							<Text style={{ color: "#fff", fontWeight: "700", fontSize: font(1.5) }}>
+								{t("tryAgain", "Try Again")}
+							</Text>
+						</TouchableOpacity>
+					</>
+				) : (
+					<>
+						<ActivityIndicator size="large" color={dark} />
+						<Text style={{ marginTop: 12, color: "#666", fontSize: font(1.6) }}>
+							{t("verifyingDetails", "Verifying your details...")}
+						</Text>
+					</>
+				)}
+			</SafeAreaView>
+		);
+	}
 
 	if (isAddressLoading) {
 		return (
@@ -438,25 +543,6 @@ export default function AadhaarKyc() {
 				<Text style={{ marginTop: 12, color: "#666", fontSize: font(1.6) }}>
 					{t("verifyingDetails", "Verifying your details...")}
 				</Text>
-			</SafeAreaView>
-		);
-	}
-
-	if (addressLoadError) {
-		return (
-			<SafeAreaView style={[styles.bg, { justifyContent: "center", alignItems: "center", padding: 24 }]}>
-				<Text style={{ fontSize: font(2), fontWeight: "700", color: dark, marginBottom: 8 }}>
-					{t("alert", "Alert")}
-				</Text>
-				<Text style={{ fontSize: font(1.5), color: "#666", textAlign: "center", marginBottom: 20 }}>
-					{addressLoadError}
-				</Text>
-				<TouchableOpacity
-					style={{ backgroundColor: dark, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 }}
-					onPress={loadAddressData}
-				>
-					<Text style={{ color: "#fff", fontWeight: "700", fontSize: font(1.5) }}>{t("tryAgain", "Try Again")}</Text>
-				</TouchableOpacity>
 			</SafeAreaView>
 		);
 	}
@@ -943,7 +1029,7 @@ export default function AadhaarKyc() {
 														title: t("openInExternalApp", "Open in External App"),
 													});
 												} catch (error) {
-													console.error("Error sharing PDF:", error);
+									Logger.warn("PDF share failed", { code: "share_failed" });
 													Toast.show({
 														type: "error",
 														text1: t("cannotOpenFile", "Cannot open file"),

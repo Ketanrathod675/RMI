@@ -54,7 +54,7 @@ interface JourneyLoaderContextValue {
 		task: (helpers: StepRunHelpers) => Promise<T>,
 		options: RunStepThenNavigateOptions
 	) => Promise<T>;
-	show: (stepId: JourneyStepId, customSubtitle?: string) => number;
+	show: (stepId: JourneyStepId, customSubtitle?: string, options?: { onCancel?: () => void }) => number;
 	hide: (token?: number) => void;
 	markCompleted: (stepId: JourneyStepId) => void;
 	markFailed: (stepId: JourneyStepId) => void;
@@ -77,9 +77,23 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 	const [attentionBadgeLabel, setAttentionBadgeLabel] = useState<string | null>(null);
 	const [completedStepIds, setCompletedStepIds] = useState<JourneyStepId[]>([]);
 	const [dynamicSubtitle, setDynamicSubtitle] = useState<string | undefined>(undefined);
+	const [onCancel, setOnCancel] = useState<(() => void) | undefined>(undefined);
 
 	const ownerTokenRef = useRef(0);
 	const navigatedForTokenRef = useRef<number | null>(null);
+	const timersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+	const wait = useCallback((ms: number) => new Promise<void>((resolve) => {
+		const timer = setTimeout(() => {
+			timersRef.current.delete(timer);
+			resolve();
+		}, ms);
+		timersRef.current.add(timer);
+	}), []);
+	useEffect(() => () => {
+		ownerTokenRef.current += 1;
+		timersRef.current.forEach(clearTimeout);
+		timersRef.current.clear();
+	}, []);
 
 	// Load previously saved completed steps from storage on mount
 	useEffect(() => {
@@ -142,7 +156,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 		return getProgressPercent(completedStepIds, activeId);
 	}, [completedStepIds, activeId]);
 
-	const show = useCallback((stepId: JourneyStepId, customSubtitle?: string): number => {
+	const show = useCallback((stepId: JourneyStepId, customSubtitle?: string, options?: { onCancel?: () => void }): number => {
 		const token = ++ownerTokenRef.current;
 		const completedBefore = getCompletedBefore(stepId);
 		setActiveId(stepId);
@@ -151,6 +165,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 		setAttentionBadgeLabel(null);
 		setDynamicSubtitle(customSubtitle);
 		setVisible(true);
+		setOnCancel(() => options?.onCancel);
 		setCompletedStepIds(completedBefore);
 		persistCompletedSteps(completedBefore).catch(() => {});
 		return token;
@@ -158,9 +173,16 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 
 	const hide = useCallback((token?: number) => {
 		if (token !== undefined && token !== ownerTokenRef.current) {
+			if (__DEV__) {
+				console.log(
+					`[JourneyLoader] Ignored hide with stale token ${token} (active owner token is ${ownerTokenRef.current})`
+				);
+			}
 			return;
 		}
+
 		setVisible(false);
+		setOnCancel(undefined);
 		setActiveId(null);
 		setFailedId(null);
 		setAttentionId(null);
@@ -235,9 +257,11 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 			let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 			const timeoutPromise = new Promise<never>((_, reject) => {
 				timeoutHandle = setTimeout(() => {
+					if (timeoutHandle) timersRef.current.delete(timeoutHandle);
 					abortController.abort();
 					reject(new Error(`Operation timed out after ${timeoutMs}ms`));
 				}, timeoutMs);
+				timersRef.current.add(timeoutHandle);
 			});
 
 			try {
@@ -246,6 +270,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 
 				if (timeoutHandle) {
 					clearTimeout(timeoutHandle);
+					timersRef.current.delete(timeoutHandle);
 				}
 
 				if (ownerTokenRef.current !== token) {
@@ -259,9 +284,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 						: minActiveTime;
 				const elapsed = Date.now() - startTime;
 				if (elapsed < requiredActiveTime) {
-					await new Promise((resolve) =>
-						setTimeout(resolve, requiredActiveTime - elapsed)
-					);
+					await wait(requiredActiveTime - elapsed);
 				}
 
 				if (ownerTokenRef.current !== token) {
@@ -273,10 +296,11 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 				persistCompletedSteps(nextCompleted).catch(() => {});
 
 				// Wait for tick scale-in and strikethrough animation (550ms)
-				await new Promise((resolve) => setTimeout(resolve, 550));
+				await wait(550);
 
 				if (ownerTokenRef.current === token && !options?.keepOpen) {
 					setVisible(false);
+		setOnCancel(undefined);
 					setActiveId(null);
 					setDynamicSubtitle(undefined);
 				}
@@ -290,7 +314,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 					if (options?.treatErrorAsAttention || stepId === "verifying_details") {
 						setAttentionId(stepId);
 						setAttentionBadgeLabel(options?.attentionBadgeLabel || t("stepTakingLonger", "Taking longer than usual"));
-						await new Promise((resolve) => setTimeout(resolve, 800));
+						await wait(800);
 						if (ownerTokenRef.current === token) {
 							setVisible(false);
 							setActiveId(null);
@@ -300,7 +324,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 						}
 					} else {
 						setFailedId(stepId);
-						await new Promise((resolve) => setTimeout(resolve, 800));
+						await wait(800);
 						if (ownerTokenRef.current === token) {
 							setVisible(false);
 							setActiveId(null);
@@ -312,7 +336,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 				throw error;
 			}
 		},
-		[persistCompletedSteps, t]
+		[persistCompletedSteps, t, wait]
 	);
 
 	const runStepThenNavigate = useCallback(
@@ -349,9 +373,11 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 			let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 			const timeoutPromise = new Promise<never>((_, reject) => {
 				timeoutHandle = setTimeout(() => {
+					timersRef.current.delete(timeoutHandle!);
 					abortController.abort();
 					reject(new Error(`Operation timed out after ${timeoutMs}ms`));
 				}, timeoutMs);
+				timersRef.current.add(timeoutHandle);
 			});
 
 			try {
@@ -360,6 +386,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 
 				if (timeoutHandle) {
 					clearTimeout(timeoutHandle);
+					timersRef.current.delete(timeoutHandle);
 				}
 
 				if (ownerTokenRef.current !== token) {
@@ -373,9 +400,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 						: minActiveTime;
 				const elapsed = Date.now() - startTime;
 				if (elapsed < requiredActiveTime) {
-					await new Promise((resolve) =>
-						setTimeout(resolve, requiredActiveTime - elapsed)
-					);
+					await wait(requiredActiveTime - elapsed);
 				}
 
 				if (ownerTokenRef.current !== token) {
@@ -393,7 +418,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 				}
 
 				// Wait for tick scale-in and strikethrough animation (550ms)
-				await new Promise((resolve) => setTimeout(resolve, 550));
+				await wait(550);
 
 				if (ownerTokenRef.current === token && navigatedForTokenRef.current !== token) {
 					// Navigate while loader is still visible!
@@ -402,7 +427,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 
 					if (!options.keepOpen) {
 						const hideDelayMs = options.hideDelayMs ?? 450;
-						await new Promise((resolve) => setTimeout(resolve, hideDelayMs));
+						await wait(hideDelayMs);
 						if (ownerTokenRef.current === token) {
 							setVisible(false);
 							setActiveId(null);
@@ -415,12 +440,13 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 			} catch (error) {
 				if (timeoutHandle) {
 					clearTimeout(timeoutHandle);
+					timersRef.current.delete(timeoutHandle);
 				}
 				if (ownerTokenRef.current === token) {
 					if (options?.treatErrorAsAttention || stepId === "verifying_details") {
 						setAttentionId(stepId);
 						setAttentionBadgeLabel(options?.attentionBadgeLabel || t("stepTakingLonger", "Taking longer than usual"));
-						await new Promise((resolve) => setTimeout(resolve, 800));
+						await wait(800);
 						if (ownerTokenRef.current === token) {
 							setVisible(false);
 							setActiveId(null);
@@ -430,7 +456,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 						}
 					} else {
 						setFailedId(stepId);
-						await new Promise((resolve) => setTimeout(resolve, 800));
+						await wait(800);
 						if (ownerTokenRef.current === token) {
 							setVisible(false);
 							setActiveId(null);
@@ -442,7 +468,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 				throw error;
 			}
 		},
-		[persistCompletedSteps, t]
+		[persistCompletedSteps, t, wait]
 	);
 
 	const contextValue = useMemo<JourneyLoaderContextValue>(
@@ -472,6 +498,7 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 				attentionId={attentionId}
 				attentionBadgeLabel={attentionBadgeLabel}
 				progressPercent={progressPercent}
+				onCancel={onCancel}
 			/>
 		</JourneyLoaderContext.Provider>
 	);

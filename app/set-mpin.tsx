@@ -1,3 +1,4 @@
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
@@ -9,7 +10,9 @@ import { useSignin } from "@/hooks/useSignin";
 import { useTranslation } from "@/hooks/useTranslation";
 import { errorHandler, setMpin as setMpinApi } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
-import { router, useNavigation } from "expo-router";
+import { router } from "expo-router";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { TextInputRef } from "@/types/rn-refs";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	Alert,
@@ -40,7 +43,7 @@ export default function SetMpin() {
 	}, []);
 
 	// Navigation
-	const navigation = useNavigation();
+	const navigation = useTypedNavigation();
 
 	useEffect(() => {
 		// Prevent swipe or navigation.goBack inside router
@@ -105,16 +108,16 @@ export default function SetMpin() {
 	// }, []);
 
 	const mpinRefs = [
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
 	];
 	const confirmRefs = [
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
-		useRef<TextInput>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
+		useRef<TextInputRef>(null),
 	];
 
 	const { logout, handleMpinSet, handleSetTokens, handleMpinSignIn } = useAuth(false);
@@ -203,7 +206,7 @@ export default function SetMpin() {
 			Toast.show({
 				type: "error",
 				text1: t("errorSettingMPIN"),
-				text2: error?.message ?? t("pleaseLoginAgain"),
+				text2: getFriendlyError(error).message ?? t("pleaseLoginAgain"),
 			});
 		},
 	});

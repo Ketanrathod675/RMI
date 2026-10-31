@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { Image } from "expo-image";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import type { TextInputRef } from "@/types/rn-refs";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
@@ -54,7 +55,7 @@ export default function LoanEnterOTP() {
 		useState(false);
 	const [modalVisible, setModalVisible] = useState(false);
 
-	const inputRefs = useRef<(TextInput | null)[]>([]);
+	const inputRefs = useRef<(TextInputRef | null)[]>([]);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
 	const initialSendCalled = useRef(false);
 

@@ -23,7 +23,8 @@ export const Logger = {
 	warn(message: string, data?: unknown) { if (shouldLog("warn")) console.warn(format("warn", message), data === undefined ? "" : redact(data)); },
 	error(message: string, error?: unknown) {
 		if (!shouldLog("error")) return;
-		const value = CONFIG.IS_PROD && error instanceof Error ? { message: error.message } : redact(error);
+		const source = error as { code?: unknown; response?: { status?: unknown }; httpStatus?: unknown; status?: unknown } | null | undefined;
+		const value = error == null ? "" : { code: source?.code ?? "unknown", status: source?.response?.status ?? source?.httpStatus ?? source?.status };
 		console.error(format("error", message), value ?? "");
 	},
 };

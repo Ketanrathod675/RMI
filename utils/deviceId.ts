@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import * as Application from "expo-application";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
@@ -56,7 +57,7 @@ export async function getDeviceId(): Promise<string> {
 		cachedDeviceId = finalId;
 		return cachedDeviceId;
 	} catch (error) {
-		console.warn("⚠️ [deviceId] Error obtaining device ID:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 		const fallbackId = `${Platform.OS}-fallback-${Date.now().toString(36)}`;
 		cachedDeviceId = fallbackId;
 		return fallbackId;

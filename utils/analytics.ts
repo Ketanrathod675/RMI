@@ -22,7 +22,7 @@ const logAnalytics = (eventName: string, params?: Record<string, any>) => {
   if (__DEV__) {
     console.log(
       `🔥 [Analytics] Event: ${eventName}`,
-      params ? JSON.stringify(params, null, 2) : ""
+      params ? "event parameters omitted" : ""
     );
   }
 };
@@ -57,20 +57,18 @@ export const trackInstall = async (): Promise<void> => {
 };
 
 export const trackSignup = async (userId: string): Promise<void> => {
-  if (__DEV__) {
-    console.log("🔥 [Analytics] trackSignup called for user:", userId);
-  }
+  if (__DEV__) console.log("[Analytics] trackSignup called");
 };
 
 export const trackAssessmentFeePaid = async (amount: number, txnId: string): Promise<void> => {
   if (__DEV__) {
-    console.log("🔥 [Analytics] trackAssessmentFeePaid called:", { amount, txnId });
+    console.log("[Analytics] trackAssessmentFeePaid called");
   }
 };
 
 export const trackDisbursement = async (txnId: string): Promise<void> => {
   if (__DEV__) {
-    console.log("🔥 [Analytics] trackDisbursement called:", txnId);
+    console.log("[Analytics] trackDisbursement called");
   }
 };
 

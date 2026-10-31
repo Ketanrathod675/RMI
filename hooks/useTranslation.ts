@@ -1,3 +1,4 @@
+import Logger from "@/utils/logger";
 import { translations, type Language, type TranslationKey } from "@/constants/translations";
 import { type RootState } from "@/store";
 import { useCallback } from "react";
@@ -35,7 +36,7 @@ export const useTranslation = () => {
 				// Return fallback or key if no translation found
 				return fallback || key;
 			} catch (error) {
-				console.warn(`Translation error for key "${key}":`, error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 				return fallback || key;
 			}
 		},

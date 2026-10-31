@@ -1,3 +1,5 @@
+import Logger from "@/utils/logger";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
@@ -8,6 +10,7 @@ import { sendCkycOtp, validateCkycOtp } from "@/utils/api";
 import { font, height, width } from "@/utils/dimensions";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
+import type { TextInputRef } from "@/types/rn-refs";
 import { StatusBar } from "expo-status-bar";
 import { useQueryClient } from "@tanstack/react-query";
 import Toast from "react-native-toast-message";
@@ -35,7 +38,7 @@ export default function CKYCOTP() {
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [attemptCount, setAttemptCount] = useState(0);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
-	const inputRefs = useRef<(TextInput | null)[]>([]);
+	const inputRefs = useRef<(TextInputRef | null)[]>([]);
 	const RESEND_TIME = 60;
 
 	const [resendTimer, setResendTimer] = useState(RESEND_TIME);
@@ -208,11 +211,11 @@ export default function CKYCOTP() {
 				}
 			);
 		} catch (error: any) {
-			console.error("❌ [CKYC] OTP validation transport/server error:", error);
+Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: t("alert", "Alert"),
-				text2: error?.detail || error?.message || t("somethingWentWrong", "Something went wrong"),
+				text2: getFriendlyError(error).message || t("somethingWentWrong", "Something went wrong"),
 			});
 		} finally {
 			setTimeout(() => setIsSubmitting(false), 300);
