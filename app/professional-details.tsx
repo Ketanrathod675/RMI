@@ -478,6 +478,7 @@ export default function ProfessionalDetails() {
 		},
 		onError: (err: any) => {
 			if (!mountedRef.current) return;
+			if (err?.isApplicationRejected) return;
 			const status = err?.status ?? err?.response?.status;
 			const detail = err?.detail ?? err?.response?.data?.detail ?? "";
 			const safeDetail = getFriendlyError(err).message;

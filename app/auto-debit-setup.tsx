@@ -7,12 +7,15 @@ import {
 	createMandate,
 	getMandateStatus,
 	getUserDashboardData,
+	getWorkflowProgress,
 	StepHref,
 	type MandateMethod,
 } from "@/utils/api";
 import { getApiErrorInfo } from "@/utils/api/errors";
 import { font, height, width } from "@/utils/dimensions";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { isRejectedStatus, handleApplicationRejected } from "@/utils/applicationRejection";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
@@ -69,6 +72,7 @@ export default function AutoDebitSetup() {
 	const navigation = useTypedNavigation();
 	const queryClient = useQueryClient();
 	useJourneyTracker("/auto-debit-setup");
+	useApplicationStatusGuard();
 
 	const [selectedMethod, setSelectedMethod] = useState<MandateMethod>("upi");
 	const [isSubmitting, setIsSubmitting] = useState(false);
@@ -85,6 +89,13 @@ export default function AutoDebitSetup() {
 
 		(async () => {
 			try {
+				// 0. Pre-check workflow status: if rejected, route out immediately
+				const progressRes = await getWorkflowProgress().catch(() => null);
+				if (isRejectedStatus(progressRes?.data)) {
+					if (active) handleApplicationRejected({ router, queryClient, source: "auto-debit-setup" });
+					return;
+				}
+
 				// 1. Check storage for pending mandate attempt
 				const stored = await getStorageItem(STORAGE_KEYS["@mandate-pending"]);
 				if (stored && active) {
@@ -176,6 +187,13 @@ export default function AutoDebitSetup() {
 		launchingRef.current = true;
 		setIsSubmitting(true);
 		try {
+			// Check status once before creating mandate: if rejected, stop and route out
+			const progressRes = await getWorkflowProgress().catch(() => null);
+			if (isRejectedStatus(progressRes?.data)) {
+				handleApplicationRejected({ router, queryClient, source: "auto-debit-setup" });
+				return;
+			}
+
 			const mandate = await createMandate(selectedMethod);
 			if (!mountedRef.current) return;
 			if (!mandate?.url) {
@@ -221,9 +239,17 @@ export default function AutoDebitSetup() {
 				source = "browser_closed";
 			}
 
+			// If rejection arrived while gateway was open, check status first before proceeding
+			const returnProgress = await getWorkflowProgress().catch(() => null);
+			if (isRejectedStatus(returnProgress?.data)) {
+				handleApplicationRejected({ router, queryClient, source: "auto-debit-setup-return" });
+				return;
+			}
+
 			if (mountedRef.current) router.replace({ pathname: "/emandate-status" as any, params: { txnid: targetTxnid, source } });
 		} catch (err) {
 			if (!mountedRef.current) return;
+			if ((err as any)?.isApplicationRejected) return;
 			const info = getApiErrorInfo(err);
 			Toast.show({
 				type: "error",

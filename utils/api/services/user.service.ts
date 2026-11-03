@@ -374,6 +374,10 @@ export type WorkflowProgressData = {
 	overall_status?: string;
 	overall_percentage?: number;
 	is_active?: boolean;
+	is_rejected?: boolean;
+	rejection_source?: "bre" | "kyc" | "lender" | "admin" | string;
+	rejection_reason?: string | null;
+	can_reapply?: boolean;
 	steps?: Record<string, string>;
 	all_steps?: string[];
 	[key: string]: any;

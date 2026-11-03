@@ -25,6 +25,7 @@ import {
 	getHandshakeStatus,
 	getUserDashboardData,
 	getUserProfile,
+	getWorkflowProgress,
 	retryAssessmentChecks,
 	triggerPostKycAllocationAdapter,
 	verifyCoupon,
@@ -59,6 +60,8 @@ import {
 	TouchableOpacity,
 	View,
 } from "react-native";
+import { useQueryClient } from "@tanstack/react-query";
+import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 
@@ -80,7 +83,7 @@ const DEFAULT_LENDER_OFFERS: LenderOffersResponseType = {
 		lender_id: "lender_ruloans_01",
 		lender_name: "Ruloans Financial Services P Ltd",
 		is_rbi_nbfc: true,
-		loan_upto: 15000,
+		loan_upto: 20000,
 		tenure_upto: 60,
 		interest_rate_starts_at: "Starts @ 1.5% p.m.",
 	},
@@ -112,12 +115,32 @@ const DEFAULT_LENDER_OFFERS: LenderOffersResponseType = {
 export default function AssessmentFeeScreen() {
 	const { t } = useTranslation();
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const params = useLocalSearchParams();
 	const insets = useSafeAreaInsets();
 	const navigation = useTypedNavigation();
 
 	// Track this screen in journey
 	useJourneyTracker("/new-assessment-fee");
+
+	// Pre-check rejection status on mount: if rejected, route out immediately
+	useEffect(() => {
+		let isMounted = true;
+		(async () => {
+			try {
+				const progressRes = await getWorkflowProgress().catch(() => null);
+				if (!isMounted) return;
+				if (isRejectedStatus(progressRes?.data)) {
+					handleApplicationRejected({ router, queryClient, source: "new-assessment-fee" });
+				}
+			} catch {
+				// ignore check error
+			}
+		})();
+		return () => {
+			isMounted = false;
+		};
+	}, [router, queryClient]);
 
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 	const [isSuccessModalVisible, setIsSuccessModalVisible] = useState(false);
@@ -354,7 +377,7 @@ export default function AssessmentFeeScreen() {
 			lender_id: allocatedLender.id,
 			lender_name: allocatedLender.name,
 			is_rbi_nbfc: true,
-			loan_upto: lenderOffersData?.primary_lender?.loan_upto ?? 15000,
+			loan_upto: lenderOffersData?.primary_lender?.loan_upto ?? 20000,
 			tenure_upto: lenderOffersData?.primary_lender?.tenure_upto ?? 60,
 			interest_rate_starts_at:
 				lenderOffersData?.primary_lender?.interest_rate_starts_at ?? "Starts @ 1.5% p.m.",
@@ -456,6 +479,21 @@ export default function AssessmentFeeScreen() {
 			}
 			router.replace("/(tabs)");
 			return;
+		}
+
+		// Check rejection status before starting lead verification
+		try {
+			const progressRes = await getWorkflowProgress().catch(() => null);
+			if (isRejectedStatus(progressRes?.data)) {
+				if (pollingLoaderTokenRef.current !== null) {
+					hide(pollingLoaderTokenRef.current);
+					pollingLoaderTokenRef.current = null;
+				}
+				handleApplicationRejected({ router, queryClient, source: "new-assessment-fee-verify" });
+				return;
+			}
+		} catch {
+			// ignore check error
 		}
 
 		if (verifyFlowRunningRef.current === activeTxnid) {

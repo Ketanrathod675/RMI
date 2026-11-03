@@ -2,6 +2,8 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { handleApplicationRejected } from "@/utils/applicationRejection";
 import { getCreditQueueStatus } from "@/utils/api/services/creditQueue.service";
 import { font, height, width } from "@/utils/dimensions";
 import Logger from "@/utils/logger";
@@ -22,6 +24,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ApplicationVerification() {
 	useJourneyTracker("/application-verification");
+	useApplicationStatusGuard();
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const [isFocused, setIsFocused] = useState(true);
@@ -100,8 +103,7 @@ export default function ApplicationVerification() {
 		}
 
 		if (data.status === "rejected") {
-			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-			router.replace("/no-approved-amount");
+			handleApplicationRejected({ router, queryClient, source: "application-verification" });
 			return;
 		}
 

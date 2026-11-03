@@ -20,6 +20,7 @@ import { API_URL } from "./config";
 import { URLS } from "./endpoints";
 import { isSessionReplacedError } from "./sessionErrors";
 import { getFriendlyError } from "./friendlyError";
+import { isApplicationRejectedError, triggerGlobalApplicationRejected } from "@/utils/applicationRejection";
 
 let networkToastShown = false;
 let refreshAccessTokenPromise: Promise<string | null> | null = null;
@@ -261,6 +262,27 @@ axios.interceptors.response.use(
 
 			// A shared promise prevents multiple simultaneous 401s from showing duplicate logout UI.
 			await expireSession();
+		}
+
+		// Handle 403 Application Rejected ("Your application was not approved." or code: "application_rejected")
+		if (isApplicationRejectedError(error)) {
+			(error as any).isApplicationRejected = true;
+			if (error.config) {
+				(error.config as any)._retry = true;
+			}
+			const url = error.config?.url ?? "";
+			const isStatusOrReadEndpoint =
+				url.includes("workflow/progress") ||
+				url.includes("auth/me") ||
+				url.includes("credit-queue/status") ||
+				url.includes("loan/status") ||
+				url.includes("loans/status") ||
+				url.includes("loan-reapplication");
+
+			if (!isStatusOrReadEndpoint) {
+				triggerGlobalApplicationRejected();
+			}
+			return Promise.reject(error);
 		}
 
 		return Promise.reject(error);

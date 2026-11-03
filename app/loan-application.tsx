@@ -399,6 +399,7 @@ export default function LoanApplication() {
 		},
 		onError: (err, variables, ctx) => {
 			if (!mountedRef.current) return;
+			if ((err as any)?.isApplicationRejected) return;
 			const { error } = errorHandler(err, variables, ctx);
 			const status = (err as any)?.response?.status;
 			const rawDetail = (err as any)?.response?.data?.detail;

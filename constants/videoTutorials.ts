@@ -15,7 +15,7 @@ export interface VideoTutorialItem {
 export const VIDEO_TUTORIALS: VideoTutorialItem[] = [
 	{
 		id: "1",
-		title: "How to claim ₹15,000 in 2 mins",
+		title: "How to claim ₹20,000 in 2 mins",
 		duration: "1:24",
 		thumbnail: Images.VIDEO_CARD_1,
 		videoUrl: require("@/assets/videos/video_1.mp4"),

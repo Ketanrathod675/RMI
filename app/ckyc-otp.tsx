@@ -6,7 +6,8 @@ import { dark, primary, white } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
-import { sendCkycOtp, validateCkycOtp } from "@/utils/api";
+import { getWorkflowProgress, sendCkycOtp, validateCkycOtp } from "@/utils/api";
+import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
 import { font, height, width } from "@/utils/dimensions";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
@@ -175,7 +176,16 @@ export default function CKYCOTP() {
 						setErrorMessage(null);
 						queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 
-						navTarget = () => {
+						navTarget = async () => {
+							try {
+								const progressRes = await getWorkflowProgress().catch(() => null);
+								if (isRejectedStatus(progressRes?.data)) {
+									await handleApplicationRejected({ router, queryClient, source: "ckyc-otp" });
+									return;
+								}
+							} catch {
+								// Ignore check error
+							}
 							router.replace({
 								pathname: "/ckyc-instructions",
 								params: { startSelfie: "true" },
@@ -211,7 +221,8 @@ export default function CKYCOTP() {
 				}
 			);
 		} catch (error: any) {
-Logger.warn("Operation failed", { code: "operation_failed" });
+			if (error?.isApplicationRejected) return;
+			Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
 				text1: t("alert", "Alert"),

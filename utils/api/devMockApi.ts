@@ -25,6 +25,7 @@ export interface DevMockOptions {
 	softPullConsentRequired: boolean;
 	easebuzzMockOutcome?: "delayed_success" | "immediate_success" | "failure";
 	simulateReapplicationRejection?: boolean;
+	simulateMidFlowRejection?: boolean;
 	employmentNextAction?: "digilocker" | "ckyc";
 	currentStep?: string;
 	kycOutcome?: KycOutcomeType;
@@ -49,6 +50,7 @@ let _mockOptions: DevMockOptions = {
 	softPullConsentRequired: false,
 	easebuzzMockOutcome: "delayed_success",
 	simulateReapplicationRejection: false,
+	simulateMidFlowRejection: false,
 	employmentNextAction: "digilocker",
 	currentStep: "personal_details",
 	kycOutcome: "success",
@@ -327,6 +329,123 @@ export async function handleDevMockRequest(
 
 	const url = config.url ?? "";
 	const method = (config.method ?? "get").toLowerCase();
+
+	// Mid-flow lender rejection simulation (Dev only)
+	if (_mockOptions.simulateMidFlowRejection) {
+		if (url.includes("workflow/progress") && method === "get") {
+			await delay(150);
+			return {
+				data: {
+					status: "success",
+					data: {
+						workflow_id: "mock_rejected_wf",
+						current_step: "bank_details",
+						next_step: "",
+						overall_status: "rejected",
+						is_rejected: true,
+						rejection_source: "lender",
+						rejection_reason: "Your application was not approved.",
+						can_reapply: true,
+						overall_percentage: 65,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if ((url.includes("auth/me") || url.includes("users/me")) && method === "get") {
+			await delay(150);
+			return {
+				data: {
+					status: "success",
+					data: {
+						id: "mock-user-uuid-12345",
+						phone_number: "9876543210",
+						role: "borrower",
+						is_active: true,
+						is_phone_verified: true,
+						profile: {
+							full_name: "Applicant",
+							is_pan_verified: true,
+							is_email_verified: true,
+						},
+						current_workflow: {
+							current_step: "bank_details",
+							next_step: "",
+							overall_percentage: 65,
+							overall_status: "rejected",
+							is_rejected: true,
+							rejection_source: "lender",
+							rejection_reason: "Your application was not approved.",
+							can_reapply: true,
+							lead_id: 12345,
+						},
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (url.includes("loan-reapplication/can-reapply")) {
+			await delay(150);
+			return {
+				data: {
+					can_reapply: true,
+					reason: null,
+					days_remaining: 0,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (url.includes("loan-reapplication/reapply")) {
+			await delay(150);
+			return {
+				data: {
+					success: true,
+					workflow_id: "mock_reapply_wf",
+					current_step: "assessment_fee",
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		const isMidFlowAction =
+			url.includes("bank-details") ||
+			url.includes("autocollect") ||
+			url.includes("loan/offer") ||
+			url.includes("sanction-letter") ||
+			url.includes("kfs") ||
+			url.includes("sanction-otp") ||
+			url.includes("address/submit") ||
+			url.includes("kyc/address");
+
+		if (isMidFlowAction) {
+			await delay(150);
+			const error = new Error("Your application was not approved.") as any;
+			error.response = {
+				status: 403,
+				data: {
+					detail: "Your application was not approved.",
+					code: "application_rejected",
+					message: "Your application was not approved.",
+				},
+			};
+			throw error;
+		}
+	}
 
 	if ((url.includes("general-info/customer-care") || url.includes("general-info")) && method === "get") {
 		await delay(150);

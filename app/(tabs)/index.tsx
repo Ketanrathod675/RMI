@@ -4,6 +4,7 @@ import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
 const PushNotificationDebugger = __DEV__ ? require("@/components/PushNotificationDebugger").PushNotificationDebugger : () => null;
 import TestimonialCarousel from "@/components/TestimonialCarousel";
 import { TranslatedText } from "@/components/TranslatedText";
+import JourneyTimeline from "@/components/dashboard/JourneyTimeline";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +29,11 @@ import { font, height, width } from "@/utils/dimensions";
 import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import { getStorageItem, removeStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import {
+	clearApplicationRejectionFlags,
+	isRejectedStatus,
+	resetApplicationRejectionGuard,
+} from "@/utils/applicationRejection";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect, useNavigation } from "expo-router";
 import type { ScrollViewRef } from "@/types/rn-refs";
@@ -64,89 +70,27 @@ const formatIndianRupees = (amount: number): string => {
 	}).format(amount);
 };
 
-// Simple Circular Progress Component
-const CircularProgress = ({ percentage }: { percentage: number }) => {
-	const size = width(15);
-
-	const roundPercentage = Math.round(percentage);
-
-
-
-	return (
-		<View
-			style={{
-				width: size,
-				height: size,
-				alignItems: "center",
-				justifyContent: "center",
-				position: "relative",
-			}}>
-			{/* Background Circle */}
-			<View
-				style={{
-					width: size,
-					height: size,
-					borderRadius: size / 2,
-					borderWidth: 4,
-					borderColor: "#E6D4FE",
-					position: "absolute",
-					top: 0,
-					left: 0,
-				}}
-			/>
-
-			{/* Progress Circle - Simple approach using borderColor based on percentage */}
-			<View
-				style={{
-					width: size,
-					height: size,
-					borderRadius: size / 2,
-					borderWidth: 4,
-					borderLeftColor: percentage > 12 ? primary : "#E6D4FE",
-					borderTopColor: percentage > 37 ? primary : "#E6D4FE",
-					borderRightColor: percentage > 62 ? primary : "#E6D4FE",
-					borderBottomColor: percentage > 87 ? primary : "#E6D4FE",
-					position: "absolute",
-					top: 0,
-					left: 0,
-					transform: [{ rotate: "45deg" }],
-				}}
-			/>
-
-			{/* Inner white circle */}
-			<View
-				style={{
-					width: size - 16,
-					height: size - 16,
-					backgroundColor: white,
-					borderRadius: (size - 16) / 2,
-					alignItems: "center",
-					justifyContent: "center",
-					elevation: 1,
-					shadowColor: "#000",
-					shadowOffset: { width: 0, height: 1 },
-					shadowOpacity: 0.05,
-					shadowRadius: 1,
-					zIndex: 10,
-				}}>
-				<Text
-					style={{
-						fontSize: font(roundPercentage > 99 ? 1.7 : 2.0),
-						fontWeight: "bold",
-						color: dark,
-						textAlign: "center",
-						textAlignVertical: "center",
-						includeFontPadding: false,
-						lineHeight: font(1.7) * 1.2,
-					}}>
-					{roundPercentage}%
-				</Text>
-			</View>
-		</View>
-	);
-};
-
 const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
+
+function getUserSafeRejectionReason(reason?: string | null): string | null {
+	if (!reason || typeof reason !== "string") return null;
+	const lower = reason.toLowerCase();
+	if (
+		lower.includes("rule") ||
+		lower.includes("bre") ||
+		lower.includes("policy_") ||
+		lower.includes("lender") ||
+		lower.includes("ruloans") ||
+		lower.includes("finzy") ||
+		lower.includes("backend") ||
+		lower.includes("internal") ||
+		lower.includes("exception") ||
+		lower.includes("error")
+	) {
+		return null;
+	}
+	return reason.trim();
+}
 
 export default function Home() {
 	usePendingPaymentRecovery();
@@ -416,6 +360,13 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		data?.workflow_progress?.bre_status,
 	]);
 
+	// Reset guard when a new in_progress workflow is detected
+	useEffect(() => {
+		if (data?.workflow_progress?.overall_status === "in_progress") {
+			resetApplicationRejectionGuard();
+		}
+	}, [data?.workflow_progress?.overall_status]);
+
 	useEffect(() => {
 		if (isPending) {
 			dispatch(clearNotifications());
@@ -545,11 +496,14 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	// Check if loan application is rejected
 	const overallStatus = data?.workflow_progress?.overall_status;
 	const isRejected =
+		isRejectedStatus(data?.workflow_progress) ||
 		overallStatus === "rejected" ||
 		overallStatus === "application_rejected" ||
 		overallStatus === "no_approved_amount" ||
 		hasNoApprovedAmountFlag ||
 		hasLoanRejectedFlag;
+
+	const canReapply = data?.workflow_progress?.can_reapply !== false;
 
 	// Reapply handler - extracted from JourneyBackground rejection logic
 	const handleReapply = async () => {
@@ -560,6 +514,10 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 			if (reapplyData.can_apply) {
 				try {
 					const reapplyRes = await reapplyForLoan();
+					resetApplicationRejectionGuard();
+					await clearApplicationRejectionFlags();
+					setHasNoApprovedAmountFlag(false);
+					setHasLoanRejectedFlag(false);
 					await queryClient.invalidateQueries({
 						queryKey: ["user", "dashboard"],
 					});
@@ -723,6 +681,12 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 			router.push("/(tabs)");
 		}
 	};
+
+	const handleContinueJourneyRef = useRef(handleContinueJourney);
+	handleContinueJourneyRef.current = handleContinueJourney;
+	const stableContinueJourney = useCallback(() => {
+		handleContinueJourneyRef.current();
+	}, []);
 
 	const toggleDrawer = () => {
 		const toValue = isDrawerOpen ? -screenWidth * 0.8 : 0;
@@ -1016,7 +980,11 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 					locations={[0.0337, 0.45, 1.0]}
 					start={{ x: 0.5, y: 0 }}
 					end={{ x: 0.5, y: 1 }}
-					style={[styles.heroBrand, { paddingTop: Math.max(insets.top, 12) }]}>
+					style={[
+						styles.heroBrand,
+						{ paddingTop: Math.max(insets.top, 12) },
+						(!data || (data as any)?.dashboard_type !== "loan_dashboard") && { paddingBottom: 76 },
+					]}>
 
 					{/* Navigation Header */}
 					<View style={styles.navHeader}>
@@ -1177,25 +1145,27 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 								{/* Card Top: Title & Amount */}
 								<View style={styles.cardTop}>
 									<Text style={styles.preQualTitle}>PRE-QUALIFIED LOAN LIMIT</Text>
-									<Text style={styles.preQualAmountText}>₹ 15,000/-</Text>
+									<Text style={styles.preQualAmountText}>₹ 20,000/-</Text>
 								</View>
 
 								{/* CTA Button */}
-								<TouchableOpacity
-									activeOpacity={0.85}
-									onPress={isReapplyScenario ? handleReapply : (isRejected ? handleReapply : handleContinueJourney)}
-									style={styles.ctaBtnWrapper}>
-									<LinearGradient
-										colors={["#8AD600", "#5FA800"]}
-										start={{ x: 0.5, y: 0 }}
-										end={{ x: 0.5, y: 1 }}
-										style={styles.ctaBtn}>
-										<Text style={styles.ctaText}>
-											{isReapplyScenario ? t("reapplyLoan") : (isRejected ? t("reapplyLoan") : "Complete Application")}
-										</Text>
-										<MaterialCommunityIcons name="arrow-right" size={18} color="#F9FDF5" />
-									</LinearGradient>
-								</TouchableOpacity>
+								{(!isRejected || canReapply) && (
+									<TouchableOpacity
+										activeOpacity={0.85}
+										onPress={isReapplyScenario ? handleReapply : (isRejected ? handleReapply : handleContinueJourney)}
+										style={styles.ctaBtnWrapper}>
+										<LinearGradient
+											colors={["#8AD600", "#5FA800"]}
+											start={{ x: 0.5, y: 0 }}
+											end={{ x: 0.5, y: 1 }}
+											style={styles.ctaBtn}>
+											<Text style={styles.ctaText}>
+												{isReapplyScenario ? t("reapplyLoan") : (isRejected ? t("reapplyLoan") : "Complete Application")}
+											</Text>
+											<MaterialCommunityIcons name="arrow-right" size={18} color="#F9FDF5" />
+										</LinearGradient>
+									</TouchableOpacity>
+								)}
 
 								{/* Metric Badges */}
 								<View style={styles.metricBadges}>
@@ -1236,6 +1206,17 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 								style={styles.rejectedScreenImage}
 								resizeMode="contain"
 							/>
+							{(() => {
+								const safeReason = getUserSafeRejectionReason(data?.workflow_progress?.rejection_reason);
+								if (safeReason) {
+									return (
+										<Text style={{ textAlign: "center", color: "#666", marginTop: 8, paddingHorizontal: 16 }}>
+											{safeReason}
+										</Text>
+									);
+								}
+								return null;
+							})()}
 						</View>
 					)}
 
@@ -1276,86 +1257,12 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 								</TouchableOpacity>
 							</View>
 						) : (
-							<ImageBackground
-								source={Images.JOURNEY_BG}
-								style={styles.journeyBackground}
-								imageStyle={styles.journeyBackgroundImage}
-							>
-								<View style={styles.journeyTracker}>
-									{/* Circular Progress Meter */}
-									<View style={styles.circularMeterContainer}>
-										<CircularProgress
-											percentage={
-												data?.workflow_progress?.completion_percentage ?? 0
-											}
-										/>
-									</View>
-
-									{/* Progress-based content display */}
-									{(() => {
-										const progressPercentage = data?.workflow_progress?.completion_percentage ?? 0;
-										const overallStatus = data?.workflow_progress?.overall_status;
-
-										// 90-95% range: Show "Ready for disburse" (not clickable)
-										if (progressPercentage >= 90 && progressPercentage < 100) {
-											return (
-												<View style={styles.journeyTextContainer}>
-													<TranslatedText
-														style={styles.completedLoanText}
-														translationKey="readyForDisburse"
-													/>
-												</View>
-											);
-										}
-
-										// 100%: Show "Your loan is closed" with Re-apply button
-										if (progressPercentage === 100) {
-											return (
-												<View style={styles.journeyTextContainer}>
-													<TranslatedText
-														style={styles.completedLoanText}
-														translationKey="yourLoanIsClosed"
-													/>
-													<View style={{ alignItems: "center" }}>
-														<TranslatedText
-															style={styles.clickHereText}
-															translationKey="clickHere"
-														/>
-														<TouchableOpacity
-															onPress={handleReapply}
-															style={styles.reapplyButton}>
-															<IconSymbol name="arrow.clockwise" size={18} color={white} />
-															<TranslatedText
-																translationKey="reApply"
-																style={styles.reapplyButtonText}
-																numberOfLines={1}
-																adjustsFontSizeToFit
-																minimumFontScale={0.85}
-															/>
-
-														</TouchableOpacity>
-													</View>
-												</View>
-											);
-										}
-
-										// Default: Show clickable "Continue Journey" with arrow
-										return (
-											<TouchableOpacity
-												onPress={handleContinueJourney}
-												style={styles.journeyTextContainer}>
-												<TranslatedText
-													style={styles.completedLoanText}
-													translationKey="completedYourLoanJourney"
-												/>
-												<View style={styles.continueButton}>
-													<IconSymbol name="chevron.right" size={35} color={white} />
-												</View>
-											</TouchableOpacity>
-										);
-									})()}
-								</View>
-							</ImageBackground>
+							<JourneyTimeline
+								currentStep={data?.workflow_progress?.current_step}
+								overallStatus={data?.workflow_progress?.overall_status}
+								isLoading={isPending}
+								onContinue={stableContinueJourney}
+							/>
 						)
 					)}
 
@@ -1363,7 +1270,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				{/* Phase 2 Dashboard Content Sections */}
 				<View style={styles.contentSectionsWrapper}>
 					{/* A1: Categories Grid */}
-					<View style={styles.sectionContainer}>
+					<View style={[styles.sectionContainer, styles.firstSectionContainer]}>
 						<TranslatedText
 							style={styles.sectionTitle}
 							translationKey="loansForEveryNeeds"
@@ -2179,26 +2086,6 @@ const styles = StyleSheet.create({
 		fontSize: font(2),
 		fontWeight: "bold",
 	},
-	// Journey Tracker Styles
-	journeyTracker: {
-		flexDirection: "row",
-		alignItems: "center",
-		paddingHorizontal: width(4),
-		gap: width(4),
-	},
-	circularMeterContainer: {
-		alignItems: "center",
-		justifyContent: "center",
-		minWidth: width(15),
-		minHeight: width(15),
-	},
-	journeyTextContainer: {
-		flex: 1,
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "space-between",
-		height: height(10),
-	},
 	rejectionContainer: {
 		flex: 1,
 		flexDirection: "column",
@@ -2213,13 +2100,6 @@ const styles = StyleSheet.create({
 		flex: 1,
 		textAlign: "left",
 	},
-	completedLoanText: {
-		fontSize: font(2.1),
-		color: "#fff",
-		fontWeight: "600",
-		flex: 1,
-		textAlign: "left",
-	},
 	rejectionSubtext: {
 		fontSize: font(1.8),
 		color: "#666",
@@ -2227,14 +2107,6 @@ const styles = StyleSheet.create({
 		marginTop: height(1),
 		textAlign: "left",
 		width: "100%",
-	},
-	continueButton: {
-		width: width(8),
-		height: width(8),
-		borderRadius: width(4),
-		// backgroundColor: primary,
-		alignItems: "center",
-		justifyContent: "center",
 	},
 	reapplyButton: {
 		flexDirection: "row",
@@ -2540,13 +2412,6 @@ const styles = StyleSheet.create({
 		textAlign: "center",
 		marginTop: 0,
 	},
-	journeyBackground: {
-		marginHorizontal: width(4),
-		marginTop: height(2),
-		height: height(12), // adjust as per your design
-		justifyContent: "center",
-		overflow: "hidden",
-	},
 	completeApplicationContainer: {
 		marginHorizontal: width(4),
 		marginTop: -height(6),
@@ -2595,8 +2460,11 @@ const styles = StyleSheet.create({
 	},
 	contentSectionsWrapper: {
 		backgroundColor: "#F5F7F2",
-		paddingTop: 8,
+		paddingTop: 0,
 		paddingBottom: 0,
+	},
+	firstSectionContainer: {
+		marginTop: 8,
 	},
 	categoriesRow: {
 		flexDirection: "row",
@@ -2761,10 +2629,6 @@ const styles = StyleSheet.create({
 	trustBadgeHeart: {
 		color: "#1B3B18",
 		fontSize: 13.5,
-	},
-	journeyBackgroundImage: {
-		borderRadius: width(5),
-		resizeMode: "cover",
 	},
 	rejectedScreenContainer: {
 		marginHorizontal: width(4),

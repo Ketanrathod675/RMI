@@ -3,7 +3,8 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary, white } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
-import { initDigilocker } from "@/utils/api";
+import { getWorkflowProgress, initDigilocker } from "@/utils/api";
+import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
 import {
 	cancelDigilockerChecks,
 	clearDigilockerSession,
@@ -75,7 +76,16 @@ export default function DigilockerKyc() {
 		return () => backHandler.remove();
 	}, [router]);
 
-	const proceedToSelfie = () => {
+	const proceedToSelfie = async () => {
+		try {
+			const progressRes = await getWorkflowProgress().catch(() => null);
+			if (isRejectedStatus(progressRes?.data)) {
+				handleApplicationRejected({ router, queryClient, source: "digilocker-kyc" });
+				return;
+			}
+		} catch {
+			// Ignore status check errors
+		}
 		queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 		router.replace({
 			pathname: "/ckyc-instructions",

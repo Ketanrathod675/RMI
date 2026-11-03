@@ -4,12 +4,15 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { font, height, width } from "@/utils/dimensions";
 import { useRouter } from "expo-router";
 import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { routeAfterStep } from "@/utils/applicationRejection";
 import React, { useEffect, useRef } from "react";
 import { ActivityIndicator, BackHandler, StyleSheet, Text, View } from "react-native";
 
 export default function ProfessionalDetailsSuccess() {
 	const { t } = useTranslation();
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const navigation = useTypedNavigation();
 	const allowNavigationRef = useRef(false);
 
@@ -37,10 +40,13 @@ export default function ProfessionalDetailsSuccess() {
 		});
 
 		// Set flag when we navigate programmatically after 3 seconds
-		const timer = setTimeout(() => {
-			console.log("⏰ 3 seconds passed, navigating to ckyc-instructions...");
+		const timer = setTimeout(async () => {
 			allowNavigationRef.current = true;
-			router.replace("/ckyc-instructions");
+			try {
+				await routeAfterStep(router, queryClient, { fallbackStep: "ekyc_ckyc" });
+			} catch {
+				router.replace("/ckyc-instructions");
+			}
 		}, 3000);
 
 		return () => {

@@ -3,6 +3,9 @@ import { IconSymbol } from "@/components/ui/IconSymbol";
 import { white } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { routeAfterStep } from "@/utils/applicationRejection";
+import { useQueryClient } from "@tanstack/react-query";
 import { height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -12,7 +15,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function ApplicationApproved() {
 	useJourneyTracker("/application-approved");
+	useApplicationStatusGuard();
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const { t } = useTranslation();
 
 	useEffect(() => {
@@ -23,11 +28,15 @@ export default function ApplicationApproved() {
 		return () => backHandler.remove();
 	}, [router]);
 
-	const handleContinue = () => {
-		router.replace({
-			pathname: "/professional-details",
-			params: { disableBack: "true" },
-		});
+	const handleContinue = async () => {
+		try {
+			await routeAfterStep(router, queryClient, { fallbackStep: "professional_details" });
+		} catch {
+			router.replace({
+				pathname: "/professional-details",
+				params: { disableBack: "true" },
+			});
+		}
 	};
 
 	return (

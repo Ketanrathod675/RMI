@@ -19,6 +19,7 @@ import Logger from "@/utils/logger";
 import RNOtpVerify from "@/utils/otpVerify";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { clearDigilockerSession } from "@/utils/digilocker";
+import { clearApplicationRejectionFlags, resetApplicationRejectionGuard } from "@/utils/applicationRejection";
 import { MaterialIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Image } from "expo-image";
@@ -203,6 +204,8 @@ export default function SigninSignupOtp() {
 					visibilityTime: 2500,
 				});
 
+				resetApplicationRejectionGuard();
+				await clearApplicationRejectionFlags();
 				await clearDigilockerSession();
 
 				// Direct new users or users with pending permissions directly to /request-permissions

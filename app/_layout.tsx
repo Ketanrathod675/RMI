@@ -33,6 +33,7 @@ import { installNetworkAwareness, useNetworkStatus } from "@/hooks/useNetworkSta
 import { useTranslation } from "@/hooks/useTranslation";
 import { installGlobalErrorHandlers, subscribeFatalErrors } from "@/utils/errorHandling";
 import { useRouter } from "expo-router";
+import { handleApplicationRejected, setApplicationRejectedHandler } from "@/utils/applicationRejection";
 
 installToastDefaults();
 installGlobalErrorHandlers();
@@ -72,6 +73,16 @@ function RootLayoutNav() {
 		const unsubscribe = subscribeFatalErrors(setFatalError);
 		return () => { unsubscribe(); };
 	}, []);
+
+	// Global Application Rejected handler (routes out on 403 application_rejected across the entire app)
+	React.useEffect(() => {
+		setApplicationRejectedHandler(() => {
+			handleApplicationRejected({ router, queryClient, source: "global_403" });
+		});
+		return () => {
+			setApplicationRejectedHandler(null);
+		};
+	}, [router]);
 
 	// Branch SDK Phase 1: Initialize session tracking (install / open / reinstall)
 	// Must be called once on root mount. Branch auto-tracks all attribution.

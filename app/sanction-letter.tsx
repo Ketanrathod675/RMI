@@ -3,6 +3,7 @@ import { dark, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useQueryClient } from "@tanstack/react-query";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { QueryErrorState } from "@/components/QueryErrorState";
@@ -214,6 +215,7 @@ export default function SanctionLetter() {
 
 	// Track this screen in the journey
 	useJourneyTracker("/sanction-letter");
+	useApplicationStatusGuard();
 
 	const [page, setPage] = useState({
 		current: 0,

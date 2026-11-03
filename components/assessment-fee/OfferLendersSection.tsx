@@ -179,7 +179,7 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 
 	const displayLoanAmount = primaryLender?.loan_upto
 		? formatAmount(primaryLender.loan_upto) + "/-"
-		: "₹ 15,000/-";
+		: "₹ 20,000/-";
 
 	return (
 		<View>

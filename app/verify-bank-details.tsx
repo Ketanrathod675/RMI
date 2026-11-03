@@ -45,6 +45,8 @@ import Toast from "react-native-toast-message";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+
 export default function VerifyBankDetails() {
 	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
@@ -57,6 +59,7 @@ export default function VerifyBankDetails() {
 
 	// Track this screen in the journey
 	useJourneyTracker("/verify-bank-details");
+	useApplicationStatusGuard();
 
 	const accountTypeOptions: SelectOption[] = [
 		{ label: t("savingsAccount"), value: "savings" },
@@ -351,7 +354,7 @@ export default function VerifyBankDetails() {
 		},
 		onError: (err) => {
 			if (!mountedRef.current) return;
-			if (!mountedRef.current) return;
+			if ((err as any)?.isApplicationRejected) return;
 			const info = getApiErrorInfo(err);
 			Logger.error("Bank details submission failed", { status: info.status });
 

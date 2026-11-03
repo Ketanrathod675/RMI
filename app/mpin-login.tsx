@@ -7,6 +7,7 @@ import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Layout01 } from "@/layouts/layout_01";
 import { errorHandler, mpinLogin } from "@/utils/api";
+import { clearApplicationRejectionFlags, resetApplicationRejectionGuard } from "@/utils/applicationRejection";
 import Logger from "@/utils/logger";
 import { height, width } from "@/utils/dimensions";
 import { router, useLocalSearchParams } from "expo-router";
@@ -176,6 +177,8 @@ export default function MpinLogin() {
 		onSuccess: async (data: any) => {
 
 			if (data?.access_token && data?.refresh_token && data?.token_type) {
+				resetApplicationRejectionGuard();
+				await clearApplicationRejectionFlags();
 				handleSetTokens(data.access_token, data.refresh_token, data.token_type);
 				handleMpinSignIn(); // Set mpinSignedIn to true
 

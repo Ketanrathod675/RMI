@@ -5,6 +5,7 @@ import { dark, primary, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { setApplicationComplete, useDispatch } from "@/store";
 import { trackDisbursement } from "@/utils/analytics";
 import { getMandateStatus, getUserDashboardData } from "@/utils/api";
@@ -46,6 +47,7 @@ const isFailureStatus = (s?: string | null): boolean => {
 
 export default function LoanCongratulations() {
 	useJourneyTracker("/loan-congratulations");
+	useApplicationStatusGuard();
 	const router = useRouter();
 	const navigation = useTypedNavigation();
 	const { t } = useTranslation();

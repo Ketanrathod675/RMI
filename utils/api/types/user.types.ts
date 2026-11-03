@@ -274,6 +274,10 @@ export type WorkflowProgress = {
 	workflow_started_at: Date;
 	bre_status?: string | null;
 	bre_failed_rule?: string | null;
+	is_rejected?: boolean;
+	rejection_source?: "bre" | "kyc" | "lender" | "admin" | string;
+	rejection_reason?: string | null;
+	can_reapply?: boolean;
 };
 
 export type UserDashboardResponseType = {

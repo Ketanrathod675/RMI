@@ -402,6 +402,17 @@ export function DevMockBanner() {
 								/>
 							</View>
 
+							<View style={styles.optionRow}>
+								<View style={styles.optionTextContainer}>
+									<Text style={styles.optionLabel}>Simulate Mid-Flow Rejection</Text>
+									<Text style={styles.optionDesc}>Returns rejected status & 403 on later endpoints</Text>
+								</View>
+								<Switch
+									value={Boolean(options.simulateMidFlowRejection)}
+									onValueChange={() => handleOptionToggle("simulateMidFlowRejection")}
+								/>
+							</View>
+
 							<View style={styles.divider} />
 							<Text style={styles.sectionHeader}>⚖️ BRE / Handshake Simulation</Text>
 							<Text style={styles.optionDesc}>Select BRE outcome for payment handshake:</Text>

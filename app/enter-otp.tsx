@@ -5,6 +5,7 @@ import { IconSymbol } from "@/components/ui/IconSymbol";
 import { Images } from "@/constants/images";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import RNOtpVerify from "@/utils/otpVerify";
 import {
 	signKfs,
@@ -45,6 +46,7 @@ export default function EnterOTP() {
 	const navigation = useTypedNavigation();
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	useApplicationStatusGuard();
 
 	const params = useLocalSearchParams<{
 		sign_in_key?: string;
@@ -97,6 +99,7 @@ export default function EnterOTP() {
 			}
 		},
 		onError: (err: any) => {
+			if ((err as any)?.isApplicationRejected) return;
 			const info = getApiErrorInfo(err);
 			const text = errorText(info);
 			Logger.debug("KFS signing verification error", { status: info.status });
@@ -171,6 +174,7 @@ export default function EnterOTP() {
 			});
 		},
 		onError: (err: any) => {
+			if ((err as any)?.isApplicationRejected) return;
 			const info = getApiErrorInfo(err);
 			Logger.debug("KFS OTP resend error", { status: info.status });
 

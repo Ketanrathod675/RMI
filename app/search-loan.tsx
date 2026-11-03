@@ -30,6 +30,8 @@ import { getApiErrorInfo } from "@/utils/api/errors";
 import { markLoanSearchDone } from "@/utils/loanSearchSession";
 import { useQueryClient } from "@tanstack/react-query";
 import { height, width } from "@/utils/dimensions";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { handleApplicationRejected, isApplicationRejectedError } from "@/utils/applicationRejection";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const RING_SIZE = Math.min(SCREEN_WIDTH * 0.86, 330);
@@ -46,6 +48,7 @@ export default function SearchLoan() {
 	const isRepeatUser = params.is_repeat_user === "true";
 
 	useJourneyTracker("/search-loan");
+	useApplicationStatusGuard();
 
 	const [showProgress, setShowProgress] = useState(false);
 	const [currentStage, setCurrentStage] = useState(0);
@@ -211,7 +214,7 @@ export default function SearchLoan() {
 					const fixRoute = getBreFixRoute(breFailedRule);
 					if (fixRoute) return fixRoute;
 				}
-				return "/(tabs)";
+				return "/no-approved-amount";
 			}
 			if (!currentStep) return "/(tabs)";
 
@@ -291,6 +294,10 @@ export default function SearchLoan() {
 					);
 
 					if (destination !== "OFFER") {
+						if (destination === "/no-approved-amount") {
+							await finish(() => handleApplicationRejected({ router, queryClient, source: "search-loan" }));
+							return;
+						}
 						await finish(() => router.replace(destination as any));
 						return;
 					}
@@ -304,15 +311,19 @@ export default function SearchLoan() {
 							staleTime: 0,
 						});
 					} catch (offerError) {
+						if (isApplicationRejectedError(offerError)) {
+							await finish(() => handleApplicationRejected({ router, queryClient, source: "search-loan" }));
+							return;
+						}
 						const info = getApiErrorInfo(offerError);
 						const text = `${info.detail ?? ""} ${info.message ?? ""}`.toLowerCase();
 						if (info.status === 403) {
 							// Underwriting / credit queue still running: show the review screen, it returns here when approved.
-							await finish(() =>
-								router.replace(
-									(text.includes("underwriting") ? "/application-verification" : "/no-approved-amount") as any,
-								),
-							);
+							if (text.includes("underwriting")) {
+								await finish(() => router.replace("/application-verification" as any));
+							} else {
+								await finish(() => handleApplicationRejected({ router, queryClient, source: "search-loan" }));
+							}
 							return;
 						}
 						if (info.status === 404 && text.includes("no lender product allocated")) {

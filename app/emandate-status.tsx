@@ -2,10 +2,13 @@ import { useMountedRef } from "@/hooks/useMountedRef";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { type MandateVerifySource, useMandateVerification } from "@/hooks/useMandateVerification";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getUserDashboardData, StepHref } from "@/utils/api";
+import { getUserDashboardData, getWorkflowProgress, StepHref } from "@/utils/api";
 import { font, height } from "@/utils/dimensions";
 import { getStorageItem, removeStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { isRejectedStatus, handleApplicationRejected } from "@/utils/applicationRejection";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, AppState, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,8 +18,10 @@ export default function EmandateStatus() {
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const params = useLocalSearchParams<{ status?: string; txnid?: string; source?: string }>();
 	useJourneyTracker("/emandate-status");
+	useApplicationStatusGuard();
 
 	const {
 		state,
@@ -37,27 +42,43 @@ export default function EmandateStatus() {
 			return;
 		}
 
+		// Re-check workflow status: do not advance if rejected
+		const progressRes = await getWorkflowProgress().catch(() => null);
+		if (isRejectedStatus(progressRes?.data)) {
+			handleApplicationRejected({ router, queryClient, source: "emandate-status" });
+			return;
+		}
+
 		// In the new backend workflow order:
 		// bank_details > enach_mandate > pdq_check > agreement_signing > disbursement
 		// Completing mandate ALWAYS moves forward to sanction letter & KFS digital signing.
 		// Loan completion only happens AFTER signing the agreement with OTP.
 		router.replace("/sanction-letter" as any);
-	}, [outcome, recheck, router]);
+	}, [outcome, recheck, router, queryClient]);
 
 	const tryAgain = useCallback(async () => {
 		await removeStorageItem(STORAGE_KEYS["@mandate-pending"]).catch(() => undefined);
 		router.replace({ pathname: "/auto-debit-setup", params: { fresh: "1" } } as any);
 	}, [router]);
 
-	// When success is confirmed, show the success state briefly then navigate.
+	// When success is confirmed, check rejection status first, then show success state briefly before navigating.
 	useEffect(() => {
 		if (outcome === "success") {
-			const timer = setTimeout(() => {
-				void goNext();
-			}, 1500);
-			return () => clearTimeout(timer);
+			let isCurrent = true;
+			(async () => {
+				const progressRes = await getWorkflowProgress().catch(() => null);
+				if (!isCurrent) return;
+				if (isRejectedStatus(progressRes?.data)) {
+					handleApplicationRejected({ router, queryClient, source: "emandate-status-success" });
+					return;
+				}
+				const timer = setTimeout(() => {
+					if (isCurrent) void goNext();
+				}, 1500);
+				return () => clearTimeout(timer);
+			})();
 		}
-	}, [outcome, goNext]);
+	}, [outcome, goNext, router, queryClient]);
 
 	// When mandate registration is in progress, auto-redirect to Home after 10 seconds (matching web)
 	useEffect(() => {

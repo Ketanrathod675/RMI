@@ -30,6 +30,9 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { getUserDashboardData, StepHref } from "@/utils/api";
 import { getBankAccounts } from "@/utils/api/bank";
 import { font, height, width } from "@/utils/dimensions";
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { isRejectedStatus, handleApplicationRejected } from "@/utils/applicationRejection";
+import { useQueryClient } from "@tanstack/react-query";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const RING_SIZE = Math.min(SCREEN_WIDTH * 0.86, 330);
@@ -49,7 +52,9 @@ export default function VerifyingBank() {
 	const { t } = useTranslation();
 	const insets = useSafeAreaInsets();
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const navigation = useTypedNavigation();
+	useApplicationStatusGuard();
 
 	const [status, setStatus] = useState<"verifying" | "verified" | "failed" | "timeout">("verifying");
 	const [errorMessage, setErrorMessage] = useState("");
@@ -191,6 +196,12 @@ export default function VerifyingBank() {
 
 				if (!mountedRef.current) {
 					isPollingRef.current = false;
+					return;
+				}
+
+				if (isRejectedStatus(dashboard?.workflow_progress)) {
+					isPollingRef.current = false;
+					handleApplicationRejected({ router, queryClient, source: "verifying-bank" });
 					return;
 				}
 

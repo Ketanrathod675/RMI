@@ -9,7 +9,8 @@ import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getAddressPrefill, getCkycStatus, getSelfieStatus, sendCkycOtp, uploadSelfie } from "@/utils/api";
+import { getAddressPrefill, getCkycStatus, getSelfieStatus, getWorkflowProgress, sendCkycOtp, uploadSelfie } from "@/utils/api";
+import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
 import { updateUserSelfie } from "@/utils/selfie";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useTypedNavigation } from "@/hooks/useTypedNavigation";
@@ -294,7 +295,16 @@ export default function CKYCInstructions() {
 					[
 						{
 							text: t("ok", "OK"),
-							onPress: () => {
+							onPress: async () => {
+								try {
+									const progressRes = await getWorkflowProgress().catch(() => null);
+									if (isRejectedStatus(progressRes?.data)) {
+										await handleApplicationRejected({ router, queryClient, source: "ckyc-instructions" });
+										return;
+									}
+								} catch {
+									// Ignore check error
+								}
 								const params: any = { startFromAddress: "true", fromSelfie: "true" };
 								if (permAddressData) params.permAddressData = String(permAddressData);
 								if (corrAddressData) params.corrAddressData = String(corrAddressData);
@@ -517,6 +527,7 @@ export default function CKYCInstructions() {
 			}
 		} catch (error: any) {
 			if (!isMounted.current) return;
+			if (error?.isApplicationRejected) return;
 			const msg = getFriendlyError(error).message || "";
 			if (msg.toLowerCase().includes("digilocker")) {
 				router.replace("/digilocker-kyc" as any);

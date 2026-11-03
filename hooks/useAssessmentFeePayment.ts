@@ -8,6 +8,7 @@ import {
 	errorHandler,
 	getUserDashboardData,
 	getUserProfile,
+	getWorkflowProgress,
 	initiateAssessmentFee,
 } from "@/utils/api";
 import { decode } from "@/utils/encode_decode";
@@ -15,6 +16,8 @@ import Logger from "@/utils/logger";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -100,6 +103,7 @@ export const useAssessmentFeePayment = ({
 	const { t } = useTranslation();
 	const dispatch = useDispatch();
 	const queryClient = useQueryClient();
+	const router = useRouter();
 
 	const [isPaymentInitiated, setIsPaymentInitiated] = useState(false);
 	const [isPaymentPolling, setIsPaymentPolling] = useState(false);
@@ -229,7 +233,13 @@ export const useAssessmentFeePayment = ({
 				dash?.workflow_progress?.overall_status || dash?.kyc_status || ""
 			).toLowerCase().trim();
 
-			if (status === "rejected" || status === "failed" || step.includes("reject") || step.includes("fail")) {
+			if (
+				isRejectedStatus(dash?.workflow_progress) ||
+				status === "rejected" ||
+				status === "failed" ||
+				step.includes("reject") ||
+				step.includes("fail")
+			) {
 				return false;
 			}
 
@@ -597,6 +607,7 @@ export const useAssessmentFeePayment = ({
 			retriedInProgressRef.current = false;
 
 			if (rawDetail && /coupon/i.test(String(rawDetail))) onCouponRejected?.();
+			if ((err as any)?.isApplicationRejected) return;
 			const displayMessage = getFriendlyError(err).message;
 			Toast.show({ type: "error", text1: t("errorInitiatingPayment"), text2: displayMessage });
 		},
@@ -607,12 +618,21 @@ export const useAssessmentFeePayment = ({
 		setIsPaymentCompleted(false);
 	}, []);
 
-	const initiatePayment = useCallback(() => {
+	const initiatePayment = useCallback(async () => {
 		setIsPaymentCompleted(false);
 		if (submitGuardRef.current) return;
+		try {
+			const progressRes = await getWorkflowProgress().catch(() => null);
+			if (isRejectedStatus(progressRes?.data)) {
+				handleApplicationRejected({ router, queryClient, source: "useAssessmentFeePayment" });
+				return;
+			}
+		} catch {
+			// ignore pre-check error
+		}
 		submitGuardRef.current = true;
 		rawInitiatePayment();
-	}, [rawInitiatePayment]);
+	}, [rawInitiatePayment, router, queryClient]);
 
 	/** "Check again" from the unconfirmed dialog. */
 	const recheckPayment = async () => {

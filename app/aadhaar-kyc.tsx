@@ -32,6 +32,7 @@ import { dark } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
+import { routeAfterStep } from "@/utils/applicationRejection";
 import {
 	getAddressDocumentTypes,
 	getAddressPrefill,
@@ -173,13 +174,15 @@ export default function AadhaarKyc() {
 	const handleContinueSuccess = async () => {
 		setIsKycSuccessModalVisible(false);
 		try {
-			await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-			const dash = await getUserDashboardData();
-			const nextStep = dash?.workflow_progress?.current_step || "bank_details";
-			const targetRoute = StepHref[nextStep as keyof typeof StepHref] || "/verify-bank-details";
-			router.replace(targetRoute as any);
-		} catch {
-			router.replace("/verify-bank-details" as any);
+			await routeAfterStep(router, queryClient, { fallbackStep: "bank_details" });
+		} catch (err: any) {
+			if (err?.isApplicationRejected) return;
+			Toast.show({
+				type: "error",
+				text1: t("alert", "Alert"),
+				text2: getFriendlyError(err).message || t("pleaseRetryPayment", "Please try again"),
+			});
+			setIsKycSuccessModalVisible(true);
 		}
 	};
 

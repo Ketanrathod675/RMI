@@ -1,4 +1,5 @@
 import { checkPaymentStatus, getUserDashboardData } from "@/utils/api";
+import { isRejectedStatus } from "@/utils/applicationRejection";
 import Logger from "@/utils/logger";
 import { getStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useRouter } from "expo-router";
@@ -36,6 +37,11 @@ export const usePendingPaymentRecovery = () => {
 				// Check dashboard step first: never redirect if already past fee step
 				const dash: any = await getUserDashboardData().catch(() => null);
 				if (!isMounted) return;
+
+				if (isRejectedStatus(dash?.workflow_progress)) {
+					Logger.debug("Workflow is rejected, aborting pending payment recovery");
+					return;
+				}
 
 				const currentStep = String(
 					dash?.workflow_progress?.current_step || dash?.current_step || ""
