@@ -34,7 +34,7 @@ export const URLS = {
 		me: "users/me",
 		// NOT IN NEW BACKEND
 		mark_permissions: "users/permissions",
-		// NOT IN NEW BACKEND
+		// NOT IN NEW BACKEND: users/change-language (language is stored locally; see hooks/useDefault.ts)
 		changeLanguage: (language: "Hindi" | "English" = "English") =>
 			`users/change-language?language=${language}`,
 		// NOT IN NEW BACKEND
@@ -239,5 +239,9 @@ export const URLS = {
 	},
 	professional: {
 		professional_details: "professional-details",
+	},
+	repayments: {
+		initiate: "repayments/initiate-manual-payment",
+		verify_status: (txnid: string) => `repayments/payments/${txnid}/verify-status`,
 	},
 } as const;

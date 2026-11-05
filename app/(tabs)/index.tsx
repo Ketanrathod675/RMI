@@ -5,6 +5,7 @@ const PushNotificationDebugger = __DEV__ ? require("@/components/PushNotificatio
 import TestimonialCarousel from "@/components/TestimonialCarousel";
 import { TranslatedText } from "@/components/TranslatedText";
 import JourneyTimeline from "@/components/dashboard/JourneyTimeline";
+import RepaymentHeaderCard from "@/components/dashboard/RepaymentHeaderCard";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,7 +24,8 @@ import { pollAssessmentChecks } from "@/hooks/useAssessmentChecks";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
-import { checkCanReapply, checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, reapplyForLoan, Status, StepHref } from "@/utils/api";
+import { checkCanReapply, checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, reapplyForLoan, Status, StepHref, verifyRepaymentStatus } from "@/utils/api";
+import { classify } from "@/utils/paymentVerification";
 import { useQueryClient } from "@tanstack/react-query";
 import { font, height, width } from "@/utils/dimensions";
 import { decode } from "@/utils/encode_decode";
@@ -254,8 +256,10 @@ export default function Home() {
 		staleTime: 60000,
 	});
 
+	const activeLoan = data?.active_loan ?? null;
+	const hasActiveLoan = Boolean(activeLoan);
 	const progressPercentage = data?.workflow_progress?.completion_percentage ?? 0;
-	const isReapplyScenario = !isPending && data && (data as any)?.dashboard_type === "workflow_dashboard" && progressPercentage === 100;
+	const isReapplyScenario = !hasActiveLoan && !isPending && data && (Boolean(data?.can_reapply) || ((data as any)?.dashboard_type === "workflow_dashboard" && progressPercentage === 100));
 
 	const faqData = [
 		{
@@ -296,6 +300,42 @@ export default function Home() {
 			};
 			refreshIfStale(["user", "dashboard"], 30_000, refetch);
 			refreshIfStale(["publicReviews"], 60_000, refetchReviews);
+
+			// Repayment recovery check on focus
+			(async () => {
+				try {
+					const pendingTxnid = await getStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+					const startedAtStr = await getStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+					if (pendingTxnid) {
+						const startedAt = startedAtStr ? Number(startedAtStr) : 0;
+						if (Date.now() - startedAt < 30 * 60 * 1000) {
+							const res = await verifyRepaymentStatus(pendingTxnid);
+							const c = classify(res);
+							if (c.kind === "SUCCESS") {
+								await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+								await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+								await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
+								await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+								router.push({
+									pathname: "/repayment-status" as any,
+									params: { txnid: pendingTxnid, status: "success" },
+								});
+							} else if (c.kind === "FAILED" || c.kind === "CANCELLED" || c.kind === "EXPIRED" || (c.kind === "PENDING" && c.notStarted)) {
+								await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+								await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+								await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
+							}
+						} else {
+							await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+							await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+							await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
+						}
+					}
+				} catch {
+					// silent recovery check error
+				}
+			})();
+
 			try {
 				console.log("FB _ dashboard_viewed");
 			} catch (error) {
@@ -832,33 +872,31 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		// Debug: Log loan status information
 		console.log("🔍 Delete Account Check:", {
 			hasData: !!data,
-			loanNumber: dashboardData?.primary_loan?.loan_number,
-			dashboardType: dashboardData?.dashboard_type,
-			outstandingBalance: dashboardData?.loan_summary?.current_outstanding,
+			activeLoan: dashboardData?.active_loan,
+			loanNumber: dashboardData?.active_loan?.loan_number || dashboardData?.primary_loan?.loan_number,
+			outstandingBalance: dashboardData?.active_loan?.amount_to_repay ?? dashboardData?.loan_summary?.current_outstanding,
 		});
 
-		// Check if user has no loan number (no loans taken)
-		if (!dashboardData?.primary_loan?.loan_number) {
-			console.log("✅ Can delete: No loan number");
-			return false; // No loans = can delete account
+		// Check active_loan first
+		if (dashboardData?.active_loan) {
+			const amountToRepay = Number(dashboardData.active_loan.amount_to_repay || 0);
+			if (amountToRepay > 0 || dashboardData.active_loan.state !== "closed") {
+				console.log("❌ Cannot delete: Has active loan with amount to repay");
+				return true;
+			}
 		}
 
-		// Check if dashboard type is not loan_dashboard (means no active loans)
-		if (dashboardData?.dashboard_type !== "loan_dashboard") {
-			console.log("✅ Can delete: Not loan dashboard");
-			return false; // No active loans = can delete account
+		// Legacy fallback if primary_loan exists
+		if (dashboardData?.primary_loan?.loan_number && dashboardData?.dashboard_type === "loan_dashboard") {
+			const outstandingBalance = dashboardData?.loan_summary?.current_outstanding || 0;
+			if (outstandingBalance > 0) {
+				console.log("❌ Cannot delete: Has legacy active loans with outstanding balance");
+				return true;
+			}
 		}
 
-		// Check if there's outstanding balance
-		const outstandingBalance = dashboardData?.loan_summary?.current_outstanding || 0;
-		if (outstandingBalance <= 0) {
-			console.log("✅ Can delete: No outstanding balance");
-			return false; // No outstanding balance = can delete account
-		}
-
-		// If we reach here, user has active loans with outstanding balance
-		console.log("❌ Cannot delete: Has active loans with outstanding balance");
-		return true; // Has active loans = cannot delete account
+		console.log("✅ Can delete: No active loans with balance");
+		return false;
 	};
 
 
@@ -983,7 +1021,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 					style={[
 						styles.heroBrand,
 						{ paddingTop: Math.max(insets.top, 12) },
-						(!data || (data as any)?.dashboard_type !== "loan_dashboard") && { paddingBottom: 76 },
+						(!data || (!hasActiveLoan && (data as any)?.dashboard_type !== "loan_dashboard")) && { paddingBottom: 76 },
 					]}>
 
 					{/* Navigation Header */}
@@ -1017,119 +1055,19 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 							Hi {data?.user_summary?.name ? (data.user_summary.name.length > 20 ? data.user_summary.name.slice(0, 20) + "..." : data.user_summary.name) : isPending ? "…" : "there"}
 						</Text>
 						<Text style={styles.subAction}>
-							{data?.dashboard_type === "loan_dashboard"
-								? t("loanSummaryDetails")
-								: isReapplyScenario
-									? t("welcomeReapplyLoan")
-									: "Apply for a Loan Now"}
+							{hasActiveLoan
+								? (activeLoan?.state === "pending_payment" ? t("paymentInProgress") : t("loanSummaryDetails"))
+								: (data as any)?.dashboard_type === "loan_dashboard"
+									? t("loanSummaryDetails")
+									: isReapplyScenario
+										? t("welcomeReapplyLoan")
+										: "Apply for a Loan Now"}
 						</Text>
 					</View>
 
 					{/* Card inside Hero Brand */}
-					{!isPending && data && (data as any)?.dashboard_type === "loan_dashboard" ? (
-						<View style={styles.loanDashboardCardWrapper}>
-							<LinearGradient
-								colors={['#000000', "#69ad02"]}
-								style={styles.newAmountCard}>
-
-								<View style={styles.newCardContent}>
-									<Text style={styles.newCardLabel}>
-										{t("amountDueCardLabel")}
-									</Text>
-									<Text style={styles.newAmount}>
-										{formatIndianRupees((data as any)?.loan_summary?.current_outstanding || 0)}
-									</Text>
-
-									<View style={styles.dueDateBadgeContainer}>
-										<View style={styles.dueDateBadgeNew}>
-											<IconSymbol name="calendar" size={14} color="#E84D4D" />
-											<Text style={styles.dueDateTextNew}>
-												{t("dueDatePrefix")}
-												{formatDate((data as any)?.loan_summary?.next_due_date)}
-											</Text>
-										</View>
-									</View>
-
-									<TouchableOpacity
-										style={styles.newPayNowButton}
-										onPress={() => {
-											const loanNumber = (data as any)?.primary_loan?.loan_number;
-											if (loanNumber) {
-												router.push({
-													pathname: "/repayment-options" as any,
-													params: { loanNumber }
-												});
-											}
-										}}>
-										<Text style={styles.newPayNowButtonText}>
-											{t("payNowButton")}
-										</Text>
-										<IconSymbol name="arrow.right" size={20} color={white} />
-									</TouchableOpacity>
-
-									<View style={styles.newBenefitsSection}>
-										<Text style={styles.newBenefitsTitle}>
-											{t("earlyPayPromoTitle")}
-										</Text>
-
-										{[
-											"benefit1_loanAmount",
-											"benefit2_creditScore",
-											"benefit3_eligibility"
-										].map((key: any, index) => (
-											<View key={index} style={styles.newBenefitItem}>
-												<IconSymbol name="checkmark.circle.fill" size={18} color="#fff" />
-												<Text style={styles.newBenefitText}>
-													{t(key)}
-												</Text>
-											</View>
-										))}
-									</View>
-								</View>
-							</LinearGradient>
-
-							<View style={styles.loanSummaryContainer}>
-								<TranslatedText
-									style={{ color: "#000", fontWeight: "700", fontSize: 18 }}
-									translationKey="onTimePaymentBenefits"
-								/>
-								<View style={styles.benefitsListWrapper}>
-									{benefitsOfPayNow.map((item) => (
-										<View
-											key={item.id}
-											style={styles.benefitItem}
-										>
-											<Image
-												source={item.icon}
-												style={styles.benefitIcon}
-											/>
-											<Text style={styles.benefitText}>
-												{t(item.titleKey)}
-											</Text>
-										</View>
-									))}
-								</View>
-
-								<TouchableOpacity
-									style={styles.payNowButtonBenefits}
-									onPress={() => {
-										const loanNumber = (data as any)?.primary_loan?.loan_number;
-										if (loanNumber) {
-											router.push({
-												pathname: "/repayment-options" as any,
-												params: { loanNumber }
-											});
-										}
-									}}>
-									<View style={{ flexDirection: "row", alignItems: "center", gap: width(2) }}>
-										<Text style={{ color: '#fff', fontWeight: '700' }}>
-											{t("payNow")}
-										</Text>
-										<IconSymbol name="arrow.right" size={20} color={white} />
-									</View>
-								</TouchableOpacity>
-							</View>
-						</View>
+					{hasActiveLoan && activeLoan ? (
+						<RepaymentHeaderCard activeLoan={activeLoan} />
 					) : (
 						/* Pre-Qualified Card from Figma */
 						<View style={styles.preQualContainer}>
@@ -1198,6 +1136,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				{/* Loan Rejected Screen - Show only for workflow_dashboard when rejected */}
 				{!isPending &&
 					data &&
+					!hasActiveLoan &&
 					(data as any)?.dashboard_type === "workflow_dashboard" &&
 					isRejected && (
 						<View style={styles.rejectedScreenContainer}>
@@ -1223,6 +1162,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				{/* Continue Journey Card - Show only for workflow_dashboard and NOT rejected */}
 				{!isPending &&
 					data &&
+					!hasActiveLoan &&
 					(data as any)?.dashboard_type === "workflow_dashboard" &&
 					!isRejected && (
 						isReapplyScenario ? (

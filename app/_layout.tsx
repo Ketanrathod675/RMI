@@ -8,7 +8,7 @@ import { useSplashController } from "@/hooks/useSplashController";
 import { store } from "@/store";
 import { DarkTheme, DefaultTheme, ThemeProvider } from "expo-router/react-navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { NavigationBar } from "expo-navigation-bar";
@@ -32,7 +32,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { installNetworkAwareness, useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useTranslation } from "@/hooks/useTranslation";
 import { installGlobalErrorHandlers, subscribeFatalErrors } from "@/utils/errorHandling";
-import { useRouter } from "expo-router";
 import { handleApplicationRejected, setApplicationRejectedHandler } from "@/utils/applicationRejection";
 
 installToastDefaults();
@@ -58,8 +57,12 @@ export const queryClient = new QueryClient({
 
 function RootLayoutNav() {
 	const router = useRouter();
-	const [fatalError, setFatalError] = React.useState<unknown>(null);
+	const segments = useSegments();
 	const insets = useSafeAreaInsets();
+	const inTabs = segments[0] === "(tabs)";
+	const TAB_BAR_HEIGHT = 56;
+	const bottomOffset = insets.bottom + (inTabs ? TAB_BAR_HEIGHT + 12 : 20);
+	const [fatalError, setFatalError] = React.useState<unknown>(null);
 	const { isOffline } = useNetworkStatus();
 	const { t } = useTranslation();
 	const colorScheme = useColorScheme();
@@ -220,8 +223,7 @@ function RootLayoutNav() {
 					<Stack.Screen name="loan-enter-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="mpin-login" options={{ headerShown: false }} />
 					<Stack.Screen name="rapidcare" options={{ headerShown: false }} />
-					<Stack.Screen name="repayment-options" options={{ headerShown: false }} />
-					<Stack.Screen name="repayment-success" options={{ headerShown: false }} />
+					<Stack.Screen name="repayment-status" options={{ headerShown: false }} />
 					<Stack.Screen name="sanction-letter" options={{ headerShown: false }} />
 					<Stack.Screen name="set-language" options={{ headerShown: false }} />
 					<Stack.Screen name="set-mpin" options={{ headerShown: false }} />
@@ -259,9 +261,10 @@ function RootLayoutNav() {
 				{__DEV__ && <DevMockBanner />}
 				<Toast
 					config={toastConfig}
-					position="top"
-					topOffset={insets.top + 8}
-					visibilityTime={3000}
+					position="bottom"
+					bottomOffset={bottomOffset}
+					keyboardOffset={12}
+					visibilityTime={2500}
 				/>
 			</View>
 		</ThemeProvider>

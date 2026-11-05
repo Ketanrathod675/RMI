@@ -235,7 +235,7 @@ export default function RequestPermissions() {
 			}
 
 			// 1. If user has active loan dashboard or workflow is completed
-			if (dashboardType === "loan_dashboard" || overallStatus === "completed") {
+			if (dashboardType === "loan_dashboard" || overallStatus === "completed" || Boolean(dashboardData?.active_loan)) {
 				if (__DEV__) {
 				}
 				router.replace("/(tabs)");

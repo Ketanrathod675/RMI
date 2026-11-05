@@ -106,6 +106,22 @@ export function runNativeIntentTests(): void {
 			"Malformed URL should return original path unchanged without throwing",
 		);
 	}
+
+	// Case 5: Repayment return
+	{
+		const result = redirectSystemPath({
+			path: "/repayment-status?txnid=REPAY_TEST_456&status=success",
+			initial: false,
+		});
+		assert(
+			typeof result === "string" && result.startsWith("/repayment-status"),
+			"Repayment return should route to /repayment-status",
+		);
+		assert(
+			typeof result === "string" && result.includes("txnid=REPAY_TEST_456"),
+			"Repayment return should preserve txnid",
+		);
+	}
 }
 
 // Execute tests if running standalone in node

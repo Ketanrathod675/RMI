@@ -1,3 +1,5 @@
+import type { ActiveLoan } from "./repayment.types";
+
 /**
  * RapidMoney Step Routing Definitions
  */
@@ -289,6 +291,8 @@ export type UserDashboardResponseType = {
 	notifications: Notifications;
 	progress_summary: ProgressSummary;
 	loan_summary?: LoanSummary;
+	active_loan?: ActiveLoan | null;
+	can_reapply?: boolean | null;
 };
 
 export type PersonalDetails = {

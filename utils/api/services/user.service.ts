@@ -111,6 +111,8 @@ export const getUserDashboardData = async (): Promise<UserDashboardResponseType>
 			estimated_completion_time: "",
 			next_milestone: nextStep,
 		},
+		active_loan: authData?.active_loan ?? null,
+		can_reapply: authData?.can_reapply ?? null,
 	};
 };
 

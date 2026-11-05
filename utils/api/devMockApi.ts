@@ -41,6 +41,9 @@ export interface DevMockOptions {
 		| "rejected_pan_fixable"
 		| "rejected_email_fixable"
 		| "error";
+	activeLoan?: any;
+	canReapply?: boolean;
+	repaymentMockOutcome?: "success" | "delayed_success" | "failure";
 }
 
 let _mockOptions: DevMockOptions = {
@@ -65,6 +68,7 @@ let _mockOptions: DevMockOptions = {
 let _mockCkycOtpAttempts = 0;
 
 let _easebuzzPollCount = 0;
+let _repaymentPollCount = 0;
 let _brePollCount = 0;
 let _remainingPanUpdates = 2;
 let _remainingEmailUpdates = 2;
@@ -383,6 +387,8 @@ export async function handleDevMockRequest(
 							can_reapply: true,
 							lead_id: 12345,
 						},
+						active_loan: _mockOptions.activeLoan ?? null,
+						can_reapply: _mockOptions.canReapply ?? false,
 					},
 				},
 				status: 200,
@@ -3411,6 +3417,101 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 							lender_name: "RapidMoney Finance",
 						},
 					},
+					active_loan: _mockOptions.activeLoan ?? null,
+					can_reapply: _mockOptions.canReapply ?? false,
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 53. Endpoint: repayments/initiate-manual-payment (POST) ────────────────
+	if (url.includes("repayments/initiate-manual-payment") && method === "post") {
+		await delay(350);
+		_repaymentPollCount = 0;
+		const mockTxnid = `mock-repay-${Date.now()}`;
+		return {
+			data: {
+				status: "success",
+				data: {
+					txnid: mockTxnid,
+					loan_id: "mock-loan-101",
+					amount: _mockOptions.activeLoan?.amount_to_repay ?? 15000,
+					payment_url: `rapid-money://repayment-status?txnid=${mockTxnid}&status=success`,
+					expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 54. Endpoint: repayments/payments/:txnid/verify-status (POST) ──────────
+	if (url.includes("repayments/payments") && url.includes("verify-status") && method === "post") {
+		await delay(300);
+		_repaymentPollCount++;
+		const outcome = _mockOptions.repaymentMockOutcome ?? "delayed_success";
+		const match = url.match(/repayments\/payments\/([^/]+)\/verify-status/);
+		const txnid = match?.[1] || "mock-repay-txn";
+
+		if (outcome === "failure") {
+			return {
+				data: {
+					success: false,
+					data: {
+						status: "FAILED",
+						reason: null,
+						txnid,
+						amount: 15000,
+						loan_closed: false,
+						remaining_outstanding: 15000,
+						can_reapply: false,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "delayed_success" && _repaymentPollCount < 3) {
+			return {
+				data: {
+					success: true,
+					data: {
+						status: "PENDING",
+						reason: "in_progress",
+						txnid,
+						amount: 15000,
+						loan_closed: false,
+						remaining_outstanding: 15000,
+						can_reapply: false,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		return {
+			data: {
+				success: true,
+				data: {
+					status: "SUCCESS",
+					reason: null,
+					txnid,
+					amount: 15000,
+					loan_closed: true,
+					remaining_outstanding: 0,
+					can_reapply: true,
 				},
 			},
 			status: 200,

@@ -24,6 +24,12 @@ export function redirectSystemPath({
 			return `/new-assessment-fee${query ? `?${query}` : ""}`;
 		}
 
+		// 2. Repayment return: repayment-status with txnid -> redirect to /repayment-status
+		if (pathname.includes("repayment-status") && txnid) {
+			const query = searchParams.toString();
+			return `/repayment-status${query ? `?${query}` : ""}`;
+		}
+
 		// 2. Mandate return: support the backend app callback and Easebuzz status aliases.
 		const callbackStatus =
 			searchParams.get("mandate_status")

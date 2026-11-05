@@ -309,7 +309,7 @@ export default function MyLoan() {
 		queryFn: getUserDashboardData,
 	});
 
-	const loanNumber = (dashboardData as any)?.primary_loan?.loan_number;
+	const loanNumber = (dashboardData as any)?.active_loan?.loan_number ?? (dashboardData as any)?.primary_loan?.loan_number;
 
 	// Fetch loan details if loan number exists in dashboard
 	const { data: apiData, isLoading, isError, error, refetch, isFetching } = useNetworkAwareQuery<LoanDetailsAPIResponse>({

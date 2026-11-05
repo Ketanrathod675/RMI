@@ -116,7 +116,7 @@ export default function SigninSignupOtp() {
 			// Store the OTP verification response data (including user_id)
 			changeOtpVerifyResponse(data as any);
 
-			// â”€â”€ Branch Integration: Set Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+			// ── Branch Integration: Set Identity ──
 			const customerId = (data as any)?.customer_id ?? data?.user?.customer_id;
 			if (customerId) {
 				try {
@@ -125,7 +125,7 @@ export default function SigninSignupOtp() {
 				}
 			}
 
-			// â”€â”€ Analytics: User Segmentation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+			// ── Analytics: User Segmentation ──
 			const userType = "new_user";
 			const resolvedUserId =
 				data?.user_id ||
@@ -592,7 +592,7 @@ export default function SigninSignupOtp() {
 
 					{/* Didn't Receive OTP & Resend Row in the same line */}
 					<View style={styles.resendRow}>
-						<Text style={styles.didntReceiveText}>Didnâ€™t Receive OTP ?</Text>
+						<Text style={styles.didntReceiveText}>{t("didntReceiveOTP", "Didn't Receive OTP ?")}</Text>
 						{countdown > 0 ? (
 							<Text style={styles.countdownText}>
 								Re-send in {formatTime(countdown)}s
@@ -644,7 +644,7 @@ export default function SigninSignupOtp() {
 										styles.checkbox,
 										isChecked && styles.checkboxChecked,
 									]}>
-									{isChecked && <Text style={styles.checkmark}>âœ“</Text>}
+									{isChecked && <MaterialIcons name="check" size={14} color={white} />}
 								</View>
 							</TouchableOpacity>
 
@@ -663,7 +663,7 @@ export default function SigninSignupOtp() {
 									Privacy Policy
 								</Text>
 								, and to be contacted via SMS, WhatsApp, call, or email, including
-								on DND-registered numbers".
+								on DND-registered numbers.
 							</Text>
 						</View>
 
@@ -679,7 +679,7 @@ export default function SigninSignupOtp() {
 											styles.checkbox,
 											isSoftPullChecked && styles.checkboxChecked,
 										]}>
-										{isSoftPullChecked && <Text style={styles.checkmark}>âœ“</Text>}
+										{isSoftPullChecked && <MaterialIcons name="check" size={14} color={white} />}
 									</View>
 								</TouchableOpacity>
 
