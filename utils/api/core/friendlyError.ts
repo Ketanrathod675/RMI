@@ -12,7 +12,7 @@ const safeServerText = (value: unknown): string | undefined => {
 	if (typeof value === "string") text = value;
 	else if (Array.isArray(value)) text = value.map((v) => typeof v === "string" ? v : v?.msg).filter((v) => typeof v === "string").join(" ");
 	else if (value && typeof value === "object") text = typeof (value as any).msg === "string" ? (value as any).msg : undefined;
-	if (!text || text.length > 140 || /traceback|exception|\bsql\b|psycopg|keyerror|<html|\bat\s+[\w$.<>]+\s+\([^)]*:\d+:\d+\)/i.test(text)) return undefined;
+	if (!text || text.length > 140 || /traceback|exception|\bsql\b|psycopg|keyerror|<html|\bat\s+[\w$.<>]+\s+\([^)]*:\d+:\d+\)|cooling|cool-off|cool\s*off|30\s*days?/i.test(text)) return undefined;
 	return text;
 };
 

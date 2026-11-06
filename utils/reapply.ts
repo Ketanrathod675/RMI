@@ -46,12 +46,27 @@ export async function executeLoanReapply(
 				return false;
 			}
 		} else {
-			const rawMsg = reapplyData.message || "";
-			const message = rawMsg.toLowerCase().includes("overdue")
+			const rawMsg = (reapplyData.message || "").toLowerCase();
+			const mentionsCoolingOrInternal =
+				rawMsg.includes("cool") ||
+				rawMsg.includes("30") ||
+				rawMsg.includes("period") ||
+				rawMsg.includes("wait") ||
+				rawMsg.includes("days") ||
+				rawMsg.includes("policy") ||
+				rawMsg.includes("rule") ||
+				rawMsg.includes("bre") ||
+				rawMsg.includes("lender");
+
+			const message = rawMsg.includes("overdue")
 				? t
 					? t("overdueLoanMessage", "You have an overdue loan payment")
 					: "You have an overdue loan payment"
-				: rawMsg || (t ? t("notEligibleToReapply", "You are not eligible to reapply at this time") : "You are not eligible to reapply at this time");
+				: mentionsCoolingOrInternal
+					? t
+						? t("notEligibleToReapply", "You are not eligible to re-apply at this time")
+						: "You are not eligible to re-apply at this time"
+					: reapplyData.message || (t ? t("notEligibleToReapply", "You are not eligible to re-apply at this time") : "You are not eligible to re-apply at this time");
 
 			Toast.show({
 				type: "error",

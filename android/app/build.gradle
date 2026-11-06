@@ -84,6 +84,13 @@ def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 apply from: new File(["node", "--print", "require('path').dirname(require.resolve('@sentry/react-native/package.json'))"].execute(null, rootDir).text.trim(), "sentry.gradle.kts")
 
+// Honor SENTRY_DISABLE_AUTO_UPLOAD from .env / .env.local even if Gradle daemon cached an older environment
+def envFile = file("../../.env.local").exists() ? file("../../.env.local") : file("../../.env")
+def disableUploadFromEnv = envFile.exists() && (envFile.text.contains("SENTRY_DISABLE_AUTO_UPLOAD=true") || envFile.text.contains("SENTRY_DISABLE_AUTO_UPLOAD = true") || envFile.text.contains("SENTRY_DISABLE_AUTO_UPLOAD=\"true\"") || envFile.text.contains("SENTRY_DISABLE_AUTO_UPLOAD = \"true\""))
+if (disableUploadFromEnv || System.getenv("SENTRY_DISABLE_AUTO_UPLOAD") == "true") {
+    project.ext.shouldSentryAutoUploadGeneral = { -> return false }
+}
+
 android {
 
     ndkVersion rootProject.ext.ndkVersion

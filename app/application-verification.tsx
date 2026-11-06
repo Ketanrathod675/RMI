@@ -159,7 +159,7 @@ export default function ApplicationVerification() {
 							translationKey="applicationUnderProcessNote"
 						/>
 
-						{data?.status === "rejected" && data.rejection_reason ? (
+						{data?.status === "rejected" && data.rejection_reason && !/cooling|cool-off|cool\s*off|30\s*days?|period|rule|bre|policy/i.test(data.rejection_reason) ? (
 							<Text style={styles.rejectionReason}>{data.rejection_reason}</Text>
 						) : null}
 					</View>

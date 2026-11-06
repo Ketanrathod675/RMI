@@ -30,3 +30,5 @@ local.properties
 /android
 RMI.zip
 .env.local
+
+.env.local

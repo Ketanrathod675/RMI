@@ -80,14 +80,20 @@ function getUserSafeRejectionReason(reason?: string | null): string | null {
 	if (
 		lower.includes("rule") ||
 		lower.includes("bre") ||
-		lower.includes("policy_") ||
+		lower.includes("policy") ||
 		lower.includes("lender") ||
 		lower.includes("ruloans") ||
 		lower.includes("finzy") ||
 		lower.includes("backend") ||
 		lower.includes("internal") ||
 		lower.includes("exception") ||
-		lower.includes("error")
+		lower.includes("error") ||
+		lower.includes("cooling") ||
+		lower.includes("cool-off") ||
+		lower.includes("cool off") ||
+		lower.includes("30") ||
+		lower.includes("period") ||
+		lower.includes("days")
 	) {
 		return null;
 	}
@@ -584,9 +590,23 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 					});
 				}
 			} else {
-				const message = reapplyData.message?.toLowerCase().includes("overdue")
+				const rawMsg = (reapplyData.message || "").toLowerCase();
+				const mentionsCoolingOrInternal =
+					rawMsg.includes("cool") ||
+					rawMsg.includes("30") ||
+					rawMsg.includes("period") ||
+					rawMsg.includes("wait") ||
+					rawMsg.includes("days") ||
+					rawMsg.includes("policy") ||
+					rawMsg.includes("rule") ||
+					rawMsg.includes("bre") ||
+					rawMsg.includes("lender");
+
+				const message = rawMsg.includes("overdue")
 					? t("overdueLoanMessage")
-					: reapplyData.message || t("notEligibleToReapply");
+					: mentionsCoolingOrInternal
+						? t("notEligibleToReapply")
+						: reapplyData.message || t("notEligibleToReapply");
 
 				Toast.show({
 					type: "error",

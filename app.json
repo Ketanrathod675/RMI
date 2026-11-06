@@ -132,7 +132,6 @@
       "expo-font",
       "expo-sharing",
       "expo-status-bar",
-      "@sentry/react-native",
       [
         "@sentry/react-native/expo",
         {
