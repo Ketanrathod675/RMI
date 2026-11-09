@@ -190,6 +190,7 @@ function RootLayoutNav() {
 						name="customer-data-consent"
 						options={{ headerShown: false, gestureEnabled: false }}
 					/>
+					<Stack.Screen name="consent-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="professional-details" options={{ headerShown: false }} />
 					<Stack.Screen name="professional-details-success" options={{ headerShown: false }} />
 					<Stack.Screen name="ckyc-instructions" options={{ headerShown: false }} />

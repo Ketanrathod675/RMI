@@ -228,23 +228,52 @@ export default function ProfessionalDetails() {
 	});
 
 	const [fetchingDetails, setFetchingDetails] = useState(true);
-	const [backendLanguages, setBackendLanguages] = useState<string[]>([]);
-	const [backendLoanPurposes, setBackendLoanPurposes] = useState<Array<{ value: string; label: string }>>([]);
+	const [backendLanguages, setBackendLanguages] = useState<any[]>([]);
+	const [backendLoanPurposes, setBackendLoanPurposes] = useState<any[]>([]);
 
 	const languageOptions: SelectOption[] =
 		backendLanguages.length > 0
-			? backendLanguages.map((lang) => ({
-				label: lang.charAt(0).toUpperCase() + lang.slice(1),
-				value: lang.toLowerCase(),
-			}))
+			? backendLanguages.map((lang: any) => {
+				if (typeof lang === "string") {
+					return {
+						label: lang.charAt(0).toUpperCase() + lang.slice(1),
+						value: lang.toLowerCase(),
+					};
+				}
+				if (lang && typeof lang === "object") {
+					const rawLabel =
+						lang.label ||
+						lang.name ||
+						lang.title ||
+						lang.language ||
+						(lang.value ? String(lang.value) : "");
+					const rawValue = String(lang.value || lang.code || lang.key || rawLabel || "").toLowerCase();
+					return {
+						label: rawLabel ? String(rawLabel).charAt(0).toUpperCase() + String(rawLabel).slice(1) : "English",
+						value: rawValue || "en",
+					};
+				}
+				return {
+					label: String(lang ?? ""),
+					value: String(lang ?? "").toLowerCase(),
+				};
+			})
 			: defaultLanguages;
 
 	const loanPurposeOptions: SelectOption[] =
 		backendLoanPurposes.length > 0
-			? backendLoanPurposes.map((p) => ({
-				label: p.label || p.value,
-				value: p.value,
-			}))
+			? backendLoanPurposes.map((p: any) => {
+				if (typeof p === "string") {
+					return {
+						label: p.charAt(0).toUpperCase() + p.slice(1).replace(/_/g, " "),
+						value: p,
+					};
+				}
+				return {
+					label: p?.label || p?.name || p?.value || "",
+					value: p?.value || p?.key || p?.label || "",
+				};
+			})
 			: defaultLoanPurposeOptions;
 
 	const { applicantFrom } = useAuth();

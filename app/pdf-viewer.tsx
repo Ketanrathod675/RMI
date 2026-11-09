@@ -104,9 +104,23 @@ export default function PdfViewer() {
 				/>
 			) : (
 				<View style={styles.center}>
-					<TouchableOpacity onPress={() => openLocalPdf(uri)} style={styles.button}>
-						<Text style={styles.buttonText}>{title || "Open PDF"}</Text>
-					</TouchableOpacity>
+					<View style={styles.docCard}>
+						<Ionicons name="document-text-outline" size={52} color="#79CA01" />
+						<Text style={styles.docTitle} numberOfLines={2}>
+							{title || "Document"}
+						</Text>
+						<Text style={styles.docSubtitle}>
+							Tap below to view this document in your PDF reader.
+						</Text>
+						<TouchableOpacity
+							onPress={() => openLocalPdf(uri)}
+							style={styles.button}
+							activeOpacity={0.8}
+						>
+							<Ionicons name="open-outline" size={18} color="#0F172A" style={styles.buttonIcon} />
+							<Text style={styles.buttonText}>Open PDF</Text>
+						</TouchableOpacity>
+					</View>
 				</View>
 			)}
 		</SafeAreaView>
@@ -120,18 +134,51 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 		paddingHorizontal: 16,
 		paddingVertical: 12,
+		borderBottomWidth: 1,
+		borderBottomColor: "#F1F5F9",
 	},
 	backButton: { padding: 6, marginRight: 8 },
-	title: { flex: 1, fontSize: font(18), fontWeight: "600", color: dark },
+	title: { flex: 1, fontSize: 18, fontWeight: "600", color: dark },
 	center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-	message: { fontSize: font(15), color: dark, textAlign: "center" },
-	button: {
-		marginTop: height(2),
-		backgroundColor: "#A4E65E",
-		paddingVertical: 12,
-		paddingHorizontal: 28,
-		borderRadius: 10,
+	message: { fontSize: 14, color: dark, textAlign: "center", marginBottom: 16 },
+	docCard: {
+		backgroundColor: "#F8FAFC",
+		borderWidth: 1,
+		borderColor: "#E2E8F0",
+		borderRadius: 16,
+		padding: 24,
+		alignItems: "center",
+		width: "100%",
+		maxWidth: 340,
 	},
-	buttonText: { fontSize: font(15), fontWeight: "600", color: dark },
+	docTitle: {
+		fontSize: 18,
+		fontWeight: "700",
+		color: dark,
+		textAlign: "center",
+		marginTop: 14,
+	},
+	docSubtitle: {
+		fontSize: 13,
+		color: "#64748B",
+		textAlign: "center",
+		marginTop: 6,
+		lineHeight: 18,
+	},
+	button: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		marginTop: 20,
+		backgroundColor: "#B7FB52",
+		paddingVertical: 14,
+		paddingHorizontal: 28,
+		borderRadius: 12,
+		width: "100%",
+	},
+	buttonIcon: {
+		marginRight: 8,
+	},
+	buttonText: { fontSize: 15, fontWeight: "700", color: "#0F172A" },
 	pdf: { flex: 1, backgroundColor: "gray" },
 });

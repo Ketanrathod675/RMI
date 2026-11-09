@@ -2925,7 +2925,45 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}
 
-	// ─── 47a. Endpoint: consent-document status / sign ────────────────────────
+	// ─── 47a. Endpoint: consent-document status / otp initiate / otp resend / sign ────────────────────────
+	if (url.includes("consent-document/otp/initiate") && method === "post") {
+		await delay(350);
+		return {
+			data: {
+				success: true,
+				message: "Consent OTP sent successfully [MOCK MODE]",
+				sign_in_key: "mock_consent_key_" + Date.now(),
+				expires_in_seconds: 300,
+				masked_phone: "+91 98••••••10",
+				resend_after_seconds: 30,
+				test_otp: 1234,
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	if (url.includes("consent-document/otp/resend") && method === "post") {
+		await delay(350);
+		return {
+			data: {
+				success: true,
+				message: "Consent OTP resent successfully [MOCK MODE]",
+				sign_in_key: "mock_consent_key_resend_" + Date.now(),
+				expires_in_seconds: 300,
+				masked_phone: "+91 98••••••10",
+				resend_after_seconds: 30,
+				test_otp: 1234,
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
 	if (url.includes("consent-document/status") && method === "get") {
 		await delay(200);
 		return {
@@ -2939,7 +2977,27 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 
 	if (url.includes("consent-document/sign") && method === "post") {
 		await delay(500);
-Logger.warn("Operation failed", { code: "operation_failed" });
+		let parsedBody: any = {};
+		try {
+			parsedBody = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data || {};
+		} catch {
+			parsedBody = {};
+		}
+
+		if (parsedBody.otp !== undefined && Number(parsedBody.otp) !== 1234) {
+			const error = new Error("Incorrect or expired OTP. Please try again.") as any;
+			error.response = {
+				status: 400,
+				data: {
+					success: false,
+					detail: "Incorrect or expired OTP. Please try again.",
+				},
+				headers: {},
+				config,
+			};
+			throw error;
+		}
+
 		return {
 			data: {
 				success: true,

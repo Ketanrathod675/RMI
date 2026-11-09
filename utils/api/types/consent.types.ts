@@ -6,7 +6,20 @@ export type ConsentKey =
 	| "dataSharing"
 	| "communication";
 
-export type ConsentPayload = Record<ConsentKey, boolean>;
+export type ConsentPayload = Record<ConsentKey, boolean> & {
+	otp?: number;
+	signInKey?: string;
+};
+
+export interface ConsentOtpInitiateResponse {
+	success: boolean;
+	message: string;
+	sign_in_key: string;
+	expires_in_seconds: number;
+	masked_phone: string;
+	resend_after_seconds: number;
+	test_otp?: number | string;
+}
 
 export interface ConsentSignResponse {
 	success: boolean;

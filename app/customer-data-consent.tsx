@@ -18,12 +18,12 @@ import Toast from "react-native-toast-message";
 import Svg, { Circle, Path, Rect } from "react-native-svg";
 import Logger from "@/utils/logger";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
-import { signConsent } from "@/utils/api/services/consent.service";
-import { getUserDashboardData, getUserProfile } from "@/utils/api/services/user.service";
+import { initiateConsentOtp } from "@/utils/api/services/consent.service";
+import { getUserProfile } from "@/utils/api/services/user.service";
 import { getLenders, triggerPostKycAllocationAdapter } from "@/utils/api/services/lender.service";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { getApiErrorInfo } from "@/utils/api/errors";
-import { resolveWorkflowRoute } from "@/utils/api/types/user.types";
+import { finishConsent, handleConsent409Error } from "@/utils/consent/finishConsent";
 import type { ConsentKey, ConsentPayload } from "@/utils/api/types/consent.types";
 
 type IconName =
@@ -347,82 +347,43 @@ export default function CustomerDataConsentScreen() {
 		isSubmittingRef.current = true;
 		setIsSubmitting(true);
 
-		Logger.debug("Customer data consent submit requested");
+		Logger.debug("Customer data consent OTP initiate requested");
 
 		try {
-			let responseMessage = "Consent document signed successfully";
-			try {
-				const res = await signConsent({
-					kycVerification: true,
-					creditBureau: true,
-					deviceFraud: true,
-					bankAmlMnrl: true,
-					dataSharing: true,
-					communication: true,
-				});
-				if (res?.message) responseMessage = res.message;
-			} catch (signErr: any) {
-				const info = getApiErrorInfo(signErr);
-				const detailLower = info.detail.toLowerCase();
-				// 409 already signed is treated as success
-				if (info.status === 409 && detailLower.includes("already signed")) {
-					responseMessage = info.detail || "Consent already signed";
-				} else if (
-					info.status === 409 &&
-					(detailLower.includes("not required") ||
-						detailLower.includes("not in progress"))
-				) {
-					await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-					router.replace("/(tabs)");
-					return;
-				} else {
-					throw signErr;
-				}
-			}
+			const payload: ConsentPayload = {
+				kycVerification: true,
+				creditBureau: true,
+				deviceFraud: true,
+				bankAmlMnrl: true,
+				dataSharing: true,
+				communication: true,
+			};
 
-			Toast.show({
-				type: "success",
-				text1: responseMessage,
-				visibilityTime: 3000,
+			const res = await initiateConsentOtp(payload);
+
+			router.push({
+				pathname: "/consent-otp" as any,
+				params: {
+					signInKey: res?.sign_in_key || "",
+					expiresIn: String(res?.expires_in_seconds || 300),
+					maskedPhone: res?.masked_phone || "",
+					resendAfter: String(res?.resend_after_seconds || 30),
+					...(__DEV__ && res?.test_otp ? { testOtp: String(res.test_otp) } : {}),
+				},
 			});
-
-			await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-			const freshDash = await getUserDashboardData();
-
-			const currentStep = freshDash?.workflow_progress?.current_step;
-			const overallStatus = freshDash?.workflow_progress?.overall_status;
-			const breStatus =
-				freshDash?.workflow_progress?.bre_status ??
-				(freshDash as any)?.lead?.lead_metadata?.bre_status;
-			const breFailedRule =
-				freshDash?.workflow_progress?.bre_failed_rule ??
-				(freshDash as any)?.lead?.lead_metadata?.bre_failed_rule;
-
-			const nextRoute = resolveWorkflowRoute(
-				currentStep,
-				overallStatus,
-				breStatus,
-				breFailedRule,
-			);
-
-			if (nextRoute === "/customer-data-consent") {
-				Toast.show({
-					type: "error",
-					text1: "Your application has not advanced yet. Please try again shortly.",
-					visibilityTime: 4000,
-				});
+		} catch (err: any) {
+			const error409 = await handleConsent409Error(err, queryClient, router);
+			if (error409.isHandled) {
+				if (error409.isSuccess) {
+					await finishConsent({
+						queryClient,
+						router,
+						responseMessage: error409.message,
+					});
+				}
 				return;
 			}
 
-			if (nextRoute === "/professional-details") {
-				router.replace({
-					pathname: "/professional-details" as any,
-					params: { disableBack: "true" },
-				});
-			} else {
-				router.replace(nextRoute as any);
-			}
-		} catch (err: any) {
 			const info = getApiErrorInfo(err);
 			if (info.status === 401) {
 				// Let axios interceptor handle 401

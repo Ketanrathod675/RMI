@@ -270,6 +270,11 @@ export default function Profile() {
 
 	const menuItems: MenuItem[] = [
 		{
+			title: "Sentry Test Screen",
+			icon: "bug-report",
+			onPress: () => router.push("/sentry-test" as any),
+		},
+		{
 			title: t("loanDetails"),
 			icon: "currency-rupee",
 			onPress: () => router.push("/loan-details" as any),

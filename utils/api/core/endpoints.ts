@@ -147,6 +147,8 @@ export const URLS = {
 		preview: "consent-document/preview",
 		sign: "consent-document/sign",
 		signed: "consent-document/signed",
+		otp_initiate: "consent-document/otp/initiate",
+		otp_resend: "consent-document/otp/resend",
 	},
 	bank_details: {
 		submit: "bank-details",
