@@ -78,3 +78,15 @@ export function generateUUID(): string {
 	});
 }
 
+export async function invalidatePostRepaymentQueries(
+	queryClient?: { invalidateQueries: (filters: { queryKey: readonly unknown[] }) => Promise<unknown> } | null,
+): Promise<void> {
+	if (!queryClient) return;
+	await Promise.all([
+		queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] }),
+		queryClient.invalidateQueries({ queryKey: ["userDashboard"] }),
+		queryClient.invalidateQueries({ queryKey: ["loanHistory", "active"] }),
+		queryClient.invalidateQueries({ queryKey: ["allLoans"] }),
+	]);
+}
+

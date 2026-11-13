@@ -1,3 +1,4 @@
+import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { useMountedRef } from "@/hooks/useMountedRef";
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { DateInput, Dropdown, Select, StickyFormFooter, type SelectOption } from "@/components";
@@ -9,6 +10,11 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useKeyboardVisible } from "@/hooks/useKeyboardVisible";
 import { useFormScroll } from "@/hooks/useFormScroll";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
+import {
+	BASIC_DETAILS_FIELD_MAP,
+	extractFieldErrors,
+	mapBackendFieldErrors,
+} from "@/utils/api/core/fieldErrors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useJourneyLoader } from "@/context/JourneyLoaderProvider";
@@ -71,6 +77,7 @@ export default function LoanApplication() {
 
 	// Track this screen in the journey
 	useJourneyTracker("/loan-application");
+	useApplicationStatusGuard();
 
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
@@ -397,7 +404,7 @@ export default function LoanApplication() {
 				}
 			);
 		},
-		onError: (err, variables, ctx) => {
+		onError: async (err, variables, ctx) => {
 			if (!mountedRef.current) return;
 			if ((err as any)?.isApplicationRejected) return;
 			const { error } = errorHandler(err, variables, ctx);
@@ -442,13 +449,58 @@ export default function LoanApplication() {
 						"Phone verification required prior to KYC. Please sign in again.",
 					),
 				});
-				logout();
-				router.replace("/login");
+				await logout();
+				if (mountedRef.current) {
+					router.replace("/login");
+				}
 				return;
 			}
 
-			// Other 400 / validation / server errors: surface clear message, do not crash
-			const backendErrorDetail = getFriendlyError(err).message;
+			// Map backend validation / business errors onto inline form fields when identifiable
+			const { fields: extractedFields, general: generalError } = extractFieldErrors(err);
+			const mappedFieldErrors = mapBackendFieldErrors(extractedFields, BASIC_DETAILS_FIELD_MAP);
+			const mappedEntries = Object.entries(mappedFieldErrors);
+
+			if (mappedEntries.length > 0) {
+				setFieldErrors((prev) => ({
+					...prev,
+					...mappedFieldErrors,
+				}));
+
+				const orderedKeys = [
+					"fullName",
+					"panNumber",
+					"fatherName",
+					"dateOfBirth",
+					"gender",
+					"email",
+					"pincode",
+				];
+				const firstKey = scrollToFirstError(mappedFieldErrors, orderedKeys, {
+					fullName: fullNameRef,
+					panNumber: panRef,
+					fatherName: fatherNameRef,
+					email: emailRef,
+					pincode: pincodeRef,
+				});
+				const firstFieldMsg =
+					(firstKey
+						? mappedFieldErrors[firstKey as keyof typeof mappedFieldErrors]
+						: undefined) ||
+					mappedEntries[0]?.[1] ||
+					"";
+
+				Toast.show({
+					type: "error",
+					text1: t("correctHighlightedDetails", "Please correct the highlighted details"),
+					text2: firstFieldMsg,
+					visibilityTime: 5000,
+				});
+				return;
+			}
+
+			// Fallback: general backend string (if safe) or friendly generic error
+			const backendErrorDetail = generalError || getFriendlyError(err).message;
 
 			Toast.show({
 				type: "error",
@@ -457,6 +509,7 @@ export default function LoanApplication() {
 					typeof backendErrorDetail === "string"
 						? backendErrorDetail
 						: JSON.stringify(backendErrorDetail),
+				visibilityTime: 5000,
 			});
 		},
 	});

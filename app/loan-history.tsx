@@ -3,6 +3,7 @@ import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { formatINR, formatDate } from "@/utils/formatters";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark } from "@/constants/Colors";
+import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -153,17 +154,20 @@ export default function LoanHistory() {
 		}, [router])
 	);
 
+	const { userId } = useAuth();
+
 	// Fetch dashboard data
 	useNetworkAwareQuery({
-		queryKey: ["userDashboard"],
+		queryKey: ["userDashboard", userId],
 		queryFn: getUserDashboardData,
+		enabled: !!userId,
 	});
 
 	// Fetch loan history
 	const { data: apiData, isLoading } = useNetworkAwareQuery({
-		queryKey: ["loanHistory", "active"],
+		queryKey: ["loanHistory", "active", userId],
 		queryFn: getLoanHistory,
-		enabled: true,
+		enabled: !!userId,
 	});
 
 	// Extract loans from API response

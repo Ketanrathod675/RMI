@@ -56,6 +56,7 @@ const signinSlice = createSlice({
 		clearOtpVerifyResponse: (state) => {
 			state.otpVerifyResponse = undefined;
 		},
+		resetSignin: () => initialState,
 	},
 });
 
@@ -68,6 +69,7 @@ export const {
 	clearLoginResponse,
 	setOtpVerifyResponse,
 	clearOtpVerifyResponse,
+	resetSignin,
 } = signinSlice.actions;
 
 export const signinReducer = signinSlice.reducer;

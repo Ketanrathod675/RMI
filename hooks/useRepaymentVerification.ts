@@ -7,15 +7,16 @@ import { verifyRepaymentStatus } from "@/utils/api/services/repayment.service";
 import type { VerifyRepaymentData } from "@/utils/api/types/repayment.types";
 import {
 	classify,
+	invalidatePostRepaymentQueries,
 	withTimeout,
 	type Classified,
 	type VerifySource,
 	REPAYMENT_WINDOW_MS,
 	REPAYMENT_POLL_INTERVAL_MS,
 } from "@/utils/paymentVerification";
+import { clearStoredRepaymentKeys } from "@/utils/repaymentIdempotency";
 import {
 	getStorageItem,
-	removeStorageItem,
 	STORAGE_KEYS,
 } from "@/utils/storage";
 
@@ -60,10 +61,7 @@ export function useRepaymentVerification({
 	onSuccessRef.current = onSuccess;
 
 	const clearStoredRepayment = useCallback(async () => {
-		await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
-		await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
-		await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
-		await removeStorageItem(STORAGE_KEYS["@repayment-idempotency-key"]);
+		await clearStoredRepaymentKeys();
 	}, []);
 
 	useEffect(() => {
@@ -93,11 +91,12 @@ export function useRepaymentVerification({
 	 */
 	const checkOnce = async (
 		id: string,
+		source: VerifySource,
 		timeoutMs = 8000,
 		signal?: AbortSignal,
 	): Promise<{ kind: Classified; notStarted: boolean; res?: any }> => {
 		try {
-			const res = await verifyRepaymentStatus(id, { timeoutMs, signal });
+			const res = await verifyRepaymentStatus(id, { source, timeoutMs, signal });
 			return { ...classify(res), res };
 		} catch (err) {
 			Logger.warn("Repayment verify checkOnce failed (will retry if window permits)", { error: err });
@@ -150,7 +149,7 @@ export function useRepaymentVerification({
 		successHandledRef.current.add(targetTxnid);
 
 		await clearStoredRepayment();
-		await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+		await invalidatePostRepaymentQueries(queryClient);
 
 		const verifiedData = resData?.data ?? resData;
 		setOutcome({
@@ -234,7 +233,7 @@ export function useRepaymentVerification({
 					requestControllerRef.current = controller;
 
 					const r = await withTimeout(
-						checkOnce(targetTxnid, Math.min(8000, remainingMs), controller.signal),
+						checkOnce(targetTxnid, source, Math.min(8000, remainingMs), controller.signal),
 						remainingMs,
 						{ kind: "ERROR" as const, notStarted: false },
 					);
@@ -317,11 +316,22 @@ export function useRepaymentVerification({
 		}
 	}, [txnid, initialSource, startVerification]);
 
-	// AppState listener: if returns to foreground while unconfirmed and not currently running
+	// AppState listener: if returns to foreground while unconfirmed/unsettled (and not currently running),
+	// run a re-check when a stored @repayment-txnid exists or outcome hasn't finalized
 	useEffect(() => {
 		const sub = AppState.addEventListener("change", (state) => {
-			if (state === "active" && txnid && !activeRef.current && !outcome) {
-				startVerification(txnid, "browser_closed");
+			if (
+				state === "active" &&
+				txnid &&
+				!activeRef.current &&
+				(!outcome || outcome.type === "unconfirmed")
+			) {
+				void (async () => {
+					const storedTxn = await getStorageItem(STORAGE_KEYS["@repayment-txnid"]).catch(() => null);
+					if (!outcome || storedTxn) {
+						startVerification(storedTxn || txnid, "browser_closed");
+					}
+				})();
 			}
 		});
 		return () => sub.remove();
@@ -333,6 +343,17 @@ export function useRepaymentVerification({
 		}
 	}, [txnid, startVerification]);
 
+	const markSuccessFromCancel = useCallback(
+		async (resData?: any) => {
+			if (!txnid) return;
+			runIdRef.current += 1;
+			requestControllerRef.current?.abort();
+			requestControllerRef.current = null;
+			await finishSuccess(txnid, resData);
+		},
+		[txnid, finishSuccess],
+	);
+
 	const cancelVerification = useCallback(() => {
 		runIdRef.current += 1;
 		requestControllerRef.current?.abort();
@@ -340,8 +361,10 @@ export function useRepaymentVerification({
 		activeRef.current = null;
 		setIsVerifying(false);
 		setCountdown(0);
+		// Keep storage keys intact and transition to "unconfirmed" (never "not_completed")
+		// so in-flight payments are not cancelled when the user taps "Check later from Home".
 		if (txnid) {
-			finishWithOutcome("not_completed", txnid);
+			finishWithOutcome("unconfirmed", txnid);
 		}
 	}, [txnid]);
 
@@ -351,6 +374,7 @@ export function useRepaymentVerification({
 		outcome,
 		recheck,
 		cancelVerification,
+		markSuccessFromCancel,
 	};
 }
 

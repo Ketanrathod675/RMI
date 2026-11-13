@@ -17,6 +17,7 @@ export { AssessmentChecks, RetryAssessmentChecksPayload };
  */
 export const initiateAssessmentFee = async (
 	payload: InitiateAssessmentFeePayload,
+	idempotencyKey?: string,
 ): Promise<InitiateAssessmentFeeResponse> => {
 	const response = await axios.post<InitiateAssessmentFeeResponse>(
 		URLS.payments.initiate_assessment_fee,
@@ -28,6 +29,7 @@ export const initiateAssessmentFee = async (
 			coupon_code: payload.coupon_code ? payload.coupon_code.trim().toUpperCase() : null,
 			client_type: payload.client_type ?? "app",
 		},
+		idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
 	);
 	return response.data;
 };
@@ -81,6 +83,8 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 			status = "approved";
 		} else if (s === "failed" || s === "fail") {
 			status = "error";
+		} else if (s === "in_progress") {
+			status = "pending";
 		}
 	} else if (raw.bre_status && typeof raw.bre_status === "string") {
 		const bs = raw.bre_status.toLowerCase().trim();

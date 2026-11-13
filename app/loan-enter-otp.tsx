@@ -4,6 +4,9 @@ import { Images } from "@/constants/images";
 import { useTranslation } from "@/hooks/useTranslation";
 import { Logger } from "@/utils/logger";
 import { getApiErrorInfo } from "@/utils/api/errors";
+import { formatRemainingOtpAttemptsMessage, formatWaitTime, getRateLimitInfo, isNewOtpRequiredOnly, isResendCooldownOnly } from "@/utils/api/core/rateLimit";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import {
 	sendSanctionOtp,
 	verifySanctionOtp,
@@ -53,6 +56,12 @@ export default function LoanEnterOTP() {
 	const [consentAccepted, setConsentAccepted] = useState(false);
 	const [disableContinueUntilResend, setDisableContinueUntilResend] =
 		useState(false);
+	const {
+		isLocked: isRateLimitLocked,
+		remainingSeconds: rateLimitRemaining,
+		lockForSeconds,
+		clearLock,
+	} = useRateLimitLock();
 	const [modalVisible, setModalVisible] = useState(false);
 
 	const inputRefs = useRef<(TextInputRef | null)[]>([]);
@@ -82,28 +91,32 @@ export default function LoanEnterOTP() {
 				});
 			}
 		} catch (err: any) {
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("Send sanction OTP rate limited", { status: 429 });
+				if (isResendCooldownOnly(rateLimit)) {
+					setResendCooldown(rateLimit.retryAfterSeconds);
+				} else {
+					lockForSeconds(rateLimit.retryAfterSeconds);
+					showRateLimitModal({
+						context: isResend ? "otp_resend" : "otp_request",
+						retryAfterSeconds: rateLimit.retryAfterSeconds,
+						primaryLabel: t("ok") || "OK",
+						onDismiss: () => {},
+					});
+				}
+				return;
+			}
+
 			const info = getApiErrorInfo(err);
 			const { status, detail } = info;
 			Logger.debug("Send sanction OTP error", { status });
 
-			if (status === 429) {
-				Toast.show({
-					type: "info",
-					text1: t("pleaseTryAgain"),
-					text2:
-						detail ||
-						"Too many requests. Please wait before retrying.",
-				});
-				setResendCooldown(30);
-			} else {
-				Toast.show({
-					type: "error",
-					text1: t("error") || "Error",
-					text2:
-						detail ||
-						t("failedToResendOTP"),
-				});
-			}
+			Toast.show({
+				type: "error",
+				text1: t("error") || "Error",
+				text2: detail || t("failedToResendOTP"),
+			});
 		} finally {
 			setIsSendingOtp(false);
 		}
@@ -168,7 +181,13 @@ export default function LoanEnterOTP() {
 
 	const handleContinue = async () => {
 		const enteredOtp = otp.join("").trim();
-		if (enteredOtp.length !== 4 || isVerifying || disableContinueUntilResend || !consentAccepted) {
+		if (
+			enteredOtp.length !== 4 ||
+			isVerifying ||
+			disableContinueUntilResend ||
+			isRateLimitLocked ||
+			!consentAccepted
+		) {
 			return;
 		}
 
@@ -186,6 +205,7 @@ export default function LoanEnterOTP() {
 			Logger.debug("Sanction OTP verified successfully");
 
 			setIsSuccess(true);
+			clearLock();
 			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 
 			// Show success modal
@@ -208,24 +228,38 @@ export default function LoanEnterOTP() {
 			Logger.debug("Verify sanction OTP error", { status });
 
 			if (status === 400) {
+				const wrongMsg = formatRemainingOtpAttemptsMessage(err, t, detail || "Invalid OTP entered");
 				setOtp(["", "", "", ""]);
 				inputRefs.current[0]?.focus();
 				Toast.show({
 					type: "error",
 					text1: t("error") || "Error",
-					text2: detail || "Invalid OTP entered",
+					text2: wrongMsg,
 				});
 				return;
 			}
 
-			if (status === 429) {
-				setDisableContinueUntilResend(true);
-				Toast.show({
-					type: "error",
-					text1: t("error") || "Error",
-					text2:
-						detail ||
-						"Too many attempts. Please resend OTP.",
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("Verify sanction OTP rate limited", { status: 429 });
+				if (isNewOtpRequiredOnly(err, rateLimit)) {
+					setOtp(["", "", "", ""]);
+					setDisableContinueUntilResend(true);
+					Toast.show({
+						type: "error",
+						text1: t("error") || "Error",
+						text2:
+							t("otpMaxAttemptsRequestNew") ||
+							"Too many wrong attempts. Please tap Resend OTP to get a new code.",
+					});
+					return;
+				}
+				lockForSeconds(rateLimit.retryAfterSeconds);
+				showRateLimitModal({
+					context: "otp_verify",
+					retryAfterSeconds: rateLimit.retryAfterSeconds,
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
 				});
 				return;
 			}
@@ -250,7 +284,7 @@ export default function LoanEnterOTP() {
 	};
 
 	const handleResend = () => {
-		if (resendCooldown > 0 || isSendingOtp) return;
+		if (resendCooldown > 0 || isSendingOtp || isRateLimitLocked) return;
 		handleSendOtp(true);
 	};
 
@@ -318,9 +352,9 @@ export default function LoanEnterOTP() {
 					{/* Resend Timer */}
 					<TouchableOpacity
 						onPress={
-							resendCooldown === 0 && !isSendingOtp ? handleResend : undefined
+							resendCooldown === 0 && !isSendingOtp && !isRateLimitLocked ? handleResend : undefined
 						}
-						disabled={resendCooldown > 0 || isSendingOtp}
+						disabled={resendCooldown > 0 || isSendingOtp || isRateLimitLocked}
 						style={styles.resendContainer}>
 						{isSendingOtp ? (
 							<ActivityIndicator size="small" color="#007AFF" />
@@ -328,11 +362,13 @@ export default function LoanEnterOTP() {
 							<Text
 								style={[
 									styles.resendText,
-									resendCooldown === 0 && styles.resendActive,
+									resendCooldown === 0 && !isRateLimitLocked && styles.resendActive,
 								]}>
-								{resendCooldown > 0
-									? `${t("resendIn")} ${formatTime(resendCooldown)}`
-									: t("resendOTP") || t("resend") || "Resend OTP"}
+								{isRateLimitLocked
+									? `${t("rateLimitTryAgainIn") || "Try again in"} ${formatWaitTime(rateLimitRemaining)}`
+									: resendCooldown > 0
+										? `${t("resendIn")} ${formatTime(resendCooldown)}`
+										: t("resendOTP") || t("resend") || "Resend OTP"}
 							</Text>
 						)}
 					</TouchableOpacity>
@@ -365,6 +401,7 @@ export default function LoanEnterOTP() {
 							styles.continueButton,
 							otp.every((digit) => digit.trim() !== "") &&
 								!isVerifying &&
+								!isRateLimitLocked &&
 								!disableContinueUntilResend &&
 								consentAccepted &&
 								styles.continueButtonActive,
@@ -373,6 +410,7 @@ export default function LoanEnterOTP() {
 						disabled={
 							!otp.every((digit) => digit.trim() !== "") ||
 							isVerifying ||
+							isRateLimitLocked ||
 							disableContinueUntilResend ||
 							!consentAccepted
 						}>

@@ -1,4 +1,5 @@
 import Logger from "@/utils/logger";
+import { generateUUID } from "@/utils/paymentVerification";
 import { axios } from "../core/client";
 import { URLS } from "../core/endpoints";
 import type {
@@ -22,10 +23,9 @@ import type {
 export const initiateRepayment = async (
 	idempotencyKey?: string,
 ): Promise<InitiateRepaymentResponse> => {
-	const headers: Record<string, string> = {};
-	if (idempotencyKey) {
-		headers["Idempotency-Key"] = idempotencyKey;
-	}
+	const headers: Record<string, string> = {
+		"Idempotency-Key": idempotencyKey || generateUUID(),
+	};
 
 	const payload: InitiateRepaymentPayload = {
 		client_type: "app",
@@ -46,10 +46,31 @@ export const initiateRepayment = async (
  */
 export const verifyRepaymentStatus = async (
 	txnid: string,
-	options?: { timeoutMs?: number; signal?: AbortSignal },
+	options?: { source?: string; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<VerifyRepaymentStatusResponse> => {
 	const response = await axios.post<VerifyRepaymentStatusResponse>(
 		URLS.repayments.verify_status(txnid),
+		undefined,
+		{
+			params: options?.source ? { source: options.source } : undefined,
+			timeout: options?.timeoutMs,
+			signal: options?.signal,
+		},
+	);
+
+	return response.data;
+};
+
+/**
+ * Cancels an unattempted repayment payment after checking gateway status.
+ * POST repayments/payments/{txnid}/cancel.
+ */
+export const cancelRepaymentPayment = async (
+	txnid: string,
+	options?: { timeoutMs?: number; signal?: AbortSignal },
+): Promise<VerifyRepaymentStatusResponse> => {
+	const response = await axios.post<VerifyRepaymentStatusResponse>(
+		URLS.repayments.cancel_payment(txnid),
 		undefined,
 		{
 			timeout: options?.timeoutMs,

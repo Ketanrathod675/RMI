@@ -1,6 +1,7 @@
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
+import { useAuth } from "@/hooks/useAuth";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { QueryErrorState } from "@/components/QueryErrorState";
 import { useTranslation } from "@/hooks/useTranslation";
@@ -303,19 +304,22 @@ export default function MyLoan() {
 		}, [])
 	);
 
+	const { userId } = useAuth();
+
 	// Fetch dashboard data to get loan number and progress
 	const { data: dashboardData, isError: dashboardError, error: dashboardQueryError, refetch: refetchDashboard, isLoading: isDashboardLoading, isFetching: isDashboardFetching } = useNetworkAwareQuery({
-		queryKey: ["userDashboard"],
+		queryKey: ["userDashboard", userId],
 		queryFn: getUserDashboardData,
+		enabled: !!userId,
 	});
 
 	const loanNumber = (dashboardData as any)?.active_loan?.loan_number ?? (dashboardData as any)?.primary_loan?.loan_number;
 
 	// Fetch loan details if loan number exists in dashboard
 	const { data: apiData, isLoading, isError, error, refetch, isFetching } = useNetworkAwareQuery<LoanDetailsAPIResponse>({
-		queryKey: ["myLoanDetails", loanNumber],
+		queryKey: ["myLoanDetails", userId, loanNumber],
 		queryFn: () => getLoanDetails(loanNumber || ""),
-		enabled: !!loanNumber,
+		enabled: !!userId && !!loanNumber,
 	});
 	if (dashboardError && !dashboardData) return <QueryErrorState error={dashboardQueryError} onRetry={() => { void refetchDashboard(); }} onGoHome={() => router.replace("/(tabs)")} />;
 	if (isError && !apiData) return <QueryErrorState error={error} onRetry={() => { void refetch(); }} onGoHome={() => router.replace("/(tabs)")} />;

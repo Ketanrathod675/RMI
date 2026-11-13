@@ -1,6 +1,7 @@
 import Input from "@/components/Input";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, white } from "@/constants/Colors";
+import { useAuth } from "@/hooks/useAuth";
 import { useDefault } from "@/hooks/useDefault";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
@@ -48,14 +49,17 @@ export default function PersonalDetails() {
 		currentAddress: "",
 	});
 
+	const { userId } = useAuth();
+
 	// Fetch user profile data
 	const {
 		data: userProfile,
 		isLoading,
 		error,
 	} = useNetworkAwareQuery({
-		queryKey: ["userProfile"],
+		queryKey: ["userProfile", userId],
 		queryFn: getUserProfile,
+		enabled: !!userId,
 		staleTime: 300000,
 	});
 
@@ -65,8 +69,9 @@ export default function PersonalDetails() {
 		isLoading: isSelfieLoading,
 		refetch: refetchSelfie,
 	} = useNetworkAwareQuery({
-		queryKey: ["userSelfie"],
+		queryKey: ["userSelfie", userId],
 		queryFn: fetchSelfie,
+		enabled: !!userId,
 		retry: 1,
 	});
 

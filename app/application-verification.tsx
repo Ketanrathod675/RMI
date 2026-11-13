@@ -1,5 +1,6 @@
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
+import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
 import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
@@ -27,6 +28,7 @@ export default function ApplicationVerification() {
 	useApplicationStatusGuard();
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const { userId } = useAuth();
 	const [isFocused, setIsFocused] = useState(true);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
 
@@ -61,8 +63,9 @@ export default function ApplicationVerification() {
 
 	// Poll credit queue status
 	const { data, isError, refetch, isFetching } = useQuery({
-		queryKey: ["credit-queue", "status"],
+		queryKey: ["credit-queue", "status", userId],
 		queryFn: getCreditQueueStatus,
+		enabled: !!userId,
 		refetchInterval: (query) => {
 			if (!isFocused) return false;
 			const currentStatus = query.state.data?.status;

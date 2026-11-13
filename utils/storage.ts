@@ -1,9 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type {
-    Callback,
-    CallbackWithResult,
-    MultiCallback,
-    MultiGetCallback,
+	Callback,
+	CallbackWithResult,
+	MultiCallback,
+	MultiGetCallback,
 } from "@react-native-async-storage/async-storage/src/types";
 
 export const STORAGE_KEYS = {
@@ -57,6 +57,9 @@ export const STORAGE_KEYS = {
 	"@latest-assessment-fee-txnid": "@latest-assessment-fee-txnid",
 	"@kyc-response": "@kyc-response",
 	"@completed-journey-steps": "@completed-journey-steps",
+	"@idem:assessment-fee": "@idem:assessment-fee",
+	"@idem:repayment": "@idem:repayment",
+	"@otp-lock": "@otp-lock",
 } as const;
 
 export const TempKeys = [
@@ -84,6 +87,8 @@ export const TempKeys = [
 	"@fcm-token-debug",
 	"@fcm-token-error",
 	"@user-selfie",
+	"@idem:assessment-fee",
+	"@idem:repayment",
 ] as const;
 
 export const AuthKeys = [
@@ -101,7 +106,20 @@ export const AuthKeys = [
 	"@digilocker-txn-id",
 ] as const;
 
-export const RemovableKeys = [...AuthKeys, ...TempKeys] as const;
+export const UserDataKeys = [
+	"@lead-id",
+	"@af-flag",
+	"@allocated-lender-id",
+	"@allocated-lender-name",
+	"@assessment-fee-amount",
+	"@assessment-fee",
+	"@latest-assessment-fee-txnid",
+	"@kyc-response",
+	"@no-approved-amount-flag",
+	"@loan-rejected-flag",
+] as const;
+
+export const RemovableKeys = [...AuthKeys, ...TempKeys, ...UserDataKeys] as const;
 
 export type StorageKeys = keyof typeof STORAGE_KEYS;
 
@@ -117,8 +135,31 @@ export const removeStorageItem = async (key: StorageKeys, callback?: Callback) =
 	return await AsyncStorage.removeItem(key, callback);
 };
 
+export const IDEMPOTENCY_KEY_PREFIX = "@idem:";
+
+export const clearIdempotencyKeys = async (): Promise<void> => {
+	const allKeys = await AsyncStorage.getAllKeys();
+	const idemKeys = allKeys.filter((key) => key.startsWith(IDEMPOTENCY_KEY_PREFIX));
+	if (idemKeys.length > 0) {
+		await AsyncStorage.multiRemove(idemKeys);
+	}
+};
+
 export const clearStorage = async (callback?: Callback) => {
-	return await AsyncStorage.clear(callback);
+	try {
+		const allKeys = await AsyncStorage.getAllKeys();
+		const removableSet = new Set<string>(RemovableKeys as readonly string[]);
+		const keysToRemove = allKeys.filter(
+			(key) => removableSet.has(key) || key.startsWith(IDEMPOTENCY_KEY_PREFIX),
+		);
+		if (keysToRemove.length > 0) {
+			await AsyncStorage.multiRemove(keysToRemove);
+		}
+		if (callback) callback(null);
+	} catch (error) {
+		if (callback) callback(error as Error);
+		throw error;
+	}
 };
 
 export const setMultipleStorageItems = async (

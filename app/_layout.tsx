@@ -21,6 +21,7 @@ import {
 	PlusJakartaSans_500Medium,
 	PlusJakartaSans_600SemiBold,
 	PlusJakartaSans_700Bold,
+	PlusJakartaSans_800ExtraBold,
 } from "@expo-google-fonts/plus-jakarta-sans";
 import { Provider } from "react-redux";
 import Toast from "react-native-toast-message";
@@ -31,8 +32,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { installNetworkAwareness, useNetworkStatus } from "@/hooks/useNetworkStatus";
 import { useTranslation } from "@/hooks/useTranslation";
-import { installGlobalErrorHandlers, subscribeFatalErrors } from "@/utils/errorHandling";
+import { installGlobalErrorHandlers, sanitizeSentryBreadcrumb, sanitizeSentryEvent, subscribeFatalErrors } from "@/utils/errorHandling";
 import { handleApplicationRejected, setApplicationRejectedHandler } from "@/utils/applicationRejection";
+import RateLimitModalHost from "@/components/RateLimitModalHost";
 import * as Sentry from '@sentry/react-native';
 
 Sentry.init({
@@ -49,6 +51,12 @@ Sentry.init({
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1,
   integrations: [Sentry.mobileReplayIntegration(), Sentry.feedbackIntegration()],
+  beforeSend(event) {
+    return sanitizeSentryEvent(event as Record<string, any>) as typeof event;
+  },
+  beforeBreadcrumb(breadcrumb) {
+    return sanitizeSentryBreadcrumb(breadcrumb as Record<string, any>) as typeof breadcrumb;
+  },
 
   // uncomment the line below to enable Spotlight (https://spotlightjs.com)
   // spotlight: __DEV__,
@@ -80,6 +88,8 @@ function RootLayoutNav() {
 	const segments = useSegments();
 	const insets = useSafeAreaInsets();
 	const inTabs = segments[0] === "(tabs)";
+	const inTabsRef = React.useRef(inTabs);
+	inTabsRef.current = inTabs;
 	const TAB_BAR_HEIGHT = 56;
 	const bottomOffset = insets.bottom + (inTabs ? TAB_BAR_HEIGHT + 12 : 20);
 	const [fatalError, setFatalError] = React.useState<unknown>(null);
@@ -91,6 +101,7 @@ function RootLayoutNav() {
 		PlusJakartaSans_500Medium,
 		PlusJakartaSans_600SemiBold,
 		PlusJakartaSans_700Bold,
+		PlusJakartaSans_800ExtraBold,
 	});
 	React.useEffect(() => {
 		const unsubscribe = subscribeFatalErrors(setFatalError);
@@ -100,7 +111,12 @@ function RootLayoutNav() {
 	// Global Application Rejected handler (routes out on 403 application_rejected across the entire app)
 	React.useEffect(() => {
 		setApplicationRejectedHandler(() => {
-			handleApplicationRejected({ router, queryClient, source: "global_403" });
+			handleApplicationRejected({
+				router,
+				queryClient,
+				source: "global_403",
+				skipNavigation: inTabsRef.current,
+			});
 		});
 		return () => {
 			setApplicationRejectedHandler(null);
@@ -173,7 +189,7 @@ function RootLayoutNav() {
 				{/* Main App Navigation Stack */}
 				<Stack screenOptions={{ headerShown: false, animation: "fade" }}>
 					<Stack.Screen name="index" options={{ headerShown: false }} />
-					<Stack.Screen name="login" options={{ headerShown: false }} />
+					<Stack.Screen name="login" options={{ headerShown: false, gestureEnabled: false }} />
 					<Stack.Screen name="signin-otp" options={{ headerShown: false }} />
 					<Stack.Screen name="request-permissions" options={{ headerShown: false }} />
 					<Stack.Screen name="loan-application" options={{ headerShown: false }} />
@@ -280,6 +296,7 @@ function RootLayoutNav() {
 				<StatusBar style="dark" />
 				{isOffline && <View style={[styles.offlineBanner, { top: insets.top }]} pointerEvents="none"><Text style={styles.offlineText}>{t("noInternetConnection", "No internet connection")}</Text></View>}
 				{__DEV__ && <DevMockBanner />}
+				<RateLimitModalHost />
 				<Toast
 					config={toastConfig}
 					position="bottom"

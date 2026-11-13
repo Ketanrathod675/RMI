@@ -1,128 +1,94 @@
-import { TranslatedText } from "@/components/TranslatedText";
-import { dark, primary, white } from "@/constants/Colors";
-import { Images } from "@/constants/images";
+import RejectionScreenView from "@/components/RejectionScreenView";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
-import { height, width } from "@/utils/dimensions";
-import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
-import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
+import { shouldShowFeeReceivedOnRejection } from "@/utils/applicationRejection";
+import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useRouter } from "expo-router";
-import React, { useEffect } from "react";
-import { StyleSheet, TouchableOpacity, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { BackHandler, StyleSheet, View } from "react-native";
+
+const REJECT_REDIRECT_SECONDS = 15;
 
 export default function NoApprovedAmount() {
 	const router = useRouter();
+	const [countdown, setCountdown] = useState(REJECT_REDIRECT_SECONDS);
+	const [showPaymentReceivedCard, setShowPaymentReceivedCard] = useState(false);
+	const hasNavigatedRef = useRef(false);
 
 	// Track this screen in the journey
 	useJourneyTracker("/no-approved-amount");
 
-	const handleBackToDashboard = async () => {
-		// Set flag to indicate user came from no approved amount screen
-		await setStorageItem(STORAGE_KEYS["@no-approved-amount-flag"], "true");
-		router.replace("/(tabs)");
-	};
-
 	useEffect(() => {
-		const timer = setTimeout(() => {
-			handleBackToDashboard();
-		}, 5000); // 5 seconds delay
-
-		return () => clearTimeout(timer);
+		let isMounted = true;
+		(async () => {
+			try {
+				const [latestFeeTxnId, afFlag] = await Promise.all([
+					getStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"]).catch(() => null),
+					getStorageItem(STORAGE_KEYS["@af-flag"]).catch(() => null),
+				]);
+				if (!isMounted) return;
+				setShowPaymentReceivedCard(
+					shouldShowFeeReceivedOnRejection({ latestFeeTxnId, afFlag }),
+				);
+			} catch {
+				// Default false so fee-refund text never appears if unknown
+			}
+		})();
+		return () => {
+			isMounted = false;
+		};
 	}, []);
 
+	const handleBackToDashboard = useCallback(async () => {
+		if (hasNavigatedRef.current) return;
+		hasNavigatedRef.current = true;
+		// Set flag to indicate user came from rejection screen before returning to Dashboard
+		await setStorageItem(STORAGE_KEYS["@no-approved-amount-flag"], "true").catch(() => {});
+		router.replace("/(tabs)");
+	}, [router]);
+
+	useEffect(() => {
+		const interval = setInterval(() => {
+			setCountdown((prev) => {
+				if (prev <= 1) {
+					clearInterval(interval);
+					setTimeout(() => {
+						void handleBackToDashboard();
+					}, 0);
+					return 0;
+				}
+				return prev - 1;
+			});
+		}, 1000);
+
+		return () => clearInterval(interval);
+	}, [handleBackToDashboard]);
+
+	useEffect(() => {
+		const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+			void handleBackToDashboard();
+			return true;
+		});
+		return () => sub.remove();
+	}, [handleBackToDashboard]);
+
 	return (
-		<SafeAreaView style={styles.container}>
-			<Image
-				source={Images.ASSESSMENT_BANNER2}
-				style={styles.backgroundImage}
-				contentFit="cover"
+		<View style={styles.container}>
+			<StatusBar style="light" />
+			<RejectionScreenView
+				countdown={countdown}
+				showPaymentReceivedCard={showPaymentReceivedCard}
+				onBackToDashboard={() => {
+					void handleBackToDashboard();
+				}}
 			/>
-			<View style={styles.overlay} />
-			<View style={styles.content}>
-				<Ionicons
-					name="warning"
-					size={width(20)}
-					color="#FFD700"
-					style={styles.warningIcon}
-				/>
-				<TranslatedText
-					style={styles.title}
-					translationKey="noApprovedAmountAvailable"
-				/>
-				<TranslatedText
-					style={styles.message}
-					translationKey="noApprovedAmountMessage"
-				/>
-				<TouchableOpacity style={styles.button} onPress={handleBackToDashboard}>
-					<TranslatedText
-						style={styles.buttonText}
-						translationKey="backToDashboard"
-					/>
-				</TouchableOpacity>
-			</View>
-		</SafeAreaView>
+		</View>
 	);
 }
 
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
-		position: "relative",
-	},
-	backgroundImage: {
-		position: "absolute",
-		top: 0,
-		left: 0,
-		right: 0,
-		bottom: 0,
-		width: "100%",
-		height: "100%",
-	},
-	overlay: {
-		position: "absolute",
-		top: 0,
-		left: 0,
-		right: 0,
-		bottom: 0,
-		backgroundColor: "rgba(0, 0, 0, 0.5)",
-	},
-	content: {
-		flex: 1,
-		justifyContent: "center",
-		alignItems: "center",
-		paddingHorizontal: width(6),
-		zIndex: 1,
-	},
-	warningIcon: {
-		marginBottom: height(3),
-	},
-	title: {
-		fontSize: width(6),
-		fontWeight: "bold",
-		color: white,
-		textAlign: "center",
-		marginBottom: height(2),
-	},
-	message: {
-		fontSize: width(4),
-		color: white,
-		textAlign: "center",
-		marginBottom: height(6),
-		lineHeight: width(6),
-	},
-	button: {
-		backgroundColor: primary,
-		paddingVertical: height(2),
-		paddingHorizontal: width(8),
-		borderRadius: 100,
-		minWidth: width(50),
-		alignItems: "center",
-		justifyContent: "center",
-	},
-	buttonText: {
-		color: dark,
-		fontSize: width(4.5),
-		fontWeight: "bold",
+		backgroundColor: "#f5f6fa",
 	},
 });

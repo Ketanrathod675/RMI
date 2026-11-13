@@ -6,7 +6,8 @@ import Logger from "@/utils/logger";
 export type IFSCLookupResponseType = {
 	success: boolean;
 	ifsc_code: string;
-	bank_details: {
+	is_blacklisted?: boolean;
+	bank_details?: {
 		bank_name: string;
 		branch_name: string;
 		city: string;
@@ -28,18 +29,84 @@ export type IFSCLookupResponseType = {
 };
 
 /**
- * Lookup IFSC code to get bank details
- * Uses public IFSC API directly (no backend required)
+ * Lookup IFSC code to get bank details and blacklist status.
+ * Checks RapidMoney backend `/ifsc/{code}` first (includes blacklist status + message),
+ * and falls back to public Razorpay IFSC API if backend lookup is unavailable.
  */
-export const lookupIFSC = async (ifscCode: string) => {
+export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseType> => {
+	const cleanIfsc = String(ifscCode || "").trim().toUpperCase();
 	try {
-		Logger.debug("Looking up IFSC code");
-		const response = await fetch(`https://ifsc.razorpay.com/${ifscCode}`);
+		Logger.debug("Looking up IFSC code", { ifsc: cleanIfsc });
+		try {
+			const backendRes = await axios.get<any>(URLS.bank_details.ifsc(cleanIfsc));
+			const payload = backendRes?.data?.data ?? backendRes?.data;
+			if (payload && (payload.bank || payload.bank_name)) {
+				const bankName = String(payload.bank || payload.bank_name || "");
+				const branchName = String(payload.branch || payload.branch_name || "");
+				const cityName = String(payload.city || "");
+				const stateName = String(payload.state || "");
+				const districtName = String(payload.district || "");
+				const isBlacklisted = Boolean(payload.is_blacklisted);
+				const details = {
+					bank_name: bankName,
+					branch_name: branchName,
+					city: cityName,
+					state: stateName,
+					district: districtName,
+					address: "",
+					contact: "",
+					micr: String(payload.micr || ""),
+					swift: "",
+					bank_code: cleanIfsc.slice(0, 4),
+					features: {
+						rtgs: false,
+						neft: false,
+						imps: false,
+						upi: false,
+					},
+				};
+				if (isBlacklisted) {
+					return {
+						success: false,
+						is_blacklisted: true,
+						ifsc_code: cleanIfsc,
+						bank_details: details,
+						message:
+							String(payload.message || "").trim() ||
+							"This bank is currently not supported. Please use a different bank account.",
+					};
+				}
+				return {
+					success: true,
+					is_blacklisted: false,
+					ifsc_code: cleanIfsc,
+					bank_details: details,
+					message: "IFSC details fetched successfully",
+				};
+			}
+		} catch (backendErr: any) {
+			const status = backendErr?.response?.status;
+			if (status === 422) {
+				const detail = backendErr?.response?.data?.detail;
+				const msg =
+					(detail && typeof detail === "object" && detail.message) ||
+					(typeof detail === "string" ? detail : "") ||
+					"This bank is currently not supported.";
+				return {
+					success: false,
+					is_blacklisted: true,
+					ifsc_code: cleanIfsc,
+					message: String(msg),
+				};
+			}
+		}
+
+		const response = await fetch(`https://ifsc.razorpay.com/${cleanIfsc}`);
 
 		if (!response.ok) {
 			return {
 				success: false,
-				ifsc_code: ifscCode,
+				ifsc_code: cleanIfsc,
 				message: "Invalid IFSC code",
 			};
 		}
@@ -49,7 +116,8 @@ export const lookupIFSC = async (ifscCode: string) => {
 
 		return {
 			success: true,
-			ifsc_code: ifscCode,
+			is_blacklisted: false,
+			ifsc_code: cleanIfsc,
 			bank_details: {
 				bank_name: data.BANK || "",
 				branch_name: data.BRANCH || "",
@@ -74,7 +142,7 @@ export const lookupIFSC = async (ifscCode: string) => {
 		Logger.error("IFSC lookup failed", { message: error?.message });
 		return {
 			success: false,
-			ifsc_code: ifscCode,
+			ifsc_code: cleanIfsc,
 			message: "Failed to lookup IFSC code",
 		};
 	}
@@ -234,24 +302,34 @@ export const submitBankDetails = async (data: BankDetailsSubmitRequestType) => {
 
 export type BankAccount = {
 	id: string;
-	user_id: string;
-	account_holder_name: string;
-	account_number: string;
 	account_number_masked: string;
 	ifsc_code: string;
 	bank_name: string;
 	branch_name: string;
 	city: string;
-	state: string;
-	account_type: string;
-	is_primary: boolean;
-	verified_by_lender: boolean;
+	account_type: "savings" | "current" | string;
+	last_used_at?: string | null;
+	user_id?: string;
+	account_holder_name?: string;
+	state?: string;
 	verification_status?: "pending" | "verified" | "failed" | string;
 	verification_failure_reason?: string | null;
-	submitted_at: string;
+	submitted_at?: string;
 };
 
 export type GetBankAccountsResponseType = BankAccount[];
+
+export type SelectBankAccountPayload =
+	| { bank_details_id: string }
+	| {
+			account: {
+				account_holder_name?: string;
+				account_number: string;
+				confirm_account_number: string;
+				ifsc_code: string;
+				account_type: "savings" | "current";
+			};
+	  };
 
 export const getBankAccounts = async (): Promise<GetBankAccountsResponseType> => {
 	try {
@@ -264,27 +342,62 @@ export const getBankAccounts = async (): Promise<GetBankAccountsResponseType> =>
 		const raw = response.data;
 		const list: any[] = Array.isArray(raw?.data) ? raw.data : Array.isArray(raw) ? raw : [];
 
-		return list.map((item, index) => ({
-			id: String(item.id || item.uuid || ""),
-			user_id: String(item.user_id || ""),
-			account_holder_name: String(item.account_holder_name || ""),
-			account_number: String(item.account_number || ""),
-			account_number_masked: String(item.account_number_masked || item.account_number || ""),
-			ifsc_code: String(item.ifsc_code || ""),
-			bank_name: String(item.bank_name || ""),
-			branch_name: String(item.branch_name || ""),
-			city: String(item.city || ""),
-			state: String(item.state || ""),
-			account_type: String(item.account_type || "savings"),
-			// Use real backend fields instead of index === 0 and false
-			is_primary: typeof item.is_primary === "boolean" ? item.is_primary : index === 0 && item.is_primary !== false,
-			verified_by_lender: typeof item.verified_by_lender === "boolean" ? item.verified_by_lender : false,
-			verification_status: item.verification_status || (item.verified === true ? "verified" : item.verified === false ? "failed" : "pending"),
-			verification_failure_reason: item.verification_failure_reason || null,
-			submitted_at: String(item.created_at || item.updated_at || ""),
-		}));
+		return list.map((item) => {
+			const rawMasked = String(item.account_number_masked || "").trim();
+			const fallbackAcc = String(item.account_number || "").trim();
+			const masked =
+				rawMasked ||
+				(fallbackAcc.length > 4
+					? `${"X".repeat(fallbackAcc.length - 4)}${fallbackAcc.slice(-4)}`
+					: fallbackAcc);
+			return {
+				id: String(item.id || item.uuid || ""),
+				account_number_masked: masked,
+				ifsc_code: String(item.ifsc_code || ""),
+				bank_name: String(item.bank_name || "Bank"),
+				branch_name: String(item.branch_name || ""),
+				city: String(item.city || ""),
+				account_type: String(item.account_type || "savings").toLowerCase(),
+				last_used_at: item.last_used_at ? String(item.last_used_at) : null,
+				user_id: item.user_id ? String(item.user_id) : undefined,
+				account_holder_name: item.account_holder_name ? String(item.account_holder_name) : undefined,
+				state: item.state ? String(item.state) : undefined,
+				verification_status: item.verification_status
+					? String(item.verification_status)
+					: undefined,
+				verification_failure_reason: item.verification_failure_reason ?? null,
+				submitted_at: String(item.last_used_at || item.created_at || item.updated_at || ""),
+			};
+		});
 	} catch (error: any) {
 		Logger.error("Get bank accounts failed", { status: error?.response?.status });
+		throw error;
+	}
+};
+
+/**
+ * Selects a saved bank account by ID or creates/reuses a new unique bank account
+ * for the current loan application.
+ * POST /bank-details/select
+ */
+export const selectBankAccount = async (
+	body: SelectBankAccountPayload,
+): Promise<BankDetailsSubmitResponseType> => {
+	try {
+		Logger.debug("Selecting bank account", {
+			mode: "bank_details_id" in body ? "saved" : "new_account",
+		});
+		const response = await axios.post(URLS.bank_details.select, body);
+		Logger.debug("Bank account selection completed", { status: response.status });
+		const raw = response.data;
+		const innerData = raw && typeof raw === "object" && "data" in raw ? raw.data : raw;
+		return {
+			success: raw?.success ?? true,
+			message: raw?.message ?? "Bank account selected successfully",
+			bank_details: innerData,
+		};
+	} catch (error: any) {
+		Logger.error("Select bank account failed", { status: error?.response?.status });
 		throw error;
 	}
 };

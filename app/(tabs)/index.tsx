@@ -6,6 +6,7 @@ import TestimonialCarousel from "@/components/TestimonialCarousel";
 import { TranslatedText } from "@/components/TranslatedText";
 import JourneyTimeline from "@/components/dashboard/JourneyTimeline";
 import RepaymentHeaderCard from "@/components/dashboard/RepaymentHeaderCard";
+import { isRfdDisbursalLoan } from "@/utils/repaymentCardTheme";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -24,15 +25,16 @@ import { pollAssessmentChecks } from "@/hooks/useAssessmentChecks";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
-import { checkCanReapply, checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, reapplyForLoan, Status, StepHref, verifyRepaymentStatus } from "@/utils/api";
-import { classify } from "@/utils/paymentVerification";
+import { checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, Status, StepHref, verifyRepaymentStatus } from "@/utils/api";
+import { classify, invalidatePostRepaymentQueries } from "@/utils/paymentVerification";
+import { clearStoredRepaymentKeys } from "@/utils/repaymentIdempotency";
 import { useQueryClient } from "@tanstack/react-query";
 import { font, height, width } from "@/utils/dimensions";
 import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
+import { executeLoanReapply, formatReapplyAvailableDate, isFutureCooldownDate } from "@/utils/reapply";
 import { getStorageItem, removeStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import {
-	clearApplicationRejectionFlags,
 	isRejectedStatus,
 	resetApplicationRejectionGuard,
 } from "@/utils/applicationRejection";
@@ -44,6 +46,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	Alert,
 	Animated,
+	AppState,
 	BackHandler,
 	Dimensions,
 	Image,
@@ -105,7 +108,7 @@ export default function Home() {
 	const insets = useSafeAreaInsets();
 	// [FOWS-DIAGNOSTIC] Log MOUNTED message with timestamp
 	if (__DEV__) {
-		console.log(`🚀 [FOWS-DIAG][(tabs)/index.tsx] MOUNTED at timestamp: ${new Date().toISOString()} (${Date.now()})`);
+		Logger.debug(`[FOWS-DIAG][(tabs)/index.tsx] MOUNTED at timestamp: ${new Date().toISOString()} (${Date.now()})`);
 	}
 
 	const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -185,10 +188,12 @@ export default function Home() {
 
 
 	const queryClient = useQueryClient();
+	const { logout, userId } = useAuth();
 
 	const { data, isPending, isFetching, isError, error, refetch } = useNetworkAwareQuery({
-		queryKey: ["user", "dashboard"],
+		queryKey: ["user", "dashboard", userId],
 		queryFn: getUserDashboardData,
+		enabled: !!userId,
 		staleTime: 30_000,
 	});
 
@@ -247,7 +252,6 @@ export default function Home() {
 		})();
 	};
 
-	const { logout } = useAuth();
 	const { language } = useDefault();
 	const navigation = useNavigation();
 
@@ -265,7 +269,22 @@ export default function Home() {
 	const activeLoan = data?.active_loan ?? null;
 	const hasActiveLoan = Boolean(activeLoan);
 	const progressPercentage = data?.workflow_progress?.completion_percentage ?? 0;
-	const isReapplyScenario = !hasActiveLoan && !isPending && data && (Boolean(data?.can_reapply) || ((data as any)?.dashboard_type === "workflow_dashboard" && progressPercentage === 100));
+	const canReapplyAt = data?.can_reapply_at ?? data?.workflow_progress?.can_reapply_at ?? null;
+	const isReapplyCooldownFuture = isFutureCooldownDate(canReapplyAt);
+	const hasNoOpenWorkflow =
+		!hasActiveLoan &&
+		data &&
+		!data.workflow_progress?.next_required_step &&
+		data.workflow_progress?.overall_status === "completed";
+
+	const isReapplyScenario =
+		!hasActiveLoan &&
+		!isPending &&
+		data &&
+		(Boolean(data?.can_reapply) ||
+			isReapplyCooldownFuture ||
+			((data as any)?.dashboard_type === "workflow_dashboard" && progressPercentage === 100) ||
+			hasNoOpenWorkflow);
 
 	const faqData = [
 		{
@@ -290,6 +309,60 @@ export default function Home() {
 		},
 	];
 
+	const repaymentCheckInFlightRef = useRef(false);
+	const isPendingLoanOnHome = String(activeLoan?.state || "").toLowerCase() === "pending_payment";
+
+	const runSilentRepaymentCheck = useCallback(async () => {
+		if (repaymentCheckInFlightRef.current) return;
+		repaymentCheckInFlightRef.current = true;
+		try {
+			const pendingTxnid = await getStorageItem(STORAGE_KEYS["@repayment-txnid"]);
+			if (!pendingTxnid) return;
+
+			const startedAtStr = await getStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
+			const startedAt = startedAtStr ? Number(startedAtStr) : 0;
+			if (startedAt > 0 && Date.now() - startedAt >= 30 * 60 * 1000) {
+				await clearStoredRepaymentKeys();
+				return;
+			}
+
+			const res = await verifyRepaymentStatus(pendingTxnid, { source: "manual" });
+			const c = classify(res);
+			if (c.kind === "SUCCESS") {
+				await clearStoredRepaymentKeys();
+				await invalidatePostRepaymentQueries(queryClient);
+				router.push({
+					pathname: "/repayment-status" as any,
+					params: { txnid: pendingTxnid, status: "success", source: "manual" },
+				});
+			} else if (
+				c.kind === "FAILED" ||
+				c.kind === "CANCELLED" ||
+				c.kind === "EXPIRED" ||
+				(c.kind === "PENDING" && c.notStarted)
+			) {
+				await clearStoredRepaymentKeys();
+				await invalidatePostRepaymentQueries(queryClient);
+			}
+		} catch {
+			// silent recovery check error
+		} finally {
+			repaymentCheckInFlightRef.current = false;
+		}
+	}, [queryClient]);
+
+	// Foreground AppState check: when returning to foreground while Home shows pending_payment
+	// and a stored @repayment-txnid exists, run a single silent verify check.
+	useEffect(() => {
+		if (!isPendingLoanOnHome) return;
+		const sub = AppState.addEventListener("change", (nextState) => {
+			if (nextState === "active") {
+				void runSilentRepaymentCheck();
+			}
+		});
+		return () => sub.remove();
+	}, [isPendingLoanOnHome, runSilentRepaymentCheck]);
+
 	// Refetch dashboard data when screen comes into focus to update progress
 	useFocusEffect(
 		useCallback(() => {
@@ -304,50 +377,18 @@ export default function Home() {
 				const isStale = !hasData || queryState?.isInvalidated || Date.now() - queryState.dataUpdatedAt >= staleTime;
 				if (isStale && queryClient.isFetching({ queryKey }) === 0) void refresh();
 			};
-			refreshIfStale(["user", "dashboard"], 30_000, refetch);
+			refreshIfStale(["user", "dashboard", userId], 30_000, refetch);
 			refreshIfStale(["publicReviews"], 60_000, refetchReviews);
 
 			// Repayment recovery check on focus
-			(async () => {
-				try {
-					const pendingTxnid = await getStorageItem(STORAGE_KEYS["@repayment-txnid"]);
-					const startedAtStr = await getStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
-					if (pendingTxnid) {
-						const startedAt = startedAtStr ? Number(startedAtStr) : 0;
-						if (Date.now() - startedAt < 30 * 60 * 1000) {
-							const res = await verifyRepaymentStatus(pendingTxnid);
-							const c = classify(res);
-							if (c.kind === "SUCCESS") {
-								await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
-								await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
-								await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
-								await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
-								router.push({
-									pathname: "/repayment-status" as any,
-									params: { txnid: pendingTxnid, status: "success" },
-								});
-							} else if (c.kind === "FAILED" || c.kind === "CANCELLED" || c.kind === "EXPIRED" || (c.kind === "PENDING" && c.notStarted)) {
-								await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
-								await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
-								await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
-							}
-						} else {
-							await removeStorageItem(STORAGE_KEYS["@repayment-txnid"]);
-							await removeStorageItem(STORAGE_KEYS["@repayment-timestamp"]);
-							await removeStorageItem(STORAGE_KEYS["@repayment-amount-before"]);
-						}
-					}
-				} catch {
-					// silent recovery check error
-				}
-			})();
+			void runSilentRepaymentCheck();
 
 			try {
-				console.log("FB _ dashboard_viewed");
+				Logger.debug("FB _ dashboard_viewed");
 			} catch (error) {
-Logger.warn("Operation failed", { code: "operation_failed" });
+				Logger.warn("Operation failed", { code: "operation_failed" });
 			}
-		}, [queryClient, refetch, refetchReviews])
+		}, [queryClient, refetch, refetchReviews, runSilentRepaymentCheck, userId])
 	);
 
 	Logger.debug("Dashboard data received");
@@ -391,20 +432,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}, []);
 
-	useEffect(() => {
-		if (
-			!hasNoApprovedAmountFlag &&
-			data?.workflow_progress?.overall_status === "rejected" &&
-			data?.workflow_progress?.bre_status !== "rejected" &&
-			data?.workflow_progress?.bre_status !== "needs_update"
-		) {
-			router.replace("/no-approved-amount");
-		}
-	}, [
-		hasNoApprovedAmountFlag,
-		data?.workflow_progress?.overall_status,
-		data?.workflow_progress?.bre_status,
-	]);
+	// Dashboard must never auto-redirect to /no-approved-amount; it renders the rejected state itself via isRejected.
 
 	// Reset guard when a new in_progress workflow is detected
 	useEffect(() => {
@@ -550,78 +578,18 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		hasLoanRejectedFlag;
 
 	const canReapply = data?.workflow_progress?.can_reapply !== false;
+	const formattedReapplyAt = isReapplyCooldownFuture ? formatReapplyAvailableDate(canReapplyAt, language) : "";
+	const canReapplyAtLabel =
+		isReapplyCooldownFuture && formattedReapplyAt
+			? t("reapplyAvailableFrom", "Available from {date}").replace("{date}", formattedReapplyAt)
+			: null;
 
-	// Reapply handler - extracted from JourneyBackground rejection logic
+	// Reapply handler - unified in utils/reapply.ts
 	const handleReapply = async () => {
-		try {
-			// Call the can-reapply API
-			const reapplyData = await checkCanReapply();
-
-			if (reapplyData.can_apply) {
-				try {
-					const reapplyRes = await reapplyForLoan();
-					resetApplicationRejectionGuard();
-					await clearApplicationRejectionFlags();
-					setHasNoApprovedAmountFlag(false);
-					setHasLoanRejectedFlag(false);
-					await queryClient.invalidateQueries({
-						queryKey: ["user", "dashboard"],
-					});
-					const currentStep = reapplyRes?.current_step;
-					const href = currentStep
-						? StepHref[currentStep as keyof typeof StepHref]
-						: "/new-assessment-fee";
-
-					if (href) {
-						console.log("Re-applying to step:", currentStep, "->", href);
-						router.push({
-							pathname: href as any,
-							params: { fromReapply: "true" },
-						});
-					} else {
-						router.push("/(tabs)");
-					}
-				} catch (reapplyErr: any) {
-					const detailText = getFriendlyError(reapplyErr).message;
-					Toast.show({
-						type: "error",
-						text1: t("cannotReapply"),
-						text2: detailText,
-					});
-				}
-			} else {
-				const rawMsg = (reapplyData.message || "").toLowerCase();
-				const mentionsCoolingOrInternal =
-					rawMsg.includes("cool") ||
-					rawMsg.includes("30") ||
-					rawMsg.includes("period") ||
-					rawMsg.includes("wait") ||
-					rawMsg.includes("days") ||
-					rawMsg.includes("policy") ||
-					rawMsg.includes("rule") ||
-					rawMsg.includes("bre") ||
-					rawMsg.includes("lender");
-
-				const message = rawMsg.includes("overdue")
-					? t("overdueLoanMessage")
-					: mentionsCoolingOrInternal
-						? t("notEligibleToReapply")
-						: reapplyData.message || t("notEligibleToReapply");
-
-				Toast.show({
-					type: "error",
-					text1: t("cannotReapply"),
-					text2: message,
-				});
-			}
-		} catch (error: any) {
-Logger.warn("Operation failed", { code: "operation_failed" });
-			const detailText = getFriendlyError(error).message;
-			Toast.show({
-				type: "error",
-				text1: t("error"),
-				text2: detailText,
-			});
+		const succeeded = await executeLoanReapply(router, queryClient, t);
+		if (succeeded) {
+			setHasNoApprovedAmountFlag(false);
+			setHasLoanRejectedFlag(false);
 		}
 	};
 
@@ -771,10 +739,15 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 	};
 
-	const handleLogout = () => {
-		logout();
-
+	const handleLogout = async () => {
+		closeDrawer();
+		await logout();
 		router.replace("/login");
+		Toast.show({
+			type: "success",
+			text1: t("loggedOut", "Logged out"),
+			text2: t("loggedOutSuccessfully", "You have been logged out successfully."),
+		});
 	};
 
 
@@ -889,11 +862,10 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 
 		const dashboardData = data as any;
 
-		// Debug: Log loan status information
-		console.log("🔍 Delete Account Check:", {
+		// Debug: Log non-sensitive loan check summary
+		Logger.debug("Delete Account Check", {
 			hasData: !!data,
-			activeLoan: dashboardData?.active_loan,
-			loanNumber: dashboardData?.active_loan?.loan_number || dashboardData?.primary_loan?.loan_number,
+			hasActiveLoan: !!dashboardData?.active_loan,
 			outstandingBalance: dashboardData?.active_loan?.amount_to_repay ?? dashboardData?.loan_summary?.current_outstanding,
 		});
 
@@ -901,7 +873,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		if (dashboardData?.active_loan) {
 			const amountToRepay = Number(dashboardData.active_loan.amount_to_repay || 0);
 			if (amountToRepay > 0 || dashboardData.active_loan.state !== "closed") {
-				console.log("❌ Cannot delete: Has active loan with amount to repay");
+				Logger.debug("Cannot delete: Has active loan with amount to repay");
 				return true;
 			}
 		}
@@ -910,12 +882,12 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		if (dashboardData?.primary_loan?.loan_number && dashboardData?.dashboard_type === "loan_dashboard") {
 			const outstandingBalance = dashboardData?.loan_summary?.current_outstanding || 0;
 			if (outstandingBalance > 0) {
-				console.log("❌ Cannot delete: Has legacy active loans with outstanding balance");
+				Logger.debug("Cannot delete: Has legacy active loans with outstanding balance");
 				return true;
 			}
 		}
 
-		console.log("✅ Can delete: No active loans with balance");
+		Logger.debug("Can delete: No active loans with balance");
 		return false;
 	};
 
@@ -1004,15 +976,14 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		);
 	};
 
-	console.log("application completed", applicationCompleted);
+	Logger.debug("application completed", { applicationCompleted });
 
 	// [FOWS-DIAGNOSTIC] First/ongoing pass render state inspection
 	if (__DEV__) {
-		console.log("🎨 [FOWS-DIAG][(tabs)/index.tsx] RENDER PASS:", {
+		Logger.debug("[FOWS-DIAG][(tabs)/index.tsx] RENDER PASS", {
 			timestamp: new Date().toISOString(),
 			isPending,
 			hasData: !!data,
-			dataUserSummary: (data as any)?.user_summary?.name ?? null,
 			dashboardType: (data as any)?.dashboard_type ?? null,
 			overallStatus: data?.workflow_progress?.overall_status ?? null,
 			currentStep: data?.workflow_progress?.current_step ?? null,
@@ -1042,6 +1013,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 						styles.heroBrand,
 						{ paddingTop: Math.max(insets.top, 12) },
 						(!data || (!hasActiveLoan && (data as any)?.dashboard_type !== "loan_dashboard")) && { paddingBottom: 76 },
+						hasActiveLoan && activeLoan ? { paddingBottom: 0 } : undefined,
 					]}>
 
 					{/* Navigation Header */}
@@ -1076,7 +1048,17 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 						</Text>
 						<Text style={styles.subAction}>
 							{hasActiveLoan
-								? (activeLoan?.state === "pending_payment" ? t("paymentInProgress") : t("loanSummaryDetails"))
+								? activeLoan?.state === "pending_payment"
+									? t("paymentInProgress")
+									: activeLoan &&
+										  isRfdDisbursalLoan({
+												state: activeLoan.state,
+												loanStatus: activeLoan.status,
+												canPay: activeLoan.can_pay,
+												disbursementDate: activeLoan.disbursement_date || activeLoan.disbursed_at,
+										  })
+										? t("disbursementInProgressSubtitle", "Your loan disbursal is in progress")
+										: t("loanSummaryDetails")
 								: (data as any)?.dashboard_type === "loan_dashboard"
 									? t("loanSummaryDetails")
 									: isReapplyScenario
@@ -1107,20 +1089,36 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 								</View>
 
 								{/* CTA Button */}
-								{(!isRejected || canReapply) && (
+								{(!isRejected || canReapply || isReapplyCooldownFuture) && (
 									<TouchableOpacity
 										activeOpacity={0.85}
+										disabled={(isReapplyScenario || isRejected) && isReapplyCooldownFuture}
 										onPress={isReapplyScenario ? handleReapply : (isRejected ? handleReapply : handleContinueJourney)}
-										style={styles.ctaBtnWrapper}>
+										style={[
+											styles.ctaBtnWrapper,
+											(isReapplyScenario || isRejected) && isReapplyCooldownFuture && { opacity: 0.6 },
+										]}>
 										<LinearGradient
-											colors={["#8AD600", "#5FA800"]}
+											colors={
+												(isReapplyScenario || isRejected) && isReapplyCooldownFuture
+													? ["#6B7280", "#4B5563"]
+													: ["#8AD600", "#5FA800"]
+											}
 											start={{ x: 0.5, y: 0 }}
 											end={{ x: 0.5, y: 1 }}
 											style={styles.ctaBtn}>
 											<Text style={styles.ctaText}>
-												{isReapplyScenario ? t("reapplyLoan") : (isRejected ? t("reapplyLoan") : "Complete Application")}
+												{(isReapplyScenario || isRejected) && isReapplyCooldownFuture && canReapplyAtLabel
+													? canReapplyAtLabel
+													: isReapplyScenario
+														? t("reapplyLoan")
+														: isRejected
+															? t("reapplyLoan")
+															: "Complete Application"}
 											</Text>
-											<MaterialCommunityIcons name="arrow-right" size={18} color="#F9FDF5" />
+											{!((isReapplyScenario || isRejected) && isReapplyCooldownFuture) && (
+												<MaterialCommunityIcons name="arrow-right" size={18} color="#F9FDF5" />
+											)}
 										</LinearGradient>
 									</TouchableOpacity>
 								)}
@@ -1207,12 +1205,20 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 									</View>
 								</View>
 
-								<TouchableOpacity style={styles.reapplyNowButton} onPress={handleReapply}>
+								<TouchableOpacity
+									style={[
+										styles.reapplyNowButton,
+										isReapplyCooldownFuture && { opacity: 0.6, backgroundColor: "#6B7280" },
+									]}
+									disabled={isReapplyCooldownFuture}
+									onPress={handleReapply}>
 									<View style={{ flexDirection: "row", alignItems: "center", gap: width(2) }}>
 										<Text style={styles.reapplyNowButtonText}>
-											{t("reapplyNow")}
+											{isReapplyCooldownFuture && canReapplyAtLabel ? canReapplyAtLabel : t("reapplyNow")}
 										</Text>
-										<IconSymbol name="arrow.right" size={16} color="#FFF" />
+										{!isReapplyCooldownFuture && (
+											<IconSymbol name="arrow.right" size={16} color="#FFF" />
+										)}
 									</View>
 								</TouchableOpacity>
 							</View>

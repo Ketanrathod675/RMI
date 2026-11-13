@@ -1,712 +1,362 @@
-import { useMountedRef } from "@/hooks/useMountedRef";
-import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
-import { Select, SelectOption } from "@/components";
-import Input from "@/components/Input";
-import { dark, primary, white } from "@/constants/Colors";
-import { IconSymbol } from "@/components/ui/IconSymbol";
-import { Images } from "@/constants/images";
-import { useAuth } from "@/hooks/useAuth";
-import { useJourneyTracker } from "@/hooks/useJourneyTracker";
-import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
-import { getFriendlyError } from "@/utils/api/core/friendlyError";
-import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
-import { useTranslation } from "@/hooks/useTranslation";
-import { errorHandler, getUserProfile } from "@/utils/api";
-import { getApiErrorInfo } from "@/utils/api/errors";
-import Logger from "@/utils/logger";
-import {
-    getBankAccounts,
-    getBankDetailsHbPartner,
-    lookupIFSC,
-    submitBankDetails,
-    type BankDetailsSubmitRequestType,
-    type IFSCLookupResponseType,
-} from "@/utils/api/bank";
-import { font, height, width } from "@/utils/dimensions";
-import { useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams } from "expo-router";
-import { useTypedNavigation } from "@/hooks/useTypedNavigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    BackHandler,
-    Image,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+	ActivityIndicator,
+	BackHandler,
+	KeyboardAvoidingView,
+	Platform,
+	ScrollView,
+	StyleSheet,
+	Text,
+	TouchableOpacity,
+	View,
 } from "react-native";
-import Toast from "react-native-toast-message";
+import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-
+import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
+import AddBankAccountSheet from "@/components/bank/AddBankAccountSheet";
+import BankAccountCard from "@/components/bank/BankAccountCard";
+import BankAccountForm, { useBankAccountForm } from "@/components/bank/BankAccountForm";
+import { JAKARTA } from "@/constants/typography";
 import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
+import { useBankAccountPicker } from "@/hooks/useBankAccountPicker";
+import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useKeyboardVisible } from "@/hooks/useKeyboardVisible";
+import { useTranslation } from "@/hooks/useTranslation";
+import { useTypedNavigation } from "@/hooks/useTypedNavigation";
+import type { ScrollViewRef } from "@/types/rn-refs";
+import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { getMissingFormHint } from "@/utils/bankAccountPicker";
+import { formatRupees } from "@/utils/repaymentFormatting";
 
 export default function VerifyBankDetails() {
-	const mountedRef = useMountedRef();
-	const { t } = useTranslation();
-	const navigation = useTypedNavigation();
 	const insets = useSafeAreaInsets();
-	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+	const navigation = useTypedNavigation();
+	const { t } = useTranslation();
+	const { visible: isKeyboardVisible } = useKeyboardVisible();
 
-	const queryClient = useQueryClient();
-	const params = useLocalSearchParams();
-
-	// Track this screen in the journey
 	useJourneyTracker("/verify-bank-details");
 	useApplicationStatusGuard();
 
-	const accountTypeOptions: SelectOption[] = [
-		{ label: t("savingsAccount"), value: "savings" },
-		{ label: t("currentAccount"), value: "current" },
-		// { label: t("salaryAccount"), value: "salary" },
-	];
+	const picker = useBankAccountPicker();
+	const inlineForm = useBankAccountForm(picker.accountHolderName);
+	const scrollRef = useRef<ScrollViewRef | null>(null);
+	const scrollYRef = useRef(0);
+	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 
-	const [formData, setFormData] = useState({
-		bankAccountNumber: "",
-		confirmBankAccountNumber: "",
-		ifscCode: "",
-		bankName: "",
-		branchName: "",
-		accountType: "",
-	});
-
-	const [showAccountNumber, setShowAccountNumber] = useState(false);
-	const [showConfirmAccountNumber, setShowConfirmAccountNumber] = useState(false);
-
-	const [isIFSCValid, setIsIFSCValid] = useState(false);
-
-	const latestValuesRef = useRef({
-		bankAccountNumber: "",
-		confirmBankAccountNumber: "",
-		ifscCode: "",
-		bankName: "",
-		branchName: "",
-		accountType: "",
-	});
-	const ifscDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	useEffect(() => () => { if (ifscDebounceTimerRef.current) clearTimeout(ifscDebounceTimerRef.current); }, []);
-	const requestedIfscRef = useRef<string>("");
-
-	// Keep latestValuesRef in sync with formData so prefilled or programmatic updates aren't treated as massive pastes
-	useEffect(() => {
-		latestValuesRef.current = { ...formData };
-	}, [formData]);
-
-	useEffect(() => {
-		return () => {
-			if (ifscDebounceTimerRef.current) {
-				clearTimeout(ifscDebounceTimerRef.current);
-			}
-		};
-	}, []);
-
-	const { applicantFrom } = useAuth();
-
-	// Fetch user profile data to get account holder name
-	const {
-		data: userProfile,
-		isLoading: isLoadingProfile,
-	} = useNetworkAwareQuery({
-		queryKey: ["userProfile"],
-		queryFn: getUserProfile,
-		staleTime: 300000,
-	});
-
-	const cachedDashboard = queryClient.getQueryData<any>(["user", "dashboard"]);
-	const dashboardName = (cachedDashboard?.user_summary?.name || "").trim();
-	const accountHolderName =
-		(userProfile?.personal_details?.full_name || "").trim() ||
-		(dashboardName !== "Applicant" ? dashboardName : "");
-
-	// HB Partner API
-	const {
-		data: hbBankData,
-		isLoading: isLoadingHbBank,
-		error: hbBankError,
-	} = useNetworkAwareQuery({
-		queryKey: ["bank-details-hb-partner"],
-		queryFn: getBankDetailsHbPartner,
-		enabled: applicantFrom === "HB",
-		retry: (failureCount, error: any) => {
-			if (error?.response?.status === 404) return false;
-			return failureCount < 2;
-		},
-	});
-
-	useEffect(() => {
-		if (hbBankData) {
-			Logger.debug("HB Bank Data Received");
-
-			const ifsc = (hbBankData.ifsc_code || "").trim();
-			const bName = (hbBankData.bank_name || "").trim();
-			const brName = (hbBankData.branch_name || "").trim();
-
-			const updated = {
-				bankAccountNumber: hbBankData.account_number || latestValuesRef.current.bankAccountNumber,
-				confirmBankAccountNumber: hbBankData.account_number || latestValuesRef.current.confirmBankAccountNumber,
-				ifscCode: ifsc,
-				bankName: bName,
-				branchName: brName,
-				accountType: (hbBankData.account_type || "").toLowerCase(),
-			};
-			latestValuesRef.current = { ...updated };
-
-			setFormData((prev) => ({
-				...prev,
-				bankAccountNumber: hbBankData.account_number || prev.bankAccountNumber,
-				confirmBankAccountNumber: hbBankData.account_number || prev.confirmBankAccountNumber,
-				ifscCode: ifsc,
-				bankName: bName,
-				branchName: brName,
-				accountType: (hbBankData.account_type || "").toLowerCase(),
-			}));
-
-			// Mark IFSC as valid if we have details
-			if (bName && ifsc) {
-				setIsIFSCValid(true);
-			} else if (ifsc.length === 11 && (!bName || !brName)) {
-				// Trigger lookup if IFSC is provided but bank/branch is missing
-				Logger.debug("HB Data missing bank/branch, triggering lookup for IFSC");
-				requestedIfscRef.current = ifsc.toUpperCase();
-				lookupIFSCMutation(ifsc);
-			}
+	const handleAttemptBack = useCallback(() => {
+		if (picker.hasUnsavedDrafts) {
+			picker.confirmDiscardDrafts(() => setIsExitModalVisible(true));
+		} else {
+			setIsExitModalVisible(true);
 		}
-	}, [hbBankData]);
-
-	const isAllBankDataLocked =
-		applicantFrom === "HB" &&
-		!!hbBankData?.account_number &&
-		!!hbBankData?.ifsc_code &&
-		!!hbBankData?.account_type;
+	}, [picker]);
 
 	useEffect(() => {
-		if (hbBankError) {
-			const info = getApiErrorInfo(hbBankError);
-			Logger.error("HB Bank Data Error", { status: info.status });
-			const message =
-				getFriendlyError(hbBankError).message;
-
-			if (info.status === 404) {
-				Toast.show({
-					type: "error",
-					text1: t("detailsNotFound"),
-					text2: message,
-				});
-			}
-		}
-	}, [hbBankError, t]);
-
-	useEffect(() => {
-		Logger.debug("Fetching existing bank accounts");
-		getBankAccounts()
-			.then((accounts) => {
-				Logger.debug("Bank accounts fetched", { count: accounts?.length });
-				if (Array.isArray(accounts) && accounts.length > 0) {
-					// Use the first account (or primary if available)
-					const account = accounts.find((a) => a.is_primary) || accounts[0];
-
-					const prefilled = {
-						bankAccountNumber: String(account.account_number || "").trim(),
-						confirmBankAccountNumber: String(account.account_number || "").trim(),
-						ifscCode: (account.ifsc_code || "").trim(),
-						bankName: (account.bank_name || "").trim(),
-						branchName: (account.branch_name || "").trim(),
-						accountType: (account.account_type || "").toLowerCase(),
-					};
-					latestValuesRef.current = { ...prefilled };
-					setFormData(prefilled);
-
-					// Mark IFSC as valid since we have details
-					if (account.bank_name && account.ifsc_code) {
-						setIsIFSCValid(true);
-					}
-				} else {
-					Logger.debug("No existing bank accounts found");
-				}
-			})
-			.catch((err) => {
-				Logger.error("Error fetching bank accounts", { message: getFriendlyError(err).message });
-			});
-	}, []);
-
-	useEffect(() => {
-		// Prevent swipe or navigation.goBack inside router
 		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
 			if (["GO_BACK", "POP"].includes(e.data.action.type)) {
 				e.preventDefault();
-				setIsExitModalVisible(true);
+				handleAttemptBack();
 			}
 		});
 
-		// Intercept Android hardware back button
 		const backHandler = BackHandler.addEventListener("hardwareBackPress", () => {
-			setIsExitModalVisible(true);
-			return true; // prevent default app exit
+			handleAttemptBack();
+			return true;
 		});
 
 		return () => {
 			unsubscribe();
 			backHandler.remove();
 		};
-	}, [navigation]);
+	}, [handleAttemptBack, navigation]);
 
-	// IFSC Lookup Mutation
-	const { mutate: lookupIFSCMutation, isPending: isLookingUpIFSC } = useNetworkAwareMutation({
-		mutationFn: lookupIFSC,
-		onSuccess: (data: Partial<IFSCLookupResponseType>) => {
-			if (!mountedRef.current) return;
-			if (!mountedRef.current) return;
-			Logger.debug("IFSC Lookup API Response", { success: data?.success });
+	const subtitleParts: string[] = [];
+	if (picker.activeLoanMeta.loanNumber) {
+		subtitleParts.push(`Loan #${picker.activeLoanMeta.loanNumber}`);
+	}
+	if (picker.activeLoanMeta.loanAmount && picker.activeLoanMeta.loanAmount > 0) {
+		subtitleParts.push(formatRupees(picker.activeLoanMeta.loanAmount));
+	}
+	const loanSubtitle = subtitleParts.join(" • ");
 
-			// Ignore out-of-order response if user changed IFSC while request was in-flight
-			if (data?.ifsc_code && data.ifsc_code.toUpperCase() !== requestedIfscRef.current) {
-				Logger.debug("Discarding out-of-order IFSC response", {
-					received: data.ifsc_code,
-					current: requestedIfscRef.current,
-				});
-				return;
-			}
-
-			if (data?.success && data?.bank_details) {
-				setFormData((prev) => ({
-					...prev,
-					bankName: data.bank_details?.bank_name || "",
-					branchName: data.bank_details?.branch_name || "",
-				}));
-				latestValuesRef.current.bankName = data.bank_details?.bank_name || "";
-				latestValuesRef.current.branchName = data.bank_details?.branch_name || "";
-				setIsIFSCValid(true);
-				Keyboard.dismiss();
-
-				Toast.show({
-					type: "success",
-					text1: t("ifscCodeValid"),
-					text2: `${data.bank_details.bank_name} - ${data.bank_details.branch_name}`,
-				});
-			} else {
-				setIsIFSCValid(false);
-				setFormData((prev) => ({
-					...prev,
-					bankName: "",
-					branchName: "",
-				}));
-				latestValuesRef.current.bankName = "";
-				latestValuesRef.current.branchName = "";
-
-				Toast.show({
-					type: "error",
-					text1: t("invalidIFSCCode"),
-					text2: t("pleaseCheckAndEnterValidIFSC"),
-				});
-			}
-		},
-		onError: (err, variables, ctx) => {
-			if (!mountedRef.current) return;
-			if (!mountedRef.current) return;
-			Logger.error("IFSC Lookup API Error");
-			const { error, errorType } = errorHandler(err, variables, ctx);
-
-			setIsIFSCValid(false);
-			setFormData((prev) => ({
+	const handleInlineContinue = () => {
+		if (!inlineForm.validate()) return;
+		void picker.submitSelection(inlineForm.values, (fields) => {
+			inlineForm.setFieldErrors((prev) => ({
 				...prev,
-				bankName: "",
-				branchName: "",
+				...(fields.account_holder_name ? { accountHolderName: fields.account_holder_name } : {}),
+				...(fields.account_number ? { accountNumber: fields.account_number } : {}),
+				...(fields.confirm_account_number
+					? { confirmAccountNumber: fields.confirm_account_number }
+					: {}),
+				...(fields.ifsc_code || fields.ifscCode
+					? { ifscCode: fields.ifsc_code || fields.ifscCode }
+					: {}),
+				...(fields.account_type ? { accountType: fields.account_type } : {}),
 			}));
-
-			Toast.show({
-				type: "error",
-				text1: t("ifscLookupFailed"),
-				text2: t("pleaseEnterValidIFSCCode"),
-			});
-		},
-	});
-
-	// Bank Details Submission Mutation
-	const { mutate: submitBankDetailsMutation, isPending: isSubmitting } = useNetworkAwareMutation({
-		mutationFn: submitBankDetails,
-		onSuccess: (data) => {
-			if (!mountedRef.current) return;
-			if (!mountedRef.current) return;
-			Logger.debug("Bank details submitted successfully");
-
-			// Invalidate user dashboard and bank accounts query to refetch fresh data
-			queryClient.invalidateQueries({
-				queryKey: ["user", "dashboard"],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ["bankAccounts"],
-			});
-
-			Toast.show({
-				type: "success",
-				text1: t("bankDetailsSubmittedSuccessfully"),
-				text2: t("proceedingToNextStep"),
-			});
-
-			// Navigate to next screen
-			router.push("/verifying-bank");
-		},
-		onError: (err) => {
-			if (!mountedRef.current) return;
-			if ((err as any)?.isApplicationRejected) return;
-			const info = getApiErrorInfo(err);
-			Logger.error("Bank details submission failed", { status: info.status });
-
-			Toast.show({
-				type: "error",
-				text1: t("bankSubmissionFailed"),
-				text2: getFriendlyError(err).message,
-			});
-		},
-	});
-
-	const handleInputChange = (field: string, value: string) => {
-		let processedValue = value;
-
-		// Only allow numeric characters for bank account number fields and block pasting
-		if (field === "bankAccountNumber" || field === "confirmBankAccountNumber") {
-			processedValue = value.replace(/[^0-9]/g, "");
-
-			const prevValue = latestValuesRef.current[field as "bankAccountNumber" | "confirmBankAccountNumber"] || "";
-			// +2 threshold allows rapid typing or double-character entry without false-positive paste detection while blocking pastes (>2 chars at once)
-			if (processedValue.length > prevValue.length + 2) {
-				Toast.show({
-					type: "info",
-					text1: t("copyPasteDisabled"),
-					text2: t("enterAccountNumberManually"),
-				});
-				return;
-			}
-			latestValuesRef.current[field as "bankAccountNumber" | "confirmBankAccountNumber"] = processedValue;
-		}
-
-		// Auto-convert IFSC code to uppercase and strip non-alphanumeric
-		if (field === "ifscCode") {
-			processedValue = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-			latestValuesRef.current.ifscCode = processedValue;
-
-			if (ifscDebounceTimerRef.current) {
-				clearTimeout(ifscDebounceTimerRef.current);
-			}
-
-			// Debounce IFSC lookup by 300ms
-			if (processedValue.length === 11 && /^[A-Z]{4}0[A-Z0-9]{6}$/.test(processedValue)) {
-				const targetIfsc = processedValue;
-				requestedIfscRef.current = targetIfsc;
-				ifscDebounceTimerRef.current = setTimeout(() => {
-					Logger.debug("Looking up IFSC (debounced)", { ifsc: targetIfsc });
-					lookupIFSCMutation(targetIfsc);
-				}, 300);
-			} else {
-				requestedIfscRef.current = "";
-				setIsIFSCValid(false);
-				setFormData((prev) => ({
-					...prev,
-					bankName: "",
-					branchName: "",
-				}));
-				latestValuesRef.current.bankName = "";
-				latestValuesRef.current.branchName = "";
-			}
-		}
-
-		if (field === "accountType") {
-			latestValuesRef.current.accountType = processedValue;
-		}
-
-		setFormData((prev) => ({
-			...prev,
-			[field]: processedValue,
-		}));
+		});
 	};
 
-	const validateForm = () => {
-		if (!formData.bankAccountNumber.trim()) {
-			Toast.show({
-				type: "error",
-				text1: t("bankAccountNumberRequired"),
-			});
-			return false;
-		}
+	const inlineMissingHint = !picker.showPicker ? getMissingFormHint(inlineForm.values) : null;
+	const selectedAccount = picker.selectedAccount;
+	const isPickerSelectionBlocked =
+		!selectedAccount || (selectedAccount.isDraft && Boolean(selectedAccount.isBlacklisted));
 
-		if (formData.bankAccountNumber.length < 9 || formData.bankAccountNumber.length > 18) {
-			Toast.show({
-				type: "error",
-				text1: t("invalidBankAccountNumber"),
-				text2: t("accountNumberMustBeBetween9To18Digits"),
-			});
-			return false;
-		}
+	const pickerCtaText = picker.isSubmitting
+		? t("savingProgress", "Saving…")
+		: selectedAccount
+			? `${t("continueWithBank", "Continue with")} ${selectedAccount.bank_name} ••${selectedAccount.last4}`
+			: t("continue", "Continue");
 
-		if (!formData.confirmBankAccountNumber.trim()) {
-			Toast.show({
-				type: "error",
-				text1: t("pleaseConfirmYourBankAccountNumber"),
-			});
-			return false;
-		}
+	const inlineCtaText = picker.isSubmitting
+		? t("savingProgress", "Saving…")
+		: t("saveAndContinue", "Save & continue");
 
-		if (
-			formData.confirmBankAccountNumber.length < 9 ||
-			formData.confirmBankAccountNumber.length > 18
-		) {
-			Toast.show({
-				type: "error",
-				text1: t("invalidConfirmationAccountNumber"),
-				text2: t("accountNumberMustBeBetween9To18Digits"),
-			});
-			return false;
-		}
+	const isPrimaryEnabled = picker.showPicker
+		? !isPickerSelectionBlocked && !picker.isSubmitting
+		: inlineMissingHint === null && !picker.isSubmitting;
 
-		if (formData.bankAccountNumber !== formData.confirmBankAccountNumber) {
-			Toast.show({
-				type: "error",
-				text1: t("accountNumbersDontMatch"),
-				text2: t("pleaseEnsureBothAccountNumbersAreIdentical"),
-			});
-			return false;
-		}
-
-		if (!formData.ifscCode.trim() || formData.ifscCode.length !== 11) {
-			Toast.show({
-				type: "error",
-				text1: t("validIFSCCodeRequired"),
-				text2: t("ifscCodeMustBe11CharactersLong"),
-			});
-			return false;
-		}
-
-		if (!isIFSCValid) {
-			Toast.show({
-				type: "error",
-				text1: t("invalidIFSCCodeValidation"),
-				text2: t("pleaseWaitForIFSCValidationOrEnterValidCode"),
-			});
-			return false;
-		}
-
-		if (!formData.accountType.trim()) {
-			Toast.show({
-				type: "error",
-				text1: t("selectAccountType"),
-				text2: t("pleaseSelectYourAccountType"),
-			});
-			return false;
-		}
-
-		return true;
-	};
-
-	const handleProceed = () => {
-		if (!accountHolderName) {
-			Toast.show({
-				type: "error",
-				text1: t("accountHolderNameRequired"),
-				text2: t("pleaseCompleteProfileFirst"),
-			});
-			return;
-		}
-
-		if (!validateForm()) return;
-
-		const apiData: BankDetailsSubmitRequestType = {
-			account_holder_name: accountHolderName,
-			account_number: formData.bankAccountNumber.trim(),
-			ifsc_code: formData.ifscCode.toUpperCase().trim(),
-			bank_name: formData.bankName.trim(),
-			branch_name: formData.branchName.trim(),
-			account_type: formData.accountType.trim().toLowerCase(),
-		};
-
-		submitBankDetailsMutation(apiData);
-	};
+	const headerTitle = picker.showPicker
+		? t("disbursalAccountTitle", "Disbursal Account")
+		: t("bankAccountHeaderTitle", "Bank account");
 
 	return (
-		<>
-			<KeyboardAvoidingView
-				style={styles.container}
-				behavior={Platform.OS === "ios" ? "padding" : undefined}
-				keyboardVerticalOffset={0}>
-			{/* Header */}
-			{/* <View style={styles.header}>
+		<KeyboardAvoidingView
+			style={styles.container}
+			behavior="padding"
+			keyboardVerticalOffset={0}
+		>
+			{/* Sticky Top Header */}
+			<View style={[styles.header, { paddingTop: Math.max(insets.top + 8, 16) }]}>
 				<TouchableOpacity
-					style={styles.backButton}
-					onPress={() => {
-						if (router.canGoBack()) {
-							router.back();
-						} else {
-							router.replace("/(tabs)");
-						}
-					}}>
-					<Ionicons name="arrow-back" size={24} color={dark} />
+					accessibilityRole="button"
+					accessibilityLabel={t("back", "Back")}
+					hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+					onPress={handleAttemptBack}
+					style={styles.backBtn}
+				>
+					<Ionicons name="chevron-back" size={20} color="#334155" />
 				</TouchableOpacity>
-				<Text style={styles.headerTitle}>Verify Bank Details</Text>
-			</View> */}
-
-			<ScrollView
-				style={styles.scrollView}
-				contentContainerStyle={styles.scrollContent}
-				showsVerticalScrollIndicator={false}>
-				{/* Header Section */}
-				<View style={styles.headerSection}>
-					{/* <View style={styles.cardIconContainer}> */}
-						{/* <Image source={Images.CARD_FRAME} style={styles.cardFrame} /> */}
-						{/* <Image source={Images.BANK_LOGO} style={styles.cardImage} /> */}
-					{/* </View> */}
-					{/* <Text style={styles.title}>{t("verifyYourBankDetailsForSmoother")}</Text> */}
-				</View>
-
-				{/* Form Section */}
-				<View style={styles.formSection}>
-				{/* Account Holder Name (Read-only) */}
-				<Input
-					label={t("accountHolderName")}
-					placeholder={t("accountHolderName")}
-					value={accountHolderName}
-					onChangeText={() => {}}
-					containerStyle={styles.inputContainer}
-					disabled={true}
-					editable={false}
-					style={[styles.disabledInput, styles.inputStyle]}
-				/>
-
-				<Input
-					label={t("bankAccountNumber")}
-					placeholder={t("bankAccountNumberPlaceholder")}
-					value={formData.bankAccountNumber}
-					onChangeText={(value) => handleInputChange("bankAccountNumber", value)}
-					containerStyle={styles.inputContainer}
-					style={styles.inputStyle}
-					keyboardType="numeric"
-					maxLength={18}
-					required={true}
-					secureTextEntry={!showAccountNumber}
-					contextMenuHidden={true}
-					selectTextOnFocus={false}
-					disabled={isSubmitting || isAllBankDataLocked}
-					rightIcon={
-						<TouchableOpacity
-							onPress={() => setShowAccountNumber((prev) => !prev)}
-							hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-							disabled={isSubmitting || isAllBankDataLocked}>
-							<IconSymbol
-								name={showAccountNumber ? "visibility" : "visibilityOff"}
-								size={22}
-								color="#666"
-							/>
-						</TouchableOpacity>
-					}
-				/>
-
-				<Input
-					label={t("reEnterBankAccountNumber")}
-					placeholder={t("reEnterBankAccountNumber")}
-					value={formData.confirmBankAccountNumber}
-					onChangeText={(value) =>
-						handleInputChange("confirmBankAccountNumber", value)
-					}
-					containerStyle={styles.inputContainer}
-					keyboardType="numeric"
-					style={styles.inputStyle}
-					maxLength={18}
-					required={true}
-					secureTextEntry={!showConfirmAccountNumber}
-					contextMenuHidden={true}
-					selectTextOnFocus={false}
-					disabled={isSubmitting || isAllBankDataLocked}
-					rightIcon={
-						<TouchableOpacity
-							onPress={() => setShowConfirmAccountNumber((prev) => !prev)}
-							hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-							disabled={isSubmitting || isAllBankDataLocked}>
-							<IconSymbol
-								name={showConfirmAccountNumber ? "visibility" : "visibilityOff"}
-								size={22}
-								color="#666"
-							/>
-						</TouchableOpacity>
-					}
-				/>
-
-					{/* Account Type Field */}
-					<View style={styles.inputContainer}>
-						<Text style={styles.inputLabel}>
-							{t("accountType")} <Text style={styles.requiredAsterisk}>*</Text>
+				<View style={styles.headerTitleCol}>
+					<Text numberOfLines={1} style={styles.headerTitle}>
+						{headerTitle}
+					</Text>
+					{picker.showPicker && loanSubtitle ? (
+						<Text numberOfLines={1} style={styles.headerSubtitle}>
+							{loanSubtitle}
 						</Text>
-					<Select
-						options={accountTypeOptions}
-						selectedValue={formData.accountType}
-						onSelect={(value) => handleInputChange("accountType", value as string)}
-						placeholder={t("selectAccountType")}
-						containerStyle={styles.selectContainer}
-						disabled={isSubmitting || isAllBankDataLocked}
-					/>
-					</View>
-
-				<Input
-					label={t("ifscCode")}
-					placeholder={t("ifscCodePlaceholder")}
-					value={formData.ifscCode}
-					onChangeText={(value) => handleInputChange("ifscCode", value)}
-					containerStyle={styles.inputContainer}
-					autoCapitalize="characters"
-					style={styles.inputStyle}
-					maxLength={11}
-					required={true}
-					disabled={isSubmitting || isAllBankDataLocked}
-					rightIcon={isLookingUpIFSC ? <ActivityIndicator size="small" color="#4D43FE" /> : undefined}
-				/>
-
-					{/* Bank Name Field (Non-editable) */}
-					<Input
-						label={t("bankName")}
-						placeholder={isLookingUpIFSC ? t("lookingUp") : t("autoFilledFromIFSC")}
-						value={formData.bankName}
-						onChangeText={() => {}} // Non-editable
-						containerStyle={styles.inputContainer}
-						editable={!isAllBankDataLocked}
-						style={[styles.disabledInput, styles.inputStyle]}
-					/>
-
-				{/* Branch Name Field (Non-editable) */}
-				<Input
-					label={t("branchName")}
-					placeholder={isLookingUpIFSC ? t("lookingUp") : t("autoFilledFromIFSC")}
-					value={formData.branchName}
-					onChangeText={() => {}} // Non-editable
-					containerStyle={styles.inputContainer}
-					editable={!isAllBankDataLocked}
-					style={[styles.disabledInput, styles.inputStyle]}
-				/>
+					) : !picker.showPicker ? (
+						<Text numberOfLines={1} style={styles.headerSubtitle}>
+							{t("bankAccountHeaderSubtitle", "Loan disbursals & easy repayments")}
+						</Text>
+					) : null}
+				</View>
 			</View>
-		</ScrollView>
 
-		{/* Submit Button (sticky at the bottom, outside ScrollView) */}
-		<View style={[styles.buttonContainer, { paddingBottom: Math.max(insets.bottom + height(2), height(4)) }]}>
-			<TouchableOpacity
-				style={[
-					styles.proceedButton,
-					(isSubmitting || isLookingUpIFSC) && styles.proceedButtonDisabled,
-				]}
-				onPress={handleProceed}
-				disabled={isSubmitting || isLookingUpIFSC}>
-				{isSubmitting ? (
-					<ActivityIndicator size="small" color="#333" />
-				) : (
-					<>
-						<Text style={styles.proceedButtonText}>{t("submit")}</Text>
-						<IconSymbol name="arrow.right" size={20} color={dark} />
-					</>
-				)}
-			</TouchableOpacity>
-		</View>
-		</KeyboardAvoidingView>
+			{/* Main Content */}
+			{picker.isLoadingAccounts ? (
+				<View style={styles.skeletonContainer}>
+					<View style={styles.skeletonCard} />
+					<View style={styles.skeletonCard} />
+					<View style={[styles.skeletonCard, { height: 76 }]} />
+				</View>
+			) : picker.isAccountsError ? (
+				<View style={styles.errorStateContainer}>
+					<View style={styles.errorCard}>
+						<Ionicons name="cloud-offline-outline" size={34} color="#64748B" />
+						<Text style={styles.errorStateTitle}>
+							{t("failedToLoadBankAccounts", "Couldn't load your bank accounts")}
+						</Text>
+						<Text style={styles.errorStateSubtitle}>
+							{getFriendlyError(picker.accountsError).message ||
+								t("pleaseTryAgainLater", "Please check your connection and try again.")}
+						</Text>
+						<TouchableOpacity
+							accessibilityRole="button"
+							accessibilityLabel={t("retry", "Retry")}
+							onPress={() => {
+								void picker.refetchAccounts();
+							}}
+							style={styles.retryBtn}
+						>
+							<Text style={styles.retryBtnText}>{t("retry", "Retry")}</Text>
+						</TouchableOpacity>
+					</View>
+				</View>
+			) : (
+				<>
+					<ScrollView
+						ref={scrollRef}
+						style={styles.scrollView}
+						contentContainerStyle={[
+							styles.scrollContent,
+							{ paddingBottom: isKeyboardVisible ? 48 : 32 },
+						]}
+						onScroll={(e) => {
+							scrollYRef.current = e.nativeEvent.contentOffset.y;
+						}}
+						scrollEventThrottle={16}
+						nestedScrollEnabled={true}
+						keyboardShouldPersistTaps="handled"
+						keyboardDismissMode="none"
+						showsVerticalScrollIndicator={false}
+					>
+						{picker.showPicker ? (
+							<View style={styles.pickerSection}>
+								<View>
+									<Text style={styles.pickerHeading}>
+										{t("whereShouldWeSendMoney", "Where should we send your money?")}
+									</Text>
+									<Text style={styles.pickerSubheading}>
+										{t("chooseSavedOrAddNew", "Choose a saved account or add a new one.")}
+									</Text>
+								</View>
+
+								{picker.selectionError ? (
+									<View style={styles.selectionBanner}>
+										<Ionicons name="alert-circle-outline" size={16} color="#BE123C" />
+										<Text accessibilityLiveRegion="polite" style={styles.selectionBannerText}>
+											{picker.selectionError}
+										</Text>
+									</View>
+								) : null}
+
+								<View accessibilityRole="radiogroup" style={styles.cardsList}>
+									{picker.accounts.map((item) => (
+										<BankAccountCard
+											key={item.id}
+											account={item}
+											selected={picker.selectedId === item.id}
+											onSelect={picker.selectAccount}
+											onRemoveDraft={
+												item.isDraft ? picker.removeDraftAccount : undefined
+											}
+											disabled={picker.isSubmitting}
+										/>
+									))}
+								</View>
+
+								<TouchableOpacity
+									accessibilityRole="button"
+									accessibilityLabel={t("addNewBankAccount", "Add new bank account")}
+									activeOpacity={0.75}
+									disabled={picker.isSubmitting}
+									onPress={picker.openAddSheet}
+									style={styles.addNewCard}
+								>
+									<View style={styles.addNewPlusCircle}>
+										<Ionicons name="add" size={18} color="#475569" />
+									</View>
+									<Text style={styles.addNewText}>
+										{t("addNewBankAccount", "Add new bank account")}
+									</Text>
+								</TouchableOpacity>
+							</View>
+						) : (
+							<BankAccountForm
+								accountHolderName={picker.accountHolderName}
+								form={inlineForm}
+								disabled={picker.isSubmitting}
+								scrollViewRef={scrollRef}
+								scrollYRef={scrollYRef}
+							/>
+						)}
+					</ScrollView>
+
+					{/* Sticky Bottom Bar */}
+					<View
+						style={[
+							styles.bottomBar,
+							{
+								paddingTop: isKeyboardVisible ? 8 : 12,
+								paddingBottom: isKeyboardVisible ? 10 : Math.max(insets.bottom, 16),
+							},
+						]}
+					>
+						<View style={styles.encryptedRow}>
+							<Ionicons name="lock-closed" size={12} color="#64748B" />
+							<Text style={styles.encryptedText}>
+								{t("encryptedDetailsFooter", "Your account details are encrypted.")}
+							</Text>
+						</View>
+
+						{!isPrimaryEnabled && !picker.isSubmitting ? (
+							<Text style={styles.missingHintText}>
+								{picker.showPicker
+									? t("selectValidAccountHint", "Select an eligible bank account to continue")
+									: inlineMissingHint
+										? t(inlineMissingHint as any, inlineMissingHint)
+										: null}
+							</Text>
+						) : null}
+
+						<TouchableOpacity
+							accessibilityRole="button"
+							accessibilityLabel={picker.showPicker ? pickerCtaText : inlineCtaText}
+							accessibilityState={{
+								disabled: picker.showPicker
+									? picker.isSubmitting || isPickerSelectionBlocked
+									: picker.isSubmitting,
+								busy: picker.isSubmitting,
+							}}
+							activeOpacity={0.88}
+							disabled={
+								picker.isSubmitting ||
+								(picker.showPicker && isPickerSelectionBlocked)
+							}
+							onPress={
+								picker.showPicker ? picker.handleContinueSelected : handleInlineContinue
+							}
+							style={styles.ctaTouchable}
+						>
+							<LinearGradient
+								colors={
+									isPrimaryEnabled
+										? ["#09A143", "#78DE26"]
+										: ["#E2E8F0", "#CBD5E1"]
+								}
+								start={{ x: 0, y: 0.5 }}
+								end={{ x: 1, y: 0.5 }}
+								style={styles.ctaGradient}
+							>
+								{picker.isSubmitting ? (
+									<View style={styles.ctaInnerRow}>
+										<ActivityIndicator size="small" color="#FFFFFF" />
+										<Text style={styles.ctaText}>{pickerCtaText}</Text>
+									</View>
+								) : (
+									<View style={styles.ctaInnerRow}>
+										<Text
+											numberOfLines={1}
+											ellipsizeMode="middle"
+											style={[
+												styles.ctaText,
+												!isPrimaryEnabled && styles.ctaTextDisabled,
+											]}
+										>
+											{picker.showPicker ? pickerCtaText : inlineCtaText}
+										</Text>
+										<MaterialCommunityIcons
+											name="arrow-right"
+											size={20}
+											color={isPrimaryEnabled ? "#FFFFFF" : "#64748B"}
+										/>
+									</View>
+								)}
+							</LinearGradient>
+						</TouchableOpacity>
+					</View>
+				</>
+			)}
+
+			<AddBankAccountSheet
+				visible={picker.sheetOpen}
+				accountHolderName={picker.accountHolderName}
+				onClose={picker.closeAddSheet}
+				onSaveDraft={picker.addDraftAccount}
+			/>
 
 			<ExitIntentModal
 				visible={isExitModalVisible}
@@ -716,177 +366,230 @@ export default function VerifyBankDetails() {
 					router.replace("/(tabs)");
 				}}
 			/>
-		</>
+		</KeyboardAvoidingView>
 	);
 }
 
 const styles = StyleSheet.create({
 	container: {
 		flex: 1,
-		backgroundColor: white,
+		backgroundColor: "#F5F7F2",
 	},
 	header: {
+		backgroundColor: "#FFFFFF",
+		borderBottomWidth: 1,
+		borderBottomColor: "#F1F5F9",
+		paddingHorizontal: 16,
+		paddingBottom: 12,
 		flexDirection: "row",
 		alignItems: "center",
-		paddingHorizontal: width(5),
-		paddingTop: height(5),
-		// paddingBottom: height(1),
-		backgroundColor: white,
-		borderBottomWidth: 1,
-		borderBottomColor: "#E5E5E5",
+		gap: 12,
 	},
-	backButton: {
-		padding: width(2),
-		marginRight: width(3),
+	backBtn: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		backgroundColor: "#F1F5F9",
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	headerTitleCol: {
+		flex: 1,
 	},
 	headerTitle: {
-		fontSize: font(2),
-		fontWeight: "600",
-		color: dark,
+		fontFamily: JAKARTA.bold,
+		fontSize: 16,
+		color: "#0F172A",
+		includeFontPadding: false,
+	},
+	headerSubtitle: {
+		fontFamily: JAKARTA.medium,
+		fontSize: 11,
+		color: "#64748B",
+		marginTop: 2,
+		includeFontPadding: false,
+	},
+	skeletonContainer: {
+		flex: 1,
+		padding: 16,
+		gap: 12,
+	},
+	skeletonCard: {
+		height: 116,
+		borderRadius: 16,
+		backgroundColor: "#E2E8F0",
+		opacity: 0.55,
+	},
+	errorStateContainer: {
+		flex: 1,
+		justifyContent: "center",
+		padding: 20,
+	},
+	errorCard: {
+		backgroundColor: "#FFFFFF",
+		borderRadius: 16,
+		padding: 24,
+		borderWidth: 1,
+		borderColor: "#E2E8F0",
+		alignItems: "center",
+		gap: 8,
+	},
+	errorStateTitle: {
+		fontFamily: JAKARTA.bold,
+		fontSize: 16,
+		color: "#0F172A",
+		textAlign: "center",
+		marginTop: 4,
+	},
+	errorStateSubtitle: {
+		fontFamily: JAKARTA.medium,
+		fontSize: 13,
+		color: "#64748B",
+		textAlign: "center",
+	},
+	retryBtn: {
+		marginTop: 8,
+		backgroundColor: "#059669",
+		borderRadius: 12,
+		paddingHorizontal: 20,
+		minHeight: 48,
+		justifyContent: "center",
+	},
+	retryBtnText: {
+		fontFamily: JAKARTA.bold,
+		fontSize: 14,
+		color: "#FFFFFF",
 	},
 	scrollView: {
 		flex: 1,
 	},
 	scrollContent: {
-		paddingHorizontal: width(5),
-		paddingTop: height(4),
-		paddingBottom: height(12), // Increased for better scrollability on smaller devices
+		padding: 16,
+		paddingBottom: 32,
 	},
-	headerSection: {
+	pickerSection: {
+		gap: 14,
+	},
+	pickerHeading: {
+		fontFamily: JAKARTA.extraBold,
+		fontSize: 18,
+		color: "#0F172A",
+		lineHeight: 24,
+		includeFontPadding: false,
+	},
+	pickerSubheading: {
+		fontFamily: JAKARTA.medium,
+		fontSize: 12,
+		color: "#64748B",
+		marginTop: 3,
+		includeFontPadding: false,
+	},
+	selectionBanner: {
+		flexDirection: "row",
 		alignItems: "center",
-		marginBottom: height(1.5),
+		gap: 8,
+		backgroundColor: "#FFF1F2",
+		borderWidth: 1,
+		borderColor: "#FECDD3",
+		borderRadius: 12,
+		padding: 12,
 	},
-	cardIconContainer: {
-		position: "relative",
-		marginBottom: height(2),
-		width: width(12),
-		height: width(12),
-		alignItems: "center",
-		justifyContent: "center",
+	selectionBannerText: {
+		flex: 1,
+		fontFamily: JAKARTA.medium,
+		fontSize: 12,
+		color: "#BE123C",
+		includeFontPadding: false,
 	},
-	cardFrame: {
-		position: "absolute",
-		width: width(25),
-		height: width(25),
-		resizeMode: "contain",
+	cardsList: {
+		gap: 12,
 	},
-	cardImage: {
-		position: "absolute",
-		width: width(17),
-		height: width(17),
-		resizeMode: "contain",
-	},
-	cornerBrackets: {
-		position: "absolute",
-		top: -width(1.5),
-		left: -width(1.5),
-		right: -width(1.5),
-		bottom: -width(1.5),
-	},
-	bracket: {
-		position: "absolute",
-		width: width(3),
-		height: width(3),
-		borderColor: primary,
+	addNewCard: {
 		borderWidth: 2,
-	},
-	topLeft: {
-		top: 0,
-		left: 0,
-		borderRightWidth: 0,
-		borderBottomWidth: 0,
-	},
-	topRight: {
-		top: 0,
-		right: 0,
-		borderLeftWidth: 0,
-		borderBottomWidth: 0,
-	},
-	bottomLeft: {
-		bottom: 0,
-		left: 0,
-		borderRightWidth: 0,
-		borderTopWidth: 0,
-	},
-	bottomRight: {
-		bottom: 0,
-		right: 0,
-		borderLeftWidth: 0,
-		borderTopWidth: 0,
-	},
-	title: {
-		fontSize: font(1.6),
-		color: dark,
-		textAlign: "center",
-		lineHeight: font(2.6),
-		marginVertical: height(1.3),
-	},
-	formSection: {
-		marginBottom: height(1),
-	},
-	inputContainer: {
-		marginVertical: height(0.8),
-	},
-	inputLabel: {
-		color: dark,
-		fontSize: font(1.5),
-		marginBottom: height(0.5),
-		marginLeft: width(1),
-	},
-	inputStyle: { paddingVertical: height(1) },
-	selectContainer: {
-		marginTop: 0,
-	},
-	importantSection: {
-		backgroundColor: "#F8FFF0",
-		padding: width(4),
-		borderRadius: width(2),
-		borderLeftWidth: 4,
-		borderLeftColor: primary,
-		marginBottom: height(2),
-	},
-	importantTitle: {
-		fontSize: font(1.4),
-		fontWeight: "bold",
-		color: primary,
-		marginBottom: height(0.5),
-	},
-	importantText: {
-		fontSize: font(1.3),
-		color: "#666",
-		lineHeight: font(1.8),
-	},
-	buttonContainer: {
-		paddingHorizontal: width(5),
-		paddingTop: height(2),
-		backgroundColor: white,
-		borderTopWidth: 1,
-		borderTopColor: "#E5E5E5",
-		width: "100%",
-	},
-	proceedButton: {
+		borderStyle: "dashed",
+		borderColor: "#CBD5E1",
+		borderRadius: 16,
+		backgroundColor: "rgba(255, 255, 255, 0.7)",
+		minHeight: 60,
+		padding: 14,
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "center",
-		backgroundColor: primary,
-		paddingVertical: height(2),
-		borderRadius: width(6),
-		gap: width(2),
+		gap: 10,
 	},
-	proceedButtonText: {
-		fontSize: font(1.8),
-		fontWeight: "600",
-		color: dark,
+	addNewPlusCircle: {
+		width: 32,
+		height: 32,
+		borderRadius: 16,
+		backgroundColor: "#F1F5F9",
+		alignItems: "center",
+		justifyContent: "center",
 	},
-	proceedButtonDisabled: {
-		opacity: 0.6,
+	addNewText: {
+		fontFamily: JAKARTA.bold,
+		fontSize: 13,
+		color: "#334155",
+		includeFontPadding: false,
 	},
-	disabledInput: {
-		backgroundColor: "#F5F5F5",
-		color: "#666",
+	bottomBar: {
+		backgroundColor: "#FFFFFF",
+		borderTopWidth: 1,
+		borderTopColor: "#E2E8F0",
+		paddingHorizontal: 16,
+		paddingTop: 12,
 	},
-	requiredAsterisk: {
-		color: "#d32f2f",
-		fontSize: font(1.5),
+	encryptedRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: 5,
+		marginBottom: 8,
+	},
+	encryptedText: {
+		fontFamily: JAKARTA.medium,
+		fontSize: 11,
+		color: "#64748B",
+		includeFontPadding: false,
+	},
+	missingHintText: {
+		fontFamily: JAKARTA.medium,
+		fontSize: 11,
+		color: "#64748B",
+		textAlign: "center",
+		marginBottom: 8,
+		includeFontPadding: false,
+	},
+	ctaTouchable: {
+		width: "100%",
+		borderRadius: 16,
+		overflow: "hidden",
+	},
+	ctaGradient: {
+		width: "100%",
+		minHeight: 56,
+		borderRadius: 16,
+		paddingHorizontal: 16,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	ctaInnerRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: 8,
+	},
+	ctaText: {
+		fontFamily: JAKARTA.bold,
+		fontSize: 16,
+		color: "#FFFFFF",
+		flexShrink: 1,
+		textShadowColor: "rgba(0, 0, 0, 0.22)",
+		textShadowOffset: { width: 0, height: 1 },
+		textShadowRadius: 2,
+		includeFontPadding: false,
+	},
+	ctaTextDisabled: {
+		color: "#64748B",
+		textShadowColor: "transparent",
 	},
 });

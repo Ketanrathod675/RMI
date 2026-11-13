@@ -10,6 +10,7 @@ import {
 	getStepIndex,
 } from "@/constants/journeySteps";
 import { useTranslation } from "@/hooks/useTranslation";
+import { registerJourneyResetHandler } from "@/utils/authCleanup";
 import { STORAGE_KEYS } from "@/utils/storage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
@@ -222,6 +223,23 @@ export function JourneyLoaderProvider({ children }: { children: React.ReactNode 
 		setDynamicSubtitle(undefined);
 		await persistCompletedSteps([]);
 	}, [persistCompletedSteps]);
+
+	useEffect(() => {
+		registerJourneyResetHandler(() => {
+			ownerTokenRef.current += 1;
+			setVisible(false);
+			setOnCancel(undefined);
+			setCompletedStepIds([]);
+			setActiveId(null);
+			setFailedId(null);
+			setAttentionId(null);
+			setAttentionBadgeLabel(null);
+			setDynamicSubtitle(undefined);
+		});
+		return () => {
+			registerJourneyResetHandler(null);
+		};
+	}, []);
 
 	const runStep = useCallback(
 		async <T,>(

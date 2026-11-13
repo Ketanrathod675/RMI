@@ -1,4 +1,6 @@
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { clearOtpLock, getRateLimitInfo, saveOtpLock } from "@/utils/api/core/rateLimit";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { TermsAndPolicy } from "@/components";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
 import { Images } from "@/constants/images";
@@ -10,22 +12,23 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { setAuthApplicantFrom } from "@/store";
 import { setUserType, trackSignup } from "@/utils/analytics";
 import { errorHandler, login, verifyOtp } from "@/utils/api";
-import { getUserDashboardData } from "@/utils/api/services/user.service";
-import { getBreFixRoute, resolveWorkflowRoute } from "@/utils/api/types/user.types";
+import { resolvePostLoginRoute } from "@/utils/postLoginRouting";
 import { setBranchIdentity } from "@/utils/branch";
 import { font, height, width } from "@/utils/dimensions";
-import { encode, getUserIdFromToken } from "@/utils/encode_decode";
+import { decode, encode, getUserIdFromToken } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import RNOtpVerify from "@/utils/otpVerify";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { clearDigilockerSession } from "@/utils/digilocker";
 import { clearApplicationRejectionFlags, resetApplicationRejectionGuard } from "@/utils/applicationRejection";
+import { clearStaleUserCacheOnLogin } from "@/utils/authCleanup";
 import { MaterialIcons } from "@expo/vector-icons";
+import { useQueryClient } from "@tanstack/react-query";
 import Constants from "expo-constants";
 import { Image } from "expo-image";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
@@ -54,7 +57,15 @@ const ValidatePhoneNumber = "Please enter a valid country code and phone number"
 export default function SigninSignupOtp() {
 	const { t } = useTranslation();
 	const params = useLocalSearchParams<{ signInKey?: string }>();
-	const { countryCode, phoneNumber, changeOtpVerifyResponse, loginResponse, changeLoginResponse } = useSignin();
+	const {
+		countryCode,
+		phoneNumber,
+		changeOtpVerifyResponse,
+		loginResponse,
+		changeLoginResponse,
+		clearLoginResponse,
+		clearOtpVerifyResponse,
+	} = useSignin();
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [isChecked, setIsChecked] = useState(true);
 	const [isSoftPullChecked, setIsSoftPullChecked] = useState(true);
@@ -62,6 +73,8 @@ export default function SigninSignupOtp() {
 	const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 	const [showTermsAndConditions, setShowTermsAndConditions] = useState(false);
 	const inputRefs = useRef<(TextInputInstance | null)[]>([]);
+	const countdownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const isRateLimitLockedRef = useRef(false);
 	const [currentSignInKey, setCurrentSignInKey] = useState<string | undefined>(
 		params.signInKey || loginResponse?.sign_in_key || loginResponse?.otp_id
 	);
@@ -79,6 +92,7 @@ export default function SigninSignupOtp() {
 
 	const { handleLoginAndSignup, validateMobileAndCountryCode, handleSetTokens } = useAuth(false);
 	const dispatch = useDispatch();
+	const queryClient = useQueryClient();
 
 	const { language } = useDefault();
 	const insets = useSafeAreaInsets();
@@ -100,6 +114,66 @@ export default function SigninSignupOtp() {
 			const subscription = BackHandler.addEventListener("hardwareBackPress", onBackPress);
 			return () => subscription.remove();
 		}, [])
+	);
+
+	const stopOtpListenersAndTimers = useCallback(() => {
+		isRateLimitLockedRef.current = true;
+		if (countdownTimerRef.current) {
+			clearTimeout(countdownTimerRef.current);
+			countdownTimerRef.current = null;
+		}
+		setCountdown(0);
+		if (Platform.OS === "android") {
+			try {
+				RNOtpVerify.removeListener();
+			} catch {}
+		}
+	}, []);
+
+	const navigateBackToLogin = useCallback(() => {
+		try {
+			if (router.canDismiss?.()) {
+				router.dismissAll();
+			}
+		} catch {}
+		router.replace("/login");
+	}, []);
+
+	const handleOtpRateLimit = useCallback(
+		async (err: any, context: "otp_verify" | "otp_resend") => {
+			const rateLimit = getRateLimitInfo(err);
+			if (!rateLimit.isRateLimited) return false;
+
+			stopOtpListenersAndTimers();
+
+			let targetPhone = phoneNumber || "";
+			if (!targetPhone) {
+				try {
+					const storedPhone = await getStorageItem(STORAGE_KEYS["@phone-number"]);
+					if (storedPhone) targetPhone = decode(storedPhone);
+				} catch {}
+			}
+			if (targetPhone) {
+				await saveOtpLock(targetPhone, rateLimit.retryAfterSeconds);
+			}
+
+			clearLoginResponse();
+			clearOtpVerifyResponse();
+
+			showRateLimitModal({
+				context,
+				retryAfterSeconds: rateLimit.retryAfterSeconds,
+				onDismiss: navigateBackToLogin,
+			});
+			return true;
+		},
+		[
+			phoneNumber,
+			stopOtpListenersAndTimers,
+			clearLoginResponse,
+			clearOtpVerifyResponse,
+			navigateBackToLogin,
+		]
 	);
 
 	const retryVerifyOtpRef = useRef<((vars: any) => void) | null>(null);
@@ -160,6 +234,17 @@ export default function SigninSignupOtp() {
 				return;
 			}
 
+			// Read previous user id BEFORE handleLoginAndSignup overwrites @user-id
+			const prevUserIdRaw = await getStorageItem(STORAGE_KEYS["@user-id"]);
+			let prevUserId: string | null = null;
+			if (prevUserIdRaw) {
+				try {
+					prevUserId = decode(prevUserIdRaw);
+				} catch {
+					prevUserId = prevUserIdRaw;
+				}
+			}
+
 			// Block to handle valid login and signup
 			if (
 				handleLoginAndSignup(
@@ -184,19 +269,12 @@ export default function SigninSignupOtp() {
 					return;
 				}
 
-				const rawPermissionGiven =
-					(data as any)?.permission_given ?? (data as any)?.user?.permission_given;
-				const isNewUser =
-					data?.is_new_user === true ||
-					data?.is_profile_completed === false ||
-					loginResponse?.user_exists === false ||
-					(data as any)?.user?.is_first_login === true ||
-					(data as any)?.is_first_login === true ||
-					rawPermissionGiven === false ||
-					rawPermissionGiven === "false";
-
-				if (__DEV__) {
-				}
+				// Defence in depth: clear cached data/storage if a different user logged in or previous user was unknown
+				await clearStaleUserCacheOnLogin({
+					queryClient,
+					previousUserId: prevUserId,
+					nextUserId: resolvedUserId || getUserIdFromToken(data?.access_token),
+				});
 
 				Toast.show({
 					type: "success",
@@ -205,56 +283,12 @@ export default function SigninSignupOtp() {
 				});
 
 				resetApplicationRejectionGuard();
+				void clearOtpLock();
 				await clearApplicationRejectionFlags();
 				await clearDigilockerSession();
 
-				// Direct new users or users with pending permissions directly to /request-permissions
-				if (isNewUser) {
-					router.replace("/request-permissions");
-					return;
-				}
-
-				// Returning user: determine destination based on current_workflow from /auth/me
-				try {
-					const dashboard = await getUserDashboardData();
-					const wf = dashboard?.workflow_progress;
-					if (wf?.overall_status === "rejected") {
-						if (wf?.bre_status === "rejected") {
-							const fixRoute = getBreFixRoute(wf?.bre_failed_rule);
-							if (fixRoute) {
-								router.replace(fixRoute as any);
-								return;
-							}
-							router.replace("/(tabs)");
-							return;
-						}
-						router.replace("/no-approved-amount");
-						return;
-					}
-					if (wf?.overall_status === "completed") {
-						router.replace("/(tabs)");
-						return;
-					}
-					const targetStep = wf?.current_step;
-					if (targetStep === "digilocker") {
-						router.replace("/digilocker-kyc" as any);
-						return;
-					}
-
-					const targetRoute = resolveWorkflowRoute(
-						targetStep,
-						wf?.overall_status,
-						wf?.bre_status,
-						wf?.bre_failed_rule,
-					);
-					if (targetRoute && targetRoute !== "/(tabs)") {
-						router.replace(targetRoute as any);
-						return;
-					}
-				} catch (wfErr) {
-				}
-
-				router.replace("/(tabs)");
+				const nextDestination = resolvePostLoginRoute(data, loginResponse);
+				router.replace(nextDestination as any);
 				return;
 			}
 
@@ -265,6 +299,11 @@ export default function SigninSignupOtp() {
 			});
 		},
 		onError: (err: any, variables, ctx) => {
+			if (getRateLimitInfo(err).isRateLimited) {
+				void handleOtpRateLimit(err, "otp_verify");
+				return;
+			}
+
 			if (isSessionConflictError(err)) {
 				const detail = getApiErrorDetail(err);
 				const deviceName =
@@ -305,15 +344,45 @@ export default function SigninSignupOtp() {
 			}
 
 			const { error } = errorHandler(err, variables, ctx);
-			const rawMessage = (error as any)?.detail || getFriendlyError(error).message || "";
+			const rawDetail = (err as any)?.response?.data?.detail ?? (error as any)?.detail;
+			const rawDetailText =
+				typeof rawDetail === "string"
+					? rawDetail
+					: typeof (rawDetail as any)?.message === "string"
+						? (rawDetail as any).message
+						: "";
+			const rawMessage = rawDetailText || getFriendlyError(error).message || "";
 
+			const attemptMatch = typeof rawMessage === "string" ? rawMessage.match(/(\d+)\s*attempt/i) : null;
 			let displayError = rawMessage;
-			if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("invalid or expired otp")) {
+			let shouldResetBoxes = false;
+
+			if (attemptMatch) {
+				const attemptsLeft = parseInt(attemptMatch[1], 10);
+				shouldResetBoxes = true;
+				if (attemptsLeft === 1) {
+					displayError =
+						t("lastOtpAttemptWarning") ||
+						"Last attempt. Your number will be locked for 15 minutes if this is wrong.";
+				} else {
+					displayError = (
+						t("wrongOtpAttemptsLeft") || "Wrong OTP. {count} attempts left."
+					).replace("{count}", String(attemptsLeft));
+				}
+			} else if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("invalid or expired otp")) {
+				shouldResetBoxes = true;
 				displayError = "Invalid or expired OTP. Please check and try again.";
 			} else if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("client type does not match")) {
 				displayError = "OTP request mismatch. Please request a new OTP.";
 			} else if (!displayError) {
 				displayError = LoginAgain;
+			}
+
+			if (shouldResetBoxes || (err as any)?.response?.status === 400) {
+				setOtp(["", "", "", ""]);
+				setTimeout(() => {
+					inputRefs.current[0]?.focus();
+				}, 50);
 			}
 
 			Toast.show({
@@ -389,9 +458,15 @@ export default function SigninSignupOtp() {
 
 	// Countdown timer
 	useEffect(() => {
+		if (isRateLimitLockedRef.current) return;
 		if (countdown > 0) {
-			const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-			return () => clearTimeout(timer);
+			countdownTimerRef.current = setTimeout(() => setCountdown(countdown - 1), 1000);
+			return () => {
+				if (countdownTimerRef.current) {
+					clearTimeout(countdownTimerRef.current);
+					countdownTimerRef.current = null;
+				}
+			};
 		}
 	}, [countdown]);
 
@@ -453,6 +528,11 @@ export default function SigninSignupOtp() {
 			startOtpListener();
 		},
 		onError: (err, variables, ctx) => {
+			if (getRateLimitInfo(err).isRateLimited) {
+				void handleOtpRateLimit(err, "otp_resend");
+				return;
+			}
+
 			const { error } = errorHandler(err, variables, ctx);
 
 			Toast.show({

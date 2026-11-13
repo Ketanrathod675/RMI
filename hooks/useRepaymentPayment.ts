@@ -8,7 +8,14 @@ import Logger from "@/utils/logger";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { initiateRepayment } from "@/utils/api/services/repayment.service";
 import type { ActiveLoan } from "@/utils/api/types/repayment.types";
-import { generateUUID, type VerifySource } from "@/utils/paymentVerification";
+import { invalidatePostRepaymentQueries, type VerifySource } from "@/utils/paymentVerification";
+import {
+	classifyRepaymentInitiate409,
+	clearStoredRepaymentKeys,
+	initiateRepaymentWithConflictRetry,
+	interpretRepaymentInitiateResponse,
+	saveRepaymentKeyExpiry,
+} from "@/utils/repaymentIdempotency";
 import { openExternalUrl } from "@/utils/openExternalUrl";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useTranslation } from "./useTranslation";
@@ -25,6 +32,8 @@ export function useRepaymentPayment({ activeLoan }: UseRepaymentPaymentOptions =
 	const { t } = useTranslation();
 	const [isInitiating, setIsInitiating] = useState(false);
 	const submitGuardRef = useRef(false);
+	const activeLoanRef = useRef<ActiveLoan | null | undefined>(activeLoan);
+	activeLoanRef.current = activeLoan;
 
 	const handlePayNow = useCallback(async () => {
 		if (submitGuardRef.current) {
@@ -35,21 +44,36 @@ export function useRepaymentPayment({ activeLoan }: UseRepaymentPaymentOptions =
 		submitGuardRef.current = true;
 		setIsInitiating(true);
 
+		const currentActiveLoan = activeLoanRef.current;
+
 		try {
-			// 1. Get or generate persistent Idempotency-Key for this attempt
-			let idempotencyKey = await getStorageItem(STORAGE_KEYS["@repayment-idempotency-key"]);
-			if (!idempotencyKey) {
-				idempotencyKey = generateUUID();
-				await setStorageItem(STORAGE_KEYS["@repayment-idempotency-key"], idempotencyKey);
+			// 1 & 2. Initiate payment using scoped idempotency key (auto-retries once on stale 409)
+			const rawRes = await initiateRepaymentWithConflictRetry({
+				amount: currentActiveLoan?.amount_to_repay ?? null,
+				initiateFn: initiateRepayment,
+			});
+
+			const interpreted = interpretRepaymentInitiateResponse(rawRes);
+
+			if (interpreted.kind === "already_paid") {
+				await clearStoredRepaymentKeys();
+				await invalidatePostRepaymentQueries(queryClient);
+
+				if (interpreted.txnid) {
+					router.push({
+						pathname: "/repayment-status" as any,
+						params: { txnid: interpreted.txnid, source: "manual" },
+					});
+				} else {
+					Toast.show({
+						type: "success",
+						text1: t("paymentAlreadyReceived", "Your previous payment was received"),
+					});
+				}
+				return;
 			}
 
-			// 2. Initiate payment with the backend
-			const res = await initiateRepayment(idempotencyKey);
-			const url = res?.payment_url;
-			const txnid = res?.txnid;
-
-			// Validate payment_url: strictly HTTPS and present
-			if (!url || typeof url !== "string" || !url.startsWith("https://") || !txnid) {
+			if (interpreted.kind !== "open_url") {
 				Logger.warn("Repayment initiation failed: missing or invalid payment_url/txnid");
 				Toast.show({
 					type: "error",
@@ -59,17 +83,31 @@ export function useRepaymentPayment({ activeLoan }: UseRepaymentPaymentOptions =
 				return;
 			}
 
+			if (interpreted.resumed) {
+				Logger.info("Resuming existing repayment payment link", { txnid: interpreted.txnid });
+			}
+
+			const numericResAmount =
+				typeof interpreted.amount === "number"
+					? interpreted.amount
+					: Number(interpreted.amount) || undefined;
+			const amountForMeta = currentActiveLoan?.amount_to_repay ?? numericResAmount;
+			await saveRepaymentKeyExpiry(interpreted.expiresAt, amountForMeta);
+
 			// 3. Persist attempt details in storage
 			const startedAt = Date.now();
-			const amountBefore = activeLoan?.amount_to_repay ?? res?.amount ?? 0;
-			await setStorageItem(STORAGE_KEYS["@repayment-txnid"], txnid);
+			const amountBefore = amountForMeta ?? 0;
+			await setStorageItem(STORAGE_KEYS["@repayment-txnid"], interpreted.txnid);
 			await setStorageItem(STORAGE_KEYS["@repayment-timestamp"], String(startedAt));
 			await setStorageItem(STORAGE_KEYS["@repayment-amount-before"], String(amountBefore));
 
 			// 4. Open payment gateway with WebBrowser (no polling while gateway is open)
 			let navSource: VerifySource = "browser_closed";
 			try {
-				const result: any = await WebBrowser.openAuthSessionAsync(url, REPAYMENT_RETURN_SCHEME);
+				const result: any = await WebBrowser.openAuthSessionAsync(
+					interpreted.paymentUrl,
+					REPAYMENT_RETURN_SCHEME,
+				);
 				Logger.debug("Repayment WebBrowser session finished", { type: result?.type });
 
 				if (result?.type === "success" && result?.url) {
@@ -83,26 +121,25 @@ export function useRepaymentPayment({ activeLoan }: UseRepaymentPaymentOptions =
 				}
 			} catch (browserErr) {
 				Logger.warn("Repayment openAuthSessionAsync failed, falling back to openExternalUrl");
-				await openExternalUrl(url);
+				await openExternalUrl(interpreted.paymentUrl);
 			}
 
 			// 5. Navigate to verification screen
 			router.push({
 				pathname: "/repayment-status" as any,
-				params: { txnid, source: navSource },
+				params: { txnid: interpreted.txnid, source: navSource },
 			});
 		} catch (err: any) {
-			const status = err?.response?.status;
 			const detail = err?.response?.data?.detail;
 			const detailStr = typeof detail === "string" ? detail.toLowerCase() : JSON.stringify(detail || "").toLowerCase();
 
-			// 409 / Active payment link conflict -> refresh dashboard and route to status
-			if (status === 409 || detailStr.includes("active") || detailStr.includes("in progress") || detailStr.includes("existing")) {
-				await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+			// 409 / Active payment link conflict -> ONLY route to status when genuinely in flight at gateway
+			if (classifyRepaymentInitiate409(err) === "in_progress") {
+				await invalidatePostRepaymentQueries(queryClient);
 				const storedTxn =
-					(await getStorageItem(STORAGE_KEYS["@repayment-txnid"])) ||
 					err?.response?.data?.txnid ||
-					activeLoan?.active_payment?.txnid;
+					(await getStorageItem(STORAGE_KEYS["@repayment-txnid"])) ||
+					currentActiveLoan?.active_payment?.txnid;
 
 				if (storedTxn) {
 					router.push({
@@ -111,11 +148,19 @@ export function useRepaymentPayment({ activeLoan }: UseRepaymentPaymentOptions =
 					});
 					return;
 				}
+
+				const friendly = getFriendlyError(err);
+				Toast.show({
+					type: "error",
+					text1: t("paymentFailedTitle", "Payment initiation failed"),
+					text2: friendly.message || t("pleaseRetryPayment", "Please try again shortly"),
+				});
+				return;
 			}
 
 			// No outstanding amount
 			if (detailStr.includes("no outstanding") || detailStr.includes("already repaid") || detailStr.includes("no active loan")) {
-				await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+				await invalidatePostRepaymentQueries(queryClient);
 				Toast.show({
 					type: "info",
 					text1: t("noOutstandingPayment", "No outstanding payment found"),
@@ -134,7 +179,7 @@ export function useRepaymentPayment({ activeLoan }: UseRepaymentPaymentOptions =
 			submitGuardRef.current = false;
 			setIsInitiating(false);
 		}
-	}, [activeLoan, queryClient, router, t]);
+	}, [queryClient, router, t]);
 
 	return {
 		handlePayNow,

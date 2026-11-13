@@ -82,3 +82,31 @@ export function isSessionReplacedError(error: any): boolean {
 	const code = getApiErrorCode(error);
 	return code === SESSION_REPLACED_CODE || code === SESSION_REPLACED;
 }
+
+const LOGOUT_SUPPRESSION_WINDOW_MS = 8000;
+let explicitLogoutInProgress = false;
+let lastExplicitLogoutAt = 0;
+
+/**
+ * Suppresses global 401 "Session Expired" popups while an intentional logout
+ * runs and briefly afterwards so late in-flight requests don't show stale errors.
+ */
+export function markExplicitLogoutStarted(): void {
+	explicitLogoutInProgress = true;
+	lastExplicitLogoutAt = Date.now();
+}
+
+export function markExplicitLogoutSettled(): void {
+	explicitLogoutInProgress = false;
+	lastExplicitLogoutAt = Date.now();
+}
+
+export function clearExplicitLogoutSuppression(): void {
+	explicitLogoutInProgress = false;
+	lastExplicitLogoutAt = 0;
+}
+
+export function isSessionExpirySuppressed(now = Date.now()): boolean {
+	if (explicitLogoutInProgress) return true;
+	return lastExplicitLogoutAt > 0 && now - lastExplicitLogoutAt < LOGOUT_SUPPRESSION_WINDOW_MS;
+}

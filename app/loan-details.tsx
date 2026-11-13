@@ -3,6 +3,7 @@ import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { formatINR } from "@/utils/formatters";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark } from "@/constants/Colors";
+import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { QueryErrorState } from "@/components/QueryErrorState";
@@ -159,11 +160,13 @@ export default function LoanDetails() {
 		}, [showDetails])
 	);
 
+	const { userId } = useAuth();
+
 	// If no loanNumber provided (from profile), fetch all loans first
 	const { data: allLoansData, isLoading: isLoadingAllLoans, isFetching: isFetchingAllLoans, isError: allLoansError, error: allLoansQueryError, refetch: refetchAllLoans } = useNetworkAwareQuery({
-		queryKey: ["allLoans"],
+		queryKey: ["allLoans", userId],
 		queryFn: getAllLoans,
-		enabled: !loanNumber,
+		enabled: !!userId && !loanNumber,
 	});
 
 	const effectiveLoanNumber = loanNumber || allLoansData?.loans?.[0]?.loan_number;
@@ -171,9 +174,9 @@ export default function LoanDetails() {
 	// Fetch specific loan details
 	const { data: apiData, isLoading: isLoadingDetails, isFetching: isFetchingDetails, isError: loanDetailsError, error: loanDetailsQueryError, refetch: refetchLoanDetails } =
 		useNetworkAwareQuery<LoanDetailsAPIResponse>({
-			queryKey: ["loanDetails", effectiveLoanNumber],
+			queryKey: ["loanDetails", userId, effectiveLoanNumber],
 			queryFn: () => getLoanDetails(effectiveLoanNumber || ""),
-			enabled: !!effectiveLoanNumber,
+			enabled: !!userId && !!effectiveLoanNumber,
 		});
 
 	React.useEffect(() => {
@@ -185,9 +188,9 @@ export default function LoanDetails() {
 	// Fetch loan book when showDetails is active
 	const { data: loanBookData, isLoading: isLoadingLoanBook } =
 		useNetworkAwareQuery<LoanBookAPIResponse>({
-			queryKey: ["loanBook", effectiveLoanNumber],
+			queryKey: ["loanBook", userId, effectiveLoanNumber],
 			queryFn: () => getLoanBook(effectiveLoanNumber || ""),
-			enabled: !!effectiveLoanNumber && showDetails,
+			enabled: !!userId && !!effectiveLoanNumber && showDetails,
 		});
 
 	const handleBack = () => {

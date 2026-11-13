@@ -1,8 +1,10 @@
 import {
 	getDevMockOptions,
+	resetDevMockAssessmentIdempotencyCache,
 	resetDevMockCurrentStep,
 	updateDevMockOptions,
 } from "@/utils/api/devMockApi";
+import { clearIdempotencyKey } from "@/utils/idempotency";
 import { font, height, width } from "@/utils/dimensions";
 import { getStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -27,6 +29,9 @@ export const DevPaymentSimulator: React.FC<DevPaymentSimulatorProps> = ({
 	>(getDevMockOptions().easebuzzMockOutcome || "delayed_success");
 	const [simulateReapplicationRejection, setSimulateReapplicationRejection] =
 		useState<boolean>(getDevMockOptions().simulateReapplicationRejection || false);
+	const [simulateReplayPaid, setSimulateReplayPaid] = useState<boolean>(
+		getDevMockOptions().simulateAssessmentReplayPaid || false,
+	);
 
 	const handleOutcomeChange = (
 		outcome: "delayed_success" | "immediate_success" | "failure",
@@ -160,6 +165,32 @@ export const DevPaymentSimulator: React.FC<DevPaymentSimulatorProps> = ({
 							style={[styles.btn, styles.btnFailure]}
 							onPress={() => triggerDeepLink("failure")}>
 							<Text style={styles.btnText}>Simulate Failure</Text>
+						</TouchableOpacity>
+					</View>
+
+					<Text style={[styles.label, { marginTop: height(1) }]}>
+						Idempotency Replay Simulation:
+					</Text>
+					<View style={styles.row}>
+						<TouchableOpacity
+							style={[styles.chip, simulateReplayPaid && styles.chipActive]}
+							onPress={() => {
+								const next = !simulateReplayPaid;
+								setSimulateReplayPaid(next);
+								updateDevMockOptions({ simulateAssessmentReplayPaid: next });
+							}}>
+							<Text style={[styles.chipText, simulateReplayPaid && styles.chipTextActive]}>
+								{simulateReplayPaid ? "Replay = Paid (No URL): ON" : "Replay = Paid (No URL): OFF"}
+							</Text>
+						</TouchableOpacity>
+						<TouchableOpacity
+							style={styles.chip}
+							onPress={() => {
+								resetDevMockAssessmentIdempotencyCache();
+								void clearIdempotencyKey("assessment-fee");
+								Toast.show({ type: "info", text1: "Idempotency cache cleared" });
+							}}>
+							<Text style={styles.chipText}>Reset Idem Key</Text>
 						</TouchableOpacity>
 					</View>
 

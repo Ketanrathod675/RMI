@@ -91,6 +91,22 @@ export function isRejectedStatus(progress: unknown): boolean {
 }
 
 /**
+ * Determines whether the "assessment fee payment received" reassurance card
+ * should appear on a rejection screen (true only when a fee txn is recorded
+ * and assessment fee was not waived via af="no").
+ */
+export function shouldShowFeeReceivedOnRejection(params: {
+	latestFeeTxnId?: string | null;
+	afFlag?: string | null;
+}): boolean {
+	const af = String(params.afFlag ?? "").trim().toLowerCase();
+	if (af === "no" || af === "0" || af === "false") {
+		return false;
+	}
+	return Boolean(params.latestFeeTxnId && String(params.latestFeeTxnId).trim().length > 0);
+}
+
+/**
  * Central handler when an application is rejected.
  * Idempotent: sets flags, invalidates/cancels queries, suppresses error toasts, routes to /no-approved-amount.
  */
@@ -98,6 +114,7 @@ export async function handleApplicationRejected(options?: {
 	router?: any;
 	queryClient?: QueryClient;
 	source?: string;
+	skipNavigation?: boolean;
 }): Promise<void> {
 	if (isRejectionHandlingInProgress) {
 		return;
@@ -126,6 +143,10 @@ export async function handleApplicationRejected(options?: {
 		} catch {
 			// Ignore query client failures
 		}
+	}
+
+	if (options?.skipNavigation) {
+		return;
 	}
 
 	const r = options?.router || globalRouter;

@@ -1,5 +1,6 @@
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, white } from "@/constants/Colors";
+import { useAuth } from "@/hooks/useAuth";
 import { useDefault } from "@/hooks/useDefault";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { QueryErrorState } from "@/components/QueryErrorState";
@@ -67,6 +68,7 @@ export default function Profile() {
 
 	// Selfie state
 	const [selfieUri, setSelfieUri] = useState<string | null>(null);
+	const { userId } = useAuth();
 
 	// Fetch selfie from API
 	const {
@@ -75,8 +77,9 @@ export default function Profile() {
 		isFetching: isSelfieFetching,
 		refetch: refetchSelfie,
 	} = useNetworkAwareQuery({
-		queryKey: ["userSelfie"],
+		queryKey: ["userSelfie", userId],
 		queryFn: fetchSelfie,
+		enabled: !!userId,
 		retry: 1,
 	});
 
@@ -329,8 +332,9 @@ export default function Profile() {
 		isError: isProfileError,
 		refetch: refetchProfile,
 	} = useNetworkAwareQuery({
-		queryKey: ["userProfile"],
+		queryKey: ["userProfile", userId],
 		queryFn: getUserProfile,
+		enabled: !!userId,
 	});
 
 	// Fetch dashboard data
@@ -341,8 +345,9 @@ export default function Profile() {
 		error: dashboardError,
 		refetch: refetchDashboard,
 	} = useNetworkAwareQuery({
-		queryKey: ["userDashboard"],
+		queryKey: ["userDashboard", userId],
 		queryFn: () => getUserDashboardData(),
+		enabled: !!userId,
 	});
 
 	// Fetch user existing feedback status

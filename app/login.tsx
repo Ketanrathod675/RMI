@@ -13,15 +13,19 @@ import { Layout01 } from "@/layouts/layout_01";
 import { LANGUAGES } from "@/store";
 import { Languages } from "@/store/slices/global";
 import { errorHandler, login } from "@/utils/api";
+import { getOtpLock, getRateLimitInfo, saveOtpLock } from "@/utils/api/core/rateLimit";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect, useNavigation, usePathname } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
 	Animated,
+	AppState,
+	type AppStateStatus,
 	BackHandler,
 	Dimensions,
 	Modal,
@@ -93,12 +97,107 @@ export default function Login() {
 	} = useSignin();
 
 	const [mobile, setMobile] = useState<string>(phoneNumber || "");
+	const [lockUntil, setLockUntil] = useState<number | null>(null);
+	const [lockRemainingSeconds, setLockRemainingSeconds] = useState<number>(0);
+	const isCheckingLockRef = useRef(false);
+
+	const syncLockForPhone = useCallback(async (phoneToCheck: string) => {
+		if (!phoneToCheck || phoneToCheck.length < 10) {
+			setLockUntil(null);
+			setLockRemainingSeconds(0);
+			return;
+		}
+		const active = await getOtpLock(phoneToCheck);
+		if (active) {
+			setLockUntil(active.until);
+			setLockRemainingSeconds(active.remainingSeconds);
+		} else {
+			setLockUntil(null);
+			setLockRemainingSeconds(0);
+		}
+	}, []);
 
 	useEffect(() => {
 		if (phoneNumber) {
 			setMobile(phoneNumber);
 		}
 	}, [phoneNumber]);
+
+	useEffect(() => {
+		let active = true;
+		(async () => {
+			const lock = await getOtpLock();
+			if (!active || !lock) return;
+			if (!phoneNumber && lock.phone) {
+				setMobile(lock.phone);
+				changePhoneNumber(lock.phone);
+				setLockUntil(lock.until);
+				setLockRemainingSeconds(lock.remainingSeconds);
+			} else if (phoneNumber && lock.phone === phoneNumber) {
+				setLockUntil(lock.until);
+				setLockRemainingSeconds(lock.remainingSeconds);
+			}
+		})();
+		return () => {
+			active = false;
+		};
+	}, [phoneNumber, changePhoneNumber]);
+
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			if (mobile.length < 10) {
+				if (!cancelled) {
+					setLockUntil(null);
+					setLockRemainingSeconds(0);
+				}
+				return;
+			}
+			const active = await getOtpLock(mobile);
+			if (cancelled) return;
+			if (active) {
+				setLockUntil(active.until);
+				setLockRemainingSeconds(active.remainingSeconds);
+			} else {
+				setLockUntil(null);
+				setLockRemainingSeconds(0);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [mobile]);
+
+	useFocusEffect(
+		useCallback(() => {
+			void syncLockForPhone(mobile);
+		}, [mobile, syncLockForPhone])
+	);
+
+	useEffect(() => {
+		if (!lockUntil) {
+			setLockRemainingSeconds(0);
+			return;
+		}
+		const updateCountdown = () => {
+			const remaining = Math.max(0, Math.ceil((lockUntil - Date.now()) / 1000));
+			setLockRemainingSeconds(remaining);
+			if (remaining <= 0) {
+				setLockUntil(null);
+			}
+		};
+		updateCountdown();
+		const interval = setInterval(updateCountdown, 1000);
+		const sub = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+			if (nextState === "active") {
+				updateCountdown();
+			}
+		});
+		return () => {
+			clearInterval(interval);
+			sub.remove();
+		};
+	}, [lockUntil]);
 
 	const { mutate: loginMutation, isPending } = useNetworkAwareMutation({
 		mutationFn: login,
@@ -127,6 +226,21 @@ export default function Login() {
 			});
 		},
 		onError: (err, variables, ctx) => {
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				const targetPhone = String((variables as any)?.phone_number || mobile || "");
+				if (targetPhone) {
+					void saveOtpLock(targetPhone, rateLimit.retryAfterSeconds);
+					setLockUntil(Date.now() + rateLimit.retryAfterSeconds * 1000);
+					setLockRemainingSeconds(rateLimit.retryAfterSeconds);
+				}
+				showRateLimitModal({
+					context: "otp_request",
+					retryAfterSeconds: rateLimit.retryAfterSeconds,
+				});
+				return;
+			}
+
 			const { error: errData } = errorHandler(err, variables, ctx);
 			Toast.show({
 				type: "error",
@@ -136,7 +250,8 @@ export default function Login() {
 		},
 	});
 
-	const handleRequestOtp = () => {
+	const handleRequestOtp = async () => {
+		if (isCheckingLockRef.current || isPending) return;
 		if (mobile.length !== 10) {
 			setError("Please enter a valid 10-digit mobile number");
 			Toast.show({
@@ -157,6 +272,22 @@ export default function Login() {
 				text2: "Please enter a valid 10-digit mobile number starting with 6-9",
 			});
 			return;
+		}
+
+		isCheckingLockRef.current = true;
+		try {
+			const activeLock = await getOtpLock(mobile);
+			if (activeLock) {
+				setLockUntil(activeLock.until);
+				setLockRemainingSeconds(activeLock.remainingSeconds);
+				showRateLimitModal({
+					context: "otp_request",
+					retryAfterSeconds: activeLock.remainingSeconds,
+				});
+				return;
+			}
+		} finally {
+			isCheckingLockRef.current = false;
 		}
 
 		setError("");
@@ -330,13 +461,26 @@ export default function Login() {
 				<TouchableOpacity
 					style={[
 						styles.button,
-						mobile.length === 10 && !isPending ? styles.buttonActive : styles.buttonDisabled,
+						mobile.length === 10 && !isPending && lockRemainingSeconds <= 0
+							? styles.buttonActive
+							: styles.buttonDisabled,
 					]}
 					onPress={handleRequestOtp}
-					disabled={isPending}
+					disabled={isPending || lockRemainingSeconds > 0}
 					activeOpacity={0.8}>
 					{isPending ? (
 						<ActivityIndicator size="small" color="#3F6212" />
+					) : lockRemainingSeconds > 0 ? (
+						<View style={styles.buttonContent}>
+							<Text style={styles.buttonText}>
+								{(t("requestOtpLockedCountdown") || "Try again in {time}").replace(
+									"{time}",
+									`${String(Math.floor(lockRemainingSeconds / 60)).padStart(2, "0")}:${String(
+										lockRemainingSeconds % 60
+									).padStart(2, "0")}`
+								)}
+							</Text>
+						</View>
 					) : (
 						<View style={styles.buttonContent}>
 							<Text style={styles.buttonText}>Request OTP</Text>

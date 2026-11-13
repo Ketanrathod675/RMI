@@ -1,5 +1,8 @@
 import Logger from "@/utils/logger";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { getRateLimitInfo } from "@/utils/api/core/rateLimit";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary, white } from "@/constants/Colors";
 import { ForgotMpinContext } from "@/context/forgot_mpin";
@@ -41,8 +44,10 @@ export default function ForgotMpin() {
 
 	const { phoneNumber, setPhoneNumber, countryCode, setCountryCode, setOtpVerified } =
 		useContext(ForgotMpinContext);
+	const { remainingSeconds, isLocked, lockForSeconds: lock } = useRateLimitLock();
 
 	// Country selection modal state
+	const formatMmSs = (sec: number) => `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
 	const [showCountryModal, setShowCountryModal] = useState(false);
 	const [countrySearchText, setCountrySearchText] = useState("");
 	const slideAnim = useRef(new Animated.Value(screenHeight)).current;
@@ -76,7 +81,19 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-Logger.warn("Operation failed", { code: "operation_failed" });
+			const rawRate = getRateLimitInfo(err);
+			const rateInfo = rawRate.isRateLimited ? rawRate : getRateLimitInfo(error);
+			if (rateInfo.isRateLimited) {
+				lock(rateInfo.retryAfterSeconds);
+				showRateLimitModal({
+					retryAfterSeconds: rateInfo.retryAfterSeconds,
+					context: "otp_request",
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
+				});
+				return;
+			}
+			Logger.warn("Forgot MPIN OTP send failed");
 			Toast.show({
 				type: "error",
 				text1: t("failedToSendOtp"),
@@ -86,6 +103,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	});
 
 	const handleForgotMpin = () => {
+		if (isLocked) return;
 		// check for valid phone number
 		const parsePhone = PhoneNumberSchema.safeParse(phoneNumber);
 
@@ -162,9 +180,9 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 
 	useEffect(() => {
 		if (!storedPhoneNumber) {
-			logout();
+			(async () => { await logout(); router.replace("/login"); })();
 			// router.replace("/mpin-login");
-			router.replace("/login");
+			return;
 			return;
 		}
 	}, [storedPhoneNumber, logout]);
@@ -199,13 +217,19 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				</View>
 
 				<TouchableOpacity
-					style={styles.button}
-					disabled={isPending}
+					style={[styles.button, (isPending || isLocked) && { opacity: 0.6 }]}
+					disabled={isPending || isLocked}
 					onPress={handleForgotMpin}>
-					<TranslatedText
-						style={styles.buttonText}
-						translationKey={isPending ? "sending" : "sendOtpCode"}
-					/>
+					{isLocked ? (
+						<Text style={styles.buttonText}>
+							{(t("requestOtpLockedCountdown") || "Try again in {time}").replace("{time}", formatMmSs(remainingSeconds))}
+						</Text>
+					) : (
+						<TranslatedText
+							style={styles.buttonText}
+							translationKey={isPending ? "sending" : "sendOtpCode"}
+						/>
+					)}
 				</TouchableOpacity>
 
 				<TouchableOpacity

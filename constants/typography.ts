@@ -3,4 +3,5 @@ export const JAKARTA = {
 	medium: "PlusJakartaSans_500Medium",
 	semibold: "PlusJakartaSans_600SemiBold",
 	bold: "PlusJakartaSans_700Bold",
+	extraBold: "PlusJakartaSans_800ExtraBold",
 } as const;

@@ -4,6 +4,7 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { dark, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { Images } from "@/constants/images";
+import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
@@ -58,6 +59,7 @@ const formatAmount = (amount: number): string => {
 export default function LoanApproved() {
 	const { t } = useTranslation();
 	const router = useRouter();
+	const { userId } = useAuth();
 	const navigation = useTypedNavigation();
 	const queryClient = useQueryClient();
 
@@ -132,7 +134,8 @@ export default function LoanApproved() {
 		isFetching,
 		refetch: refetchLoanOffer,
 	} = useNetworkAwareQuery<LoanOffer>({
-		queryKey: ["loan", "offer", selectedAmount || "default"],
+		queryKey: ["loan", "offer", userId, selectedAmount || "default"],
+		enabled: !!userId,
 		queryFn: async () => {
 			Logger.debug("Fetching loan offer", { selectedAmount: selectedAmount || undefined });
 			const result = await getLoanOffer(selectedAmount || undefined);

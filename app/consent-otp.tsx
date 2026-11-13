@@ -29,6 +29,8 @@ import {
 import { URLS } from "@/utils/api/core/endpoints";
 import { getApiErrorInfo } from "@/utils/api/errors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatRemainingOtpAttemptsMessage, formatWaitTime, getRateLimitInfo, isResendCooldownOnly } from "@/utils/api/core/rateLimit";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { finishConsent, handleConsent409Error } from "@/utils/consent/finishConsent";
 import type { TextInputRef } from "@/types/rn-refs";
 
@@ -215,27 +217,33 @@ export default function ConsentOtpScreen() {
 				text1: res?.message || t("otpSentSuccessfully") || "OTP sent successfully",
 			});
 		} catch (err: any) {
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("Consent OTP resend rate limited", { status: 429 });
+				if (isResendCooldownOnly(rateLimit)) {
+					resendAvailableAtRef.current = Date.now() + rateLimit.retryAfterSeconds * 1000;
+					recalcTimers();
+				} else {
+					lockedUntilRef.current = Date.now() + rateLimit.retryAfterSeconds * 1000;
+					setLockedSeconds(rateLimit.retryAfterSeconds);
+					showRateLimitModal({
+						context: "otp_resend",
+						retryAfterSeconds: rateLimit.retryAfterSeconds,
+						primaryLabel: t("ok") || "OK",
+						onDismiss: () => {},
+					});
+				}
+				return;
+			}
+
 			const info = getApiErrorInfo(err);
 			Logger.debug("Consent OTP resend error", { status: info.status });
 
-			if (info.status === 429) {
-				const retryAfter = (err as any)?.retryAfter || 60;
-				lockedUntilRef.current = Date.now() + retryAfter * 1000;
-				setLockedSeconds(retryAfter);
-				Toast.show({
-					type: "info",
-					text1: t("pleaseTryAgain") || "Please try again",
-					text2:
-						info.detail ||
-						"Too many requests. Please wait before retrying.",
-				});
-			} else {
-				Toast.show({
-					type: "error",
-					text1: t("failedToSendOtp") || "Failed to resend OTP",
-					text2: getFriendlyError(err).message,
-				});
-			}
+			Toast.show({
+				type: "error",
+				text1: t("failedToSendOtp") || "Failed to resend OTP",
+				text2: getFriendlyError(err).message,
+			});
 		} finally {
 			setIsResending(false);
 		}
@@ -279,35 +287,36 @@ export default function ConsentOtpScreen() {
 				return;
 			}
 
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("Consent OTP verify rate limited", { status: 429 });
+				lockedUntilRef.current = Date.now() + rateLimit.retryAfterSeconds * 1000;
+				setLockedSeconds(rateLimit.retryAfterSeconds);
+				showRateLimitModal({
+					context: "otp_verify",
+					retryAfterSeconds: rateLimit.retryAfterSeconds,
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
+				});
+				return;
+			}
+
 			const info = getApiErrorInfo(err);
 			Logger.debug("Consent OTP verify failed", { status: info.status });
 
 			if (info.status === 400) {
 				// Invalid or expired OTP: shake boxes, clear, refocus first
+				const wrongMsg = formatRemainingOtpAttemptsMessage(
+					err,
+					t,
+					t("incorrectOrExpiredOtp") || "Incorrect or expired OTP. Please try again.",
+				);
 				triggerShake();
 				setOtp(["", "", "", ""]);
 				inputRefs.current[0]?.focus();
 				Toast.show({
 					type: "error",
-					text1: t("incorrectOrExpiredOtp") || "Incorrect or expired OTP. Please try again.",
-					visibilityTime: 4000,
-				});
-				return;
-			}
-
-			if (info.status === 429) {
-				// Rate limit lock
-				const retryAfter = (err as any)?.retryAfter || 60;
-				lockedUntilRef.current = Date.now() + retryAfter * 1000;
-				setLockedSeconds(retryAfter);
-				Toast.show({
-					type: "error",
-					text1:
-						info.detail ||
-						(t("tooManyAttemptsWait") || "Too many attempts. Please wait {seconds}s before trying again.").replace(
-							"{seconds}",
-							String(retryAfter),
-						),
+					text1: wrongMsg,
 					visibilityTime: 4000,
 				});
 				return;
@@ -403,10 +412,7 @@ export default function ConsentOtpScreen() {
 					<View style={styles.lockedBanner}>
 						<Ionicons name="time-outline" size={16} color="#DC2626" />
 						<Text style={styles.lockedBannerText}>
-							{(
-								t("tooManyAttemptsWait") ||
-								"Too many attempts. Please wait {seconds}s before trying again."
-							).replace("{seconds}", String(lockedSeconds))}
+							{`${t("rateLimitTryAgainIn") || "Try again in"} ${formatWaitTime(lockedSeconds)}`}
 						</Text>
 					</View>
 				) : null}

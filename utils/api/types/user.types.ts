@@ -280,6 +280,7 @@ export type WorkflowProgress = {
 	rejection_source?: "bre" | "kyc" | "lender" | "admin" | string;
 	rejection_reason?: string | null;
 	can_reapply?: boolean;
+	can_reapply_at?: string | null;
 };
 
 export type UserDashboardResponseType = {
@@ -292,7 +293,9 @@ export type UserDashboardResponseType = {
 	progress_summary: ProgressSummary;
 	loan_summary?: LoanSummary;
 	active_loan?: ActiveLoan | null;
+	is_rejected?: boolean;
 	can_reapply?: boolean | null;
+	can_reapply_at?: string | null;
 };
 
 export type PersonalDetails = {
@@ -447,4 +450,5 @@ export type CanReapplyResponseType = {
 	previous_applications_count: number;
 	reusable_data: ReusableData;
 	rejection_count: number;
+	can_reapply_at?: string | null;
 };

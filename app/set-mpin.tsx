@@ -131,8 +131,8 @@ export default function SetMpin() {
 			console.log("No user_id found, redirecting to login");
 
 			// Use setTimeout to prevent navigation conflicts
-			setTimeout(() => {
-				logout();
+			setTimeout(async () => {
+				await logout();
 				clearOtpVerifyResponse();
 				clearLoginResponse();
 			}, 100);
@@ -191,7 +191,7 @@ export default function SetMpin() {
 					return;
 				}
 
-				router.replace("/loan-application");
+				router.replace("/(tabs)");
 			}, 600);
 
 			setTimeout(() => {

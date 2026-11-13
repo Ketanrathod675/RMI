@@ -24,6 +24,7 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { dark, primary } from "@/constants/Colors";
 import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useAuth } from "@/hooks/useAuth";
 import { useTranslation } from "@/hooks/useTranslation";
 import { getBreFixRoute, getLoanOffer, getUserDashboardData, getWorkflowProgress, StepHref } from "@/utils/api";
 import { getApiErrorInfo } from "@/utils/api/errors";
@@ -42,6 +43,7 @@ const DOT_SIZE = 11;
 
 export default function SearchLoan() {
 	const { t } = useTranslation();
+	const { userId } = useAuth();
 	const insets = useSafeAreaInsets();
 	const navigation = useTypedNavigation();
 	const params = useLocalSearchParams<{ is_repeat_user?: string; next_step?: string }>();
@@ -306,7 +308,7 @@ export default function SearchLoan() {
 					setCurrentStage(1);
 					try {
 						await queryClient.fetchQuery({
-							queryKey: ["loan", "offer", "default"],
+							queryKey: ["loan", "offer", userId, "default"],
 							queryFn: () => getLoanOffer(),
 							staleTime: 0,
 						});

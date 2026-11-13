@@ -1,5 +1,8 @@
 import Logger from "@/utils/logger";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatWaitTime, getRateLimitInfo, isResendCooldownOnly } from "@/utils/api/core/rateLimit";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark, primary, white } from "@/constants/Colors";
@@ -45,15 +48,22 @@ export default function CKYCOTP() {
 	const [resendTimer, setResendTimer] = useState(RESEND_TIME);
 	const [canResend, setCanResend] = useState(false);
 	const resendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const {
+		isLocked: isRateLimitLocked,
+		remainingSeconds: rateLimitRemaining,
+		lockForSeconds,
+		clearLock,
+	} = useRateLimitLock();
 
-	const startResendTimer = () => {
+	const startResendTimer = (durationSeconds = RESEND_TIME) => {
 		if (resendIntervalRef.current) {
 			clearInterval(resendIntervalRef.current);
 			resendIntervalRef.current = null;
 		}
 
+		const safeDuration = Math.max(1, Math.round(durationSeconds));
 		setCanResend(false);
-		setResendTimer(RESEND_TIME - 1);
+		setResendTimer(safeDuration);
 
 		resendIntervalRef.current = setInterval(() => {
 			setResendTimer((prev) => {
@@ -111,7 +121,7 @@ export default function CKYCOTP() {
 	};
 
 	const handleResendOtp = async () => {
-		if (!canResend) return;
+		if (!canResend || isRateLimitLocked) return;
 
 		try {
 			if (__DEV__) {
@@ -123,6 +133,23 @@ export default function CKYCOTP() {
 			}
 			startResendTimer();
 		} catch (e: any) {
+			const rateLimit = getRateLimitInfo(e);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("CKYC OTP resend rate limited", { status: 429 });
+				if (isResendCooldownOnly(rateLimit)) {
+					startResendTimer(rateLimit.retryAfterSeconds);
+				} else {
+					lockForSeconds(rateLimit.retryAfterSeconds);
+					showRateLimitModal({
+						context: "otp_resend",
+						retryAfterSeconds: rateLimit.retryAfterSeconds,
+						primaryLabel: t("ok") || "OK",
+						onDismiss: () => {},
+					});
+				}
+				return;
+			}
+
 			if (__DEV__) {
 				console.warn("⚠️ [CKYC] Resend OTP failed, allowing retry");
 			}
@@ -130,7 +157,7 @@ export default function CKYCOTP() {
 			Toast.show({
 				type: "error",
 				text1: t("alert", "Alert"),
-				text2: e?.detail || e?.message || t("failedToSendOTP", "Failed to send OTP"),
+				text2: getFriendlyError(e).message || t("failedToSendOTP", "Failed to send OTP"),
 			});
 		}
 	};
@@ -151,7 +178,7 @@ export default function CKYCOTP() {
 
 	const handleSubmit = async () => {
 		const otpString = otp.join("");
-		if (otpString.length !== 6) return;
+		if (otpString.length !== 6 || isRateLimitLocked) return;
 		setIsSubmitting(true);
 		setErrorMessage(null);
 
@@ -174,6 +201,7 @@ export default function CKYCOTP() {
 						}
 						setAttemptCount(0);
 						setErrorMessage(null);
+						clearLock();
 						queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 
 						navTarget = async () => {
@@ -222,6 +250,18 @@ export default function CKYCOTP() {
 			);
 		} catch (error: any) {
 			if (error?.isApplicationRejected) return;
+			const rateLimit = getRateLimitInfo(error);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("CKYC OTP verify rate limited", { status: 429 });
+				lockForSeconds(rateLimit.retryAfterSeconds);
+				showRateLimitModal({
+					context: "otp_verify",
+					retryAfterSeconds: rateLimit.retryAfterSeconds,
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
+				});
+				return;
+			}
 			Logger.warn("Operation failed", { code: "operation_failed" });
 			Toast.show({
 				type: "error",
@@ -304,10 +344,10 @@ export default function CKYCOTP() {
 				<TouchableOpacity
 					style={[
 						styles.ctaBtn,
-						(otp.join("").length !== 6 || isSubmitting) && styles.ctaDisabled,
+						(otp.join("").length !== 6 || isSubmitting || isRateLimitLocked) && styles.ctaDisabled,
 					]}
 					onPress={handleSubmit}
-					disabled={otp.join("").length !== 6 || isSubmitting}
+					disabled={otp.join("").length !== 6 || isSubmitting || isRateLimitLocked}
 					activeOpacity={0.85}
 				>
 					{isSubmitting ? (
@@ -326,15 +366,17 @@ export default function CKYCOTP() {
 
 				{/* Resend OTP Button */}
 				<TouchableOpacity
-					style={[styles.resendBtn, !canResend && { opacity: 0.6 }]}
+					style={[styles.resendBtn, (!canResend || isRateLimitLocked) && { opacity: 0.6 }]}
 					onPress={handleResendOtp}
-					disabled={!canResend}
+					disabled={!canResend || isRateLimitLocked}
 					activeOpacity={0.7}
 				>
-					<Text style={[styles.resendText, !canResend && styles.resendDisabled]}>
-						{canResend
-							? t("resendOTP", "Resend OTP")
-							: `${t("resendOTP", "Resend OTP")} (${resendTimer}s)`}
+					<Text style={[styles.resendText, (!canResend || isRateLimitLocked) && styles.resendDisabled]}>
+						{isRateLimitLocked
+							? `${t("rateLimitTryAgainIn") || "Try again in"} ${formatWaitTime(rateLimitRemaining)}`
+							: canResend
+								? t("resendOTP", "Resend OTP")
+								: `${t("resendOTP", "Resend OTP")} (${resendTimer}s)`}
 					</Text>
 				</TouchableOpacity>
 			</View>

@@ -8,6 +8,9 @@ export interface ActivePayment {
 	txnid: string;
 	expires_at: string;
 	amount?: number;
+	status?: string;
+	created_at?: string | null;
+	resumable?: boolean;
 }
 
 export type ActiveLoanState = "due" | "overdue" | "pending_payment" | string;
@@ -16,8 +19,13 @@ export interface ActiveLoan {
 	loan_id: string;
 	loan_number: string;
 	state: ActiveLoanState;
+	status?: string;
+	loan_amount?: number;
+	net_disbursed_amount?: number | null;
 	amount_to_repay: number;
 	overdue_amount?: number;
+	is_overdue?: boolean;
+	disbursement_date?: string | null;
 	repayment_date?: string | null;
 	next_due_date?: string | null;
 	can_pay: boolean;
@@ -37,10 +45,14 @@ export interface InitiateRepaymentPayload {
 export interface InitiateRepaymentResponse {
 	txnid: string;
 	loan_id?: string;
-	amount: number;
-	payment_url: string;
-	expires_at?: string;
+	amount: number | string;
+	payment_url?: string;
+	expires_at?: string | null;
+	idempotent_replayed?: boolean;
+	resumed?: boolean;
+	already_paid?: boolean;
 	status?: string;
+	outstanding_amount?: string | number;
 	message?: string;
 	[key: string]: any;
 }
@@ -67,6 +79,7 @@ export interface VerifyRepaymentData {
 	loan_closed?: boolean;
 	remaining_outstanding?: number;
 	can_reapply?: boolean;
+	can_reapply_at?: string | null;
 	[key: string]: any;
 }
 

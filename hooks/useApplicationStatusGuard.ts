@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
+import { useAuth } from "@/hooks/useAuth";
 import { getWorkflowProgress } from "@/utils/api/services/user.service";
 import {
 	handleApplicationRejected,
@@ -29,6 +30,7 @@ export function useApplicationStatusGuard(options?: {
 }): void {
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const { userId } = useAuth();
 	const [isFocused, setIsFocused] = useState(true);
 	const [isAppActive, setIsAppActive] = useState(AppState.currentState === "active");
 	const isStoppedRef = useRef(false);
@@ -55,12 +57,12 @@ export function useApplicationStatusGuard(options?: {
 	const isEnabled = (options?.enabled ?? true) && isFocused && isAppActive && !isStoppedRef.current;
 
 	const { data, error, refetch } = useQuery({
-		queryKey: ["application-status-guard"],
+		queryKey: ["application-status-guard", userId],
 		queryFn: async () => {
 			const res = await getWorkflowProgress();
 			return res?.data ?? null;
 		},
-		enabled: isEnabled,
+		enabled: isEnabled && !!userId,
 		refetchInterval: (query) => {
 			if (!isEnabled) return false;
 			const currentData = query.state.data;

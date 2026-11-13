@@ -1,4 +1,7 @@
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatRemainingOtpAttemptsMessage, formatWaitTime, getRateLimitInfo, isResendCooldownOnly } from "@/utils/api/core/rateLimit";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
@@ -58,6 +61,12 @@ export default function EnterOTP() {
 		params.sign_in_key ? String(params.sign_in_key) : undefined,
 	);
 	const [isLocked, setIsLocked] = useState(false);
+	const {
+		isLocked: isRateLimitLocked,
+		remainingSeconds: rateLimitRemaining,
+		lockForSeconds,
+		clearLock,
+	} = useRateLimitLock();
 	const [isConsentChecked, setIsConsentChecked] = useState(false);
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [timer, setTimer] = useState(53);
@@ -78,6 +87,7 @@ export default function EnterOTP() {
 				Logger.debug("KFS signed successfully");
 				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 				setIsLocked(false);
+				clearLock();
 
 				// Show success modal
 				scaleAnim.setValue(0);
@@ -110,22 +120,27 @@ export default function EnterOTP() {
 					router.replace({ pathname: "/loan-congratulations", params: { final: "1" } } as any);
 					return;
 				}
+				const wrongMsg = formatRemainingOtpAttemptsMessage(err, t, getFriendlyError(err).message);
 				setOtp(["", "", "", ""]);
 				inputRefs.current[0]?.focus();
 				Toast.show({
 					type: "error",
 					text1: t("otpVerificationFailed") || "OTP verification failed",
-					text2: getFriendlyError(err).message,
+					text2: wrongMsg,
 				});
 				return;
 			}
 
-			if (info.status === 429) {
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("KFS signing verification rate limited", { status: 429 });
 				setIsLocked(true);
-				Toast.show({
-					type: "error",
-					text1: t("alert") || "Notice",
-					text2: getFriendlyError(err).message,
+				lockForSeconds(rateLimit.retryAfterSeconds);
+				showRateLimitModal({
+					context: "otp_verify",
+					retryAfterSeconds: rateLimit.retryAfterSeconds,
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
 				});
 				return;
 			}
@@ -154,6 +169,7 @@ export default function EnterOTP() {
 				setSignInKey(data.sign_in_key);
 			}
 			setIsLocked(false);
+			clearLock();
 			setOtp(["", "", "", ""]);
 			inputRefs.current[0]?.focus();
 			setTimer(53);
@@ -175,6 +191,24 @@ export default function EnterOTP() {
 		},
 		onError: (err: any) => {
 			if ((err as any)?.isApplicationRejected) return;
+			const rateLimit = getRateLimitInfo(err);
+			if (rateLimit.isRateLimited) {
+				Logger.debug("KFS OTP resend rate limited", { status: 429 });
+				if (isResendCooldownOnly(rateLimit)) {
+					setTimer(rateLimit.retryAfterSeconds);
+				} else {
+					setIsLocked(true);
+					lockForSeconds(rateLimit.retryAfterSeconds);
+					showRateLimitModal({
+						context: "otp_resend",
+						retryAfterSeconds: rateLimit.retryAfterSeconds,
+						primaryLabel: t("ok") || "OK",
+						onDismiss: () => {},
+					});
+				}
+				return;
+			}
+
 			const info = getApiErrorInfo(err);
 			Logger.debug("KFS OTP resend error", { status: info.status });
 
@@ -249,17 +283,18 @@ export default function EnterOTP() {
 
 	useEffect(() => {
 		const interval = setInterval(() => {
-			setTimer((prev) => {
-				if (prev <= 1) {
-					setIsLocked(false);
-					return 0;
-				}
-				return prev - 1;
-			});
+			setTimer((prev) => (prev > 0 ? prev - 1 : 0));
 		}, 1000);
 
 		return () => clearInterval(interval);
 	}, []);
+
+	useEffect(() => {
+		if (!isRateLimitLocked && isLocked) {
+			const id = setTimeout(() => setIsLocked(false), 0);
+			return () => clearTimeout(id);
+		}
+	}, [isRateLimitLocked, isLocked]);
 
 	useEffect(() => {
 		if (modalVisible) {
@@ -308,7 +343,7 @@ export default function EnterOTP() {
 
 	const handleContinue = () => {
 		const otpString = otp.join("");
-		if (otpString.length !== 4 || isVerifying || isLocked || !isConsentChecked) {
+		if (otpString.length !== 4 || isVerifying || isLocked || isRateLimitLocked || !isConsentChecked) {
 			return;
 		}
 
@@ -319,7 +354,7 @@ export default function EnterOTP() {
 	};
 
 	const handleResend = () => {
-		if (timer > 0 || isResending) return;
+		if (timer > 0 || isResending || isRateLimitLocked) return;
 		resendOtpMutation();
 	};
 
@@ -330,7 +365,8 @@ export default function EnterOTP() {
 	};
 
 	const isOtpComplete = otp.every((digit) => Boolean(digit && digit.length === 1));
-	const isContinueDisabled = !isOtpComplete || isVerifying || isLocked || !isConsentChecked;
+	const isContinueDisabled =
+		!isOtpComplete || isVerifying || isLocked || isRateLimitLocked || !isConsentChecked;
 
 	return (
 		<View style={styles.container}>
@@ -392,19 +428,21 @@ export default function EnterOTP() {
 
 					{/* Resend Timer */}
 					<TouchableOpacity
-						onPress={timer === 0 && !isResending ? handleResend : undefined}
+						onPress={timer === 0 && !isResending && !isRateLimitLocked ? handleResend : undefined}
 						style={styles.resendContainer}
-						disabled={timer > 0 || isResending}>
+						disabled={timer > 0 || isResending || isRateLimitLocked}>
 						<Text
 							style={[
 								styles.resendText,
-								timer === 0 && !isResending && styles.resendActive,
+								timer === 0 && !isResending && !isRateLimitLocked && styles.resendActive,
 							]}>
-							{isResending
-								? t("resending")
-								: timer === 0
-									? t("resendOTP")
-									: `${t("resendIn")} ${formatTime(timer)}`}
+							{isRateLimitLocked
+								? `${t("rateLimitTryAgainIn") || "Try again in"} ${formatWaitTime(rateLimitRemaining)}`
+								: isResending
+									? t("resending")
+									: timer === 0
+										? t("resendOTP")
+										: `${t("resendIn")} ${formatTime(timer)}`}
 						</Text>
 					</TouchableOpacity>
 

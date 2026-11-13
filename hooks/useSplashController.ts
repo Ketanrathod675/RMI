@@ -4,6 +4,7 @@ import { useAppDispatch } from "@/store";
 import { setStartupCompleted } from "@/store/slices/global";
 import { checkDeviceSecurity, type SecurityBlockReason } from "@/utils/securityCheck";
 import { getStorageItem, removeStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { decode } from "@/utils/encode_decode";
 import { checkAppVersion, type VersionCheckResult } from "@/utils/versionCheckService";
 import * as Font from "expo-font";
 import * as Linking from "expo-linking";
@@ -115,11 +116,11 @@ export function useSplashController(): SplashControllerState {
 					// Start dashboard data behind the splash and share the result with the screen query.
 					// Keep this non-blocking so a slow network never delays splash dismissal.
 					void import("@/utils/api/services/user.service")
-						.then(({ getUserDashboardData }) => queryClient.prefetchQuery({
-							queryKey: ["user", "dashboard"],
+						.then(async ({ getUserDashboardData }) => { const rawUid = await getStorageItem(STORAGE_KEYS["@user-id"]); const uid = rawUid ? decode(rawUid) : ""; if (!uid) return; return queryClient.prefetchQuery({
+							queryKey: ["user", "dashboard", uid],
 							queryFn: getUserDashboardData,
 							staleTime: 30_000,
-						}))
+						}); })
 						.catch((wfErr) => console.warn("[useSplashController] Dashboard prefetch failed:", wfErr));
 				} else {
 					targetRoute = "/login";

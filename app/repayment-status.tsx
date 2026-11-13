@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	BackHandler,
@@ -15,19 +15,30 @@ import { LinearGradient } from "expo-linear-gradient";
 import Logger from "@/utils/logger";
 import { font, height, width } from "@/utils/dimensions";
 import { formatRupees } from "@/utils/repaymentFormatting";
+import { useRepaymentPayment } from "@/hooks/useRepaymentPayment";
 import {
 	useRepaymentVerification,
 	type RepaymentOutcome,
 } from "@/hooks/useRepaymentVerification";
-import type { VerifySource } from "@/utils/paymentVerification";
-import { executeLoanReapply } from "@/utils/reapply";
+import {
+	classify,
+	invalidatePostRepaymentQueries,
+	type VerifySource,
+} from "@/utils/paymentVerification";
+import { clearStoredRepaymentKeys } from "@/utils/repaymentIdempotency";
+import { executeLoanReapply, formatReapplyAvailableDate, isFutureCooldownDate } from "@/utils/reapply";
+import { useAuth } from "@/hooks/useAuth";
+import { useDefault } from "@/hooks/useDefault";
 import { useTranslation } from "@/hooks/useTranslation";
+import { cancelRepaymentPayment } from "@/utils/api/services/repayment.service";
 import { getUserDashboardData } from "@/utils/api/services/user.service";
 
 export default function RepaymentStatusScreen() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const { userId } = useAuth();
 	const { t } = useTranslation();
+	const { language } = useDefault();
 	const params = useLocalSearchParams<{
 		txnid?: string;
 		status?: string;
@@ -41,8 +52,17 @@ export default function RepaymentStatusScreen() {
 			? rawSource
 			: "browser_closed";
 
+	const cachedDashboard = userId
+		? queryClient.getQueryData<any>(["user", "dashboard", userId])
+		: undefined;
+	const { handlePayNow, isInitiating } = useRepaymentPayment({
+		activeLoan: cachedDashboard?.active_loan ?? null,
+	});
+
 	const [isReapplying, setIsReapplying] = useState(false);
 	const [canReapplyFromDash, setCanReapplyFromDash] = useState(false);
+	const [canReapplyAtFromDash, setCanReapplyAtFromDash] = useState<string | null>(null);
+	const cancelledOutcomeRef = useRef<RepaymentOutcome | null>(null);
 
 	// Missing or empty txnid -> redirect home immediately
 	useEffect(() => {
@@ -52,38 +72,84 @@ export default function RepaymentStatusScreen() {
 		}
 	}, [txnid, router]);
 
-	// Hardware back button always routes to home
-	useEffect(() => {
-		const onBackPress = () => {
-			router.replace("/(tabs)");
-			return true;
-		};
-		const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
-		return () => sub.remove();
-	}, [router]);
-
 	const {
 		isVerifying,
 		countdown,
 		outcome,
 		recheck,
 		cancelVerification,
+		markSuccessFromCancel,
 	} = useRepaymentVerification({
 		txnid,
 		initialSource,
 		onSuccess: async (data) => {
 			try {
+				await invalidatePostRepaymentQueries(queryClient);
+			} catch {}
+			try {
 				const dash: any = await getUserDashboardData();
 				if (dash?.can_reapply || data?.can_reapply) {
 					setCanReapplyFromDash(true);
+				}
+				const canReapplyAt =
+					dash?.can_reapply_at ||
+					dash?.workflow_progress?.can_reapply_at ||
+					data?.can_reapply_at ||
+					null;
+				if (canReapplyAt) {
+					setCanReapplyAtFromDash(String(canReapplyAt));
 				}
 			} catch {}
 		},
 	});
 
-	const handleGoHome = useCallback(() => {
+	const handleGoHome = useCallback(async () => {
+		if (outcome?.type === "success" || outcome?.type === "not_completed") {
+			await invalidatePostRepaymentQueries(queryClient);
+		}
 		router.replace("/(tabs)");
-	}, [router]);
+	}, [router, queryClient, outcome?.type]);
+
+	// When entering not_completed (e.g. browser closed without payment), cancel the unattempted
+	// row on the server once so Home returns immediately to normal due/overdue state.
+	useEffect(() => {
+		if (outcome?.type !== "not_completed" || !txnid) return;
+		if (cancelledOutcomeRef.current === outcome) return;
+		cancelledOutcomeRef.current = outcome;
+
+		let ignore = false;
+		cancelRepaymentPayment(txnid)
+			.then(async (res) => {
+				if (ignore) return;
+				const { kind } = classify(res);
+				if (kind === "SUCCESS") {
+					await markSuccessFromCancel(res);
+					return;
+				}
+				if (kind !== "PENDING") {
+					await clearStoredRepaymentKeys();
+				}
+				await invalidatePostRepaymentQueries(queryClient);
+			})
+			.catch(async () => {
+				if (ignore) return;
+				await invalidatePostRepaymentQueries(queryClient).catch(() => {});
+			});
+
+		return () => {
+			ignore = true;
+		};
+	}, [outcome, txnid, markSuccessFromCancel, queryClient]);
+
+	// Hardware back button always routes to home after refreshing queries on success
+	useEffect(() => {
+		const onBackPress = () => {
+			void handleGoHome();
+			return true;
+		};
+		const sub = BackHandler.addEventListener("hardwareBackPress", onBackPress);
+		return () => sub.remove();
+	}, [handleGoHome]);
 
 	const handleReapply = useCallback(async () => {
 		if (isReapplying) return;
@@ -110,6 +176,15 @@ export default function RepaymentStatusScreen() {
 		(amountPaid > 0 && remainingOutstanding <= 0);
 	const canReapply =
 		verifiedData?.can_reapply === true || canReapplyFromDash;
+	const canReapplyAt = verifiedData?.can_reapply_at ?? canReapplyAtFromDash;
+	const isReapplyCooldownFuture = isFutureCooldownDate(canReapplyAt);
+	const formattedReapplyAt = isReapplyCooldownFuture
+		? formatReapplyAvailableDate(canReapplyAt, language)
+		: "";
+	const reapplyAvailableLabel =
+		isReapplyCooldownFuture && formattedReapplyAt
+			? t("reapplyAvailableFrom", "Available from {date}").replace("{date}", formattedReapplyAt)
+			: null;
 
 	return (
 		<SafeAreaView style={styles.safeArea}>
@@ -136,7 +211,10 @@ export default function RepaymentStatusScreen() {
 
 						<TouchableOpacity
 							activeOpacity={0.8}
-							onPress={cancelVerification}
+							onPress={() => {
+								cancelVerification();
+								void handleGoHome();
+							}}
 							style={styles.cancelVerifyBtn}
 						>
 							<Text style={styles.cancelVerifyBtnText}>
@@ -177,15 +255,15 @@ export default function RepaymentStatusScreen() {
 
 						{/* Action Buttons */}
 						<View style={styles.actionsContainer}>
-							{isLoanClosed && canReapply ? (
+							{isLoanClosed && (canReapply || isReapplyCooldownFuture) ? (
 								<TouchableOpacity
 									activeOpacity={0.85}
 									onPress={handleReapply}
-									disabled={isReapplying}
-									style={styles.primaryBtnWrapper}
+									disabled={isReapplying || isReapplyCooldownFuture}
+									style={[styles.primaryBtnWrapper, isReapplyCooldownFuture && { opacity: 0.6 }]}
 								>
 									<LinearGradient
-										colors={["#8AD600", "#5FA800"]}
+										colors={isReapplyCooldownFuture ? ["#6B7280", "#4B5563"] : ["#8AD600", "#5FA800"]}
 										start={{ x: 0.5, y: 0 }}
 										end={{ x: 0.5, y: 1 }}
 										style={styles.primaryBtn}
@@ -195,9 +273,13 @@ export default function RepaymentStatusScreen() {
 										) : (
 											<>
 												<Text style={styles.primaryBtnText}>
-													{t("reapplyForLoan", "Reapply for a Loan")}
+													{isReapplyCooldownFuture && reapplyAvailableLabel
+														? reapplyAvailableLabel
+														: t("reapplyForLoan", "Reapply for a Loan")}
 												</Text>
-												<MaterialCommunityIcons name="arrow-right" size={18} color="#0B1D0E" />
+												{!isReapplyCooldownFuture && (
+													<MaterialCommunityIcons name="arrow-right" size={18} color="#0B1D0E" />
+												)}
 											</>
 										)}
 									</LinearGradient>
@@ -299,8 +381,9 @@ export default function RepaymentStatusScreen() {
 						<View style={styles.actionsContainer}>
 							<TouchableOpacity
 								activeOpacity={0.85}
-								onPress={handleGoHome}
-								style={styles.primaryBtnWrapper}
+								disabled={isInitiating}
+								onPress={handlePayNow}
+								style={[styles.primaryBtnWrapper, isInitiating && { opacity: 0.75 }]}
 							>
 								<LinearGradient
 									colors={["#8AD600", "#5FA800"]}
@@ -308,9 +391,13 @@ export default function RepaymentStatusScreen() {
 									end={{ x: 0.5, y: 1 }}
 									style={styles.primaryBtn}
 								>
-									<Text style={styles.primaryBtnText}>
-										{t("tryAgain", "Try Again")}
-									</Text>
+									{isInitiating ? (
+										<ActivityIndicator size="small" color="#0B1D0E" />
+									) : (
+										<Text style={styles.primaryBtnText}>
+											{t("tryAgain", "Try Again")}
+										</Text>
+									)}
 								</LinearGradient>
 							</TouchableOpacity>
 

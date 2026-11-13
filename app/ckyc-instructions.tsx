@@ -9,6 +9,9 @@ import { Images } from "@/constants/images";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { getRateLimitInfo } from "@/utils/api/core/rateLimit";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { getAddressPrefill, getCkycStatus, getSelfieStatus, getWorkflowProgress, sendCkycOtp, uploadSelfie } from "@/utils/api";
 import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
 import { updateUserSelfie } from "@/utils/selfie";
@@ -43,6 +46,7 @@ export default function CKYCInstructions() {
 	const [pickedImage, setPickedImage] = useState<string | null>(null);
 	const [showCamera, setShowCamera] = useState(false);
 	const [isProceedingToCkyc, setIsProceedingToCkyc] = useState(false);
+	const { isLocked: isCkycLocked, remainingSeconds: ckycLockSeconds, lockForSeconds: lockCkycOtp } = useRateLimitLock();
 	const [isLoadingCkyc, setIsLoadingCkyc] = useState(true);
 	const [isFaceMatching, setIsFaceMatching] = useState(false);
 	const [retakeCount, setRetakeCount] = useState(0);
@@ -528,6 +532,17 @@ export default function CKYCInstructions() {
 		} catch (error: any) {
 			if (!isMounted.current) return;
 			if (error?.isApplicationRejected) return;
+			const rateInfo = getRateLimitInfo(error);
+			if (rateInfo.isRateLimited) {
+				lockCkycOtp(rateInfo.retryAfterSeconds);
+				showRateLimitModal({
+					retryAfterSeconds: rateInfo.retryAfterSeconds,
+					context: "otp_request",
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
+				});
+				return;
+			}
 			const msg = getFriendlyError(error).message || "";
 			if (msg.toLowerCase().includes("digilocker")) {
 				router.replace("/digilocker-kyc" as any);
@@ -624,11 +639,20 @@ export default function CKYCInstructions() {
 					</View>
 
 					<TouchableOpacity
-						style={[styles.ctaBtn, isProceedingToCkyc && { opacity: 0.7 }]}
+						style={[styles.ctaBtn, (isProceedingToCkyc || isCkycLocked) && { opacity: 0.7 }]}
 						onPress={handleFinalProceed}
-						disabled={isProceedingToCkyc}>
+						disabled={isProceedingToCkyc || isCkycLocked}>
 						{isProceedingToCkyc ? (
 							<ActivityIndicator size="small" color={dark} />
+						) : isCkycLocked ? (
+							<View style={styles.ctaBtnContentRow}>
+								<Text style={styles.ctaBtnText}>
+									{(t("requestOtpLockedCountdown") || "Try again in {time}").replace(
+										"{time}",
+										`${String(Math.floor(ckycLockSeconds / 60)).padStart(2, "0")}:${String(ckycLockSeconds % 60).padStart(2, "0")}`,
+									)}
+								</Text>
+							</View>
 						) : (
 							<View style={styles.ctaBtnContentRow}>
 								<TranslatedText style={styles.ctaBtnText} translationKey="proceedToLiveKYC" />

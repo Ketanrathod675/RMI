@@ -1,4 +1,9 @@
 import { useMountedRef } from "@/hooks/useMountedRef";
+import {
+	extractFieldErrors,
+	mapBackendFieldErrors,
+	PROFESSIONAL_DETAILS_FIELD_MAP,
+} from "@/utils/api/core/fieldErrors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { Select, StickyFormFooter, type SelectOption } from "@/components";
@@ -276,14 +281,14 @@ export default function ProfessionalDetails() {
 			})
 			: defaultLoanPurposeOptions;
 
-	const { applicantFrom } = useAuth();
+	const { applicantFrom, userId } = useAuth();
 	const { runStep, runStepThenNavigate } = useJourneyLoader();
 
 	// HB Partner API prefill
 	const { data: hbEmploymentData } = useNetworkAwareQuery({
-		queryKey: ["employment-details-hb-partner"],
+		queryKey: ["employment-details-hb-partner", userId],
 		queryFn: getEmploymentDetailsHbPartner,
-		enabled: applicantFrom === "HB",
+		enabled: applicantFrom === "HB" && !!userId,
 		retry: (failureCount, error: any) => {
 			if (error?.response?.status === 404) return false;
 			return failureCount < 2;
@@ -531,10 +536,58 @@ export default function ProfessionalDetails() {
 				}
 			}
 
+			const { fields: extractedFields, general: generalError } = extractFieldErrors(err);
+			const mappedErrors = mapBackendFieldErrors(
+				extractedFields,
+				PROFESSIONAL_DETAILS_FIELD_MAP,
+			);
+			const mappedEntries = Object.entries(mappedErrors);
+			if (mappedEntries.length > 0) {
+				setErrors((prev) => ({ ...prev, ...mappedErrors }));
+				const orderedKeys =
+					formData.employmentType === "salaried"
+						? [
+								"residenceStatus",
+								"employmentType",
+								"companyType",
+								"companyName",
+								"designation",
+								"incomeRange",
+								"modeOfSalary",
+								"reasonForLoan",
+								"preferredLanguage",
+						  ]
+						: [
+								"residenceStatus",
+								"employmentType",
+								"natureOfBusiness",
+								"typeOfIndustry",
+								"incomeRange",
+								"reasonForLoan",
+								"preferredLanguage",
+						  ];
+				const firstKey = scrollToFirstError(mappedErrors, orderedKeys, {
+					companyName: companyNameRef,
+					designation: designationRef,
+				});
+				const firstMsg =
+					(firstKey ? mappedErrors[firstKey as keyof typeof mappedErrors] : undefined) ||
+					mappedEntries[0]?.[1] ||
+					safeDetail;
+				Toast.show({
+					type: "error",
+					text1: t("correctHighlightedDetails", "Please correct the highlighted details"),
+					text2: firstMsg || t("pleaseRetryPayment", "Please try again"),
+					visibilityTime: 5000,
+				});
+				return;
+			}
+
 			Toast.show({
 				type: "error",
 				text1: t("failedToSubmitEmploymentDetails", "Failed to submit details"),
-				text2: safeDetail || t("pleaseRetryPayment", "Please try again"),
+				text2: generalError || safeDetail || t("pleaseRetryPayment", "Please try again"),
+				visibilityTime: 5000,
 			});
 		},
 	});

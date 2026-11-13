@@ -4,7 +4,8 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useSignin } from "@/hooks/useSignin";
 import { useTranslation } from "@/hooks/useTranslation";
-import { axios, getUserDashboardData, StepHref, URLS } from "@/utils/api";
+import { axios, getUserDashboardData, URLS } from "@/utils/api";
+import { resolvePostPermissionsRoute } from "@/utils/postLoginRouting";
 import { font, height, width } from "@/utils/dimensions";
 import { removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
@@ -198,75 +199,29 @@ export default function RequestPermissions() {
 			}
 		}
 
-		// Step 5: Determine next screen dynamically from login signal or Dashboard data
+		// Step 5: Determine next screen safely (never route blocked/rejected users to Basic Details)
 		const verifyOtpData = (otpVerifyResponse as any) || (loginResponse as any);
 		if (verifyOtpData?.next_step === "dashboard" || verifyOtpData?.is_profile_completed === true) {
-			if (__DEV__) {
-			}
 			setIsLoading(false);
 			router.replace("/(tabs)");
 			return;
 		}
 
-		if (verifyOtpData?.next_step === "basic_details" || verifyOtpData?.is_profile_completed === false) {
-			if (__DEV__) {
-			}
-			setIsLoading(false);
-			router.replace("/loan-application" as any);
-			return;
-		}
-
 		try {
-			if (__DEV__) {
-			}
 			const dashboardData = await getUserDashboardData();
-			const currentStep = dashboardData?.workflow_progress?.current_step;
-			const dashboardType = dashboardData?.dashboard_type;
-
-			if (__DEV__) {
-			}
-
 			setIsLoading(false);
-
-			const overallStatus = dashboardData?.workflow_progress?.overall_status;
-			if (overallStatus === "rejected") {
-				router.replace("/no-approved-amount");
+			const nextPath = resolvePostPermissionsRoute(verifyOtpData, dashboardData);
+			if (nextPath === "/aadhaar-kyc") {
+				router.replace({
+					pathname: "/aadhaar-kyc",
+					params: { nextStep: "digilocker" },
+				} as any);
 				return;
 			}
-
-			// 1. If user has active loan dashboard or workflow is completed
-			if (dashboardType === "loan_dashboard" || overallStatus === "completed" || Boolean(dashboardData?.active_loan)) {
-				if (__DEV__) {
-				}
-				router.replace("/(tabs)");
-				return;
-			}
-
-			// 3. If user is in workflow, navigate to specific step
-			if (currentStep && StepHref[currentStep as keyof typeof StepHref]) {
-				const targetPath = StepHref[currentStep as keyof typeof StepHref];
-				if (__DEV__) {
-				}
-				if (currentStep === "digilocker") {
-					router.replace({
-						pathname: "/aadhaar-kyc",
-						params: { nextStep: "digilocker" },
-					} as any);
-				} else {
-					router.replace(targetPath as any);
-				}
-				return;
-			}
-
-			// Fallback: Default to loan-application (Personal Details)
-			if (__DEV__) {
-			}
-			router.replace("/loan-application" as any);
-		} catch (dashError) {
-			if (__DEV__) {
-			}
+			router.replace(nextPath as any);
+		} catch {
 			setIsLoading(false);
-			router.replace("/loan-application" as any);
+			router.replace("/(tabs)");
 		}
 	};
 

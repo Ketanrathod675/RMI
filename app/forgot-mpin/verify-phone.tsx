@@ -1,5 +1,8 @@
 import Logger from "@/utils/logger";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { getRateLimitInfo, isResendCooldownOnly } from "@/utils/api/core/rateLimit";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { TermsAndPolicy } from "@/components";
 import { TranslatedText } from "@/components/TranslatedText";
 import { dark, dark_primary, primary, white } from "@/constants/Colors";
@@ -19,6 +22,7 @@ import Toast from "react-native-toast-message";
 export default function VerifyPhone() {
 	const { phoneNumber, setOtpVerified, otpVerified, countryCode } = useContext(ForgotMpinContext);
 	const { t } = useTranslation();
+	const { remainingSeconds: rateLimitSeconds, isLocked: isRateLimitedLock, lockForSeconds: lock } = useRateLimitLock();
 	const [otp, setOtp] = useState(["", "", "", ""]);
 	const [error, setError] = useState("");
 	const [isChecked, setIsChecked] = useState(true);
@@ -64,7 +68,7 @@ export default function VerifyPhone() {
 			return response?.data;
 		},
 		onSuccess: () => {
-			console.log("Resend OTP success");
+			Logger.info("Forgot MPIN resend OTP success");
 			setCountdown(60);
 			Toast.show({
 				type: "success",
@@ -75,7 +79,23 @@ export default function VerifyPhone() {
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-Logger.warn("Operation failed", { code: "operation_failed" });
+			const rawRate = getRateLimitInfo(err);
+			const rateInfo = rawRate.isRateLimited ? rawRate : getRateLimitInfo(error);
+			if (rateInfo.isRateLimited) {
+				if (isResendCooldownOnly(rateInfo)) {
+					setCountdown(rateInfo.retryAfterSeconds);
+				} else {
+					lock(rateInfo.retryAfterSeconds);
+					showRateLimitModal({
+						retryAfterSeconds: rateInfo.retryAfterSeconds,
+						context: "otp_request",
+						primaryLabel: t("ok") || "OK",
+						onDismiss: () => {},
+					});
+				}
+				return;
+			}
+			Logger.warn("Forgot MPIN resend OTP failed");
 			Toast.show({
 				type: "error",
 				text1: t("failedToSendOtp"),
@@ -91,7 +111,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 			return response?.data;
 		},
 		onSuccess: () => {
-Logger.warn("Operation failed", { code: "operation_failed" });
+			Logger.info("Forgot MPIN OTP verified");
 			setOtpVerified(true);
 			Toast.show({
 				type: "success",
@@ -106,7 +126,19 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		},
 		onError: (err, variables, ctx) => {
 			const { error } = errorHandler(err, variables, ctx);
-Logger.warn("Operation failed", { code: "operation_failed" });
+			const rawRate = getRateLimitInfo(err);
+			const rateInfo = rawRate.isRateLimited ? rawRate : getRateLimitInfo(error);
+			if (rateInfo.isRateLimited) {
+				lock(rateInfo.retryAfterSeconds);
+				showRateLimitModal({
+					retryAfterSeconds: rateInfo.retryAfterSeconds,
+					context: "otp_verify",
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
+				});
+				return;
+			}
+			Logger.warn("Forgot MPIN OTP verify failed");
 			Toast.show({
 				type: "error",
 				text1: t("otpVerificationFailed"),
@@ -162,6 +194,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	};
 
 	const handleVerifyOtp = () => {
+		if (isRateLimitedLock) return;
 		if (otp.some((d) => d === "")) {
 			setError(t("enterValid4DigitOtp"));
 			return;
@@ -191,7 +224,7 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	};
 
 	const handleResendOtp = () => {
-		if (countdown > 0 || isResendOtpPending) return;
+		if (countdown > 0 || isResendOtpPending || isRateLimitedLock) return;
 
 		resendOtp({ phone_number: phoneNumber, otp: "", verification_type: "forgot_mpin" });
 	};
@@ -234,7 +267,11 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 
 		<TranslatedText style={styles.otpLabel} translationKey="didntReceiveOTP" />
 
-			{countdown > 0 ? (
+			{isRateLimitedLock ? (
+				<Text style={[styles.resendText, { opacity: 0.6, textDecorationLine: "none" }]}>
+					{t("rateLimitTryAgainIn")} {formatCountdown(rateLimitSeconds)}
+				</Text>
+			) : countdown > 0 ? (
 				<Text style={styles.resendText}>
 					<TranslatedText translationKey="resendIn" /> {formatCountdown(countdown)}s
 				</Text>
@@ -275,14 +312,23 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		</View>
 
 			<TouchableOpacity
-				style={[styles.button, isVerifyingOtp && { opacity: 0.7 }]}
+				style={[styles.button, (isVerifyingOtp || isRateLimitedLock) && { opacity: 0.7 }]}
 				onPress={handleVerifyOtp}
-				disabled={isVerifyingOtp}>
-				<TranslatedText
-					style={styles.buttonText}
-			translationKey={isVerifyingOtp ? "verifying" : "continue"}
-			/>
-		</TouchableOpacity>
+				disabled={isVerifyingOtp || isRateLimitedLock}>
+				{isRateLimitedLock ? (
+					<Text style={styles.buttonText}>
+						{(t("requestOtpLockedCountdown") || "Try again in {time}").replace(
+							"{time}",
+							formatCountdown(rateLimitSeconds),
+						)}
+					</Text>
+				) : (
+					<TranslatedText
+						style={styles.buttonText}
+						translationKey={isVerifyingOtp ? "verifying" : "continue"}
+					/>
+				)}
+			</TouchableOpacity>
 	</ForgotMpinLayout>
 
 	{/* Privacy Policy Modal */}

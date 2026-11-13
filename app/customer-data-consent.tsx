@@ -21,6 +21,10 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { initiateConsentOtp } from "@/utils/api/services/consent.service";
 import { getUserProfile } from "@/utils/api/services/user.service";
 import { getLenders, triggerPostKycAllocationAdapter } from "@/utils/api/services/lender.service";
+import { getRateLimitInfo } from "@/utils/api/core/rateLimit";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { useTranslation } from "@/hooks/useTranslation";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { getApiErrorInfo } from "@/utils/api/errors";
 import { finishConsent, handleConsent409Error } from "@/utils/consent/finishConsent";
@@ -205,6 +209,8 @@ export default function CustomerDataConsentScreen() {
 
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const { t } = useTranslation();
+	const { isLocked, remainingSeconds, lockForSeconds: lock } = useRateLimitLock();
 
 	const [consents, setConsents] = useState<ConsentPayload>({
 		kycVerification: false,
@@ -389,6 +395,17 @@ export default function CustomerDataConsentScreen() {
 				// Let axios interceptor handle 401
 				return;
 			}
+			const rateInfo = getRateLimitInfo(err);
+			if (rateInfo.isRateLimited) {
+				lock(rateInfo.retryAfterSeconds);
+				showRateLimitModal({
+					retryAfterSeconds: rateInfo.retryAfterSeconds,
+					context: "otp_request",
+					primaryLabel: t("ok") || "OK",
+					onDismiss: () => {},
+				});
+				return;
+			}
 			Toast.show({
 				type: "error",
 				text1: getFriendlyError(err).message,
@@ -504,11 +521,11 @@ export default function CustomerDataConsentScreen() {
 					<View style={styles.actionsContainer}>
 						<Pressable
 							onPress={handleAgreeAndContinue}
-							disabled={!allChecked || isSubmitting}
+							disabled={!allChecked || isSubmitting || isLocked}
 							style={({ pressed }) => [
 								styles.agreeButton,
-								(!allChecked || isSubmitting) && styles.agreeButtonDisabled,
-								pressed && allChecked && !isSubmitting && styles.agreeButtonPressed,
+								(!allChecked || isSubmitting || isLocked) && styles.agreeButtonDisabled,
+								pressed && allChecked && !isSubmitting && !isLocked && styles.agreeButtonPressed,
 							]}
 						>
 							{isSubmitting ? (
@@ -516,7 +533,14 @@ export default function CustomerDataConsentScreen() {
 							) : (
 								<Icon name="lock" size={18} color="#FFFFFF" />
 							)}
-							<Text style={styles.agreeButtonText}>I Agree & Continue</Text>
+							<Text style={styles.agreeButtonText}>
+								{isLocked
+									? (t("requestOtpLockedCountdown") || "Try again in {time}").replace(
+											"{time}",
+											`${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`,
+										)
+									: "I Agree & Continue"}
+							</Text>
 						</Pressable>
 
 						<Pressable

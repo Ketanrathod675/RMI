@@ -3,7 +3,7 @@ import CONFIG from "@/utils/config";
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 const priorities: Record<LogLevel | "silent", number> = { debug: 0, info: 1, warn: 2, error: 3, silent: Number.POSITIVE_INFINITY };
-const sensitiveKey = /(?:access|refresh|push|fcm)[_-]?token|sign[_-]?in[_-]?key|authorization|password|mpin|\botp\b|pan(?:[_-]?(?:card|number))?|aadhaar|email|phone(?:[_-]?number)?|mobile|user[_-]?id|ssn|account(?:[_-]?(?:number|no))?|ifsc|selfie|document|cookie/i;
+const sensitiveKey = /(?:access|refresh|push|fcm)[_-]?token|sign[_-]?in[_-]?key|authorization|password|mpin|\botp\b|pan(?:[_-]?(?:card|number))?|aadhaar|email|phone(?:[_-]?number)?|mobile|(?:user|lead)[_-]?id|ssn|account(?:[_-]?(?:number|no))?|ifsc|selfie|document|cookie|idempotency[_-]?key|x-idempotency-key/i;
 
 const redact = (value: unknown, seen = new WeakSet<object>()): unknown => {
 	if (value === null || typeof value !== "object") return value;

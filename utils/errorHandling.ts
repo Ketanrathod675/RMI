@@ -11,12 +11,50 @@ let installed = false;
 let lastToastAt = 0;
 let sentryEnabled = false;
 
+const SENSITIVE_KEY_RE =
+	/phone|pan|aadhaar|account|email|token|authorization|idempotency[_-]?key|cookie/i;
+
 const redact = (input: string) => input
 	.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
 	.replace(/\b\d{10,16}\b/g, "[number]")
 	.replace(/\b[A-Z]{5}\d{4}[A-Z]\b/gi, "[pan]")
 	.replace(/\b\d{4}[ -]?\d{4}[ -]?\d{4}\b/g, "[aadhaar]")
-	.replace(/Bearer\s+\S+/gi, "Bearer [token]");
+	.replace(/Bearer\s+\S+/gi, "Bearer [token]")
+	.replace(/(["']?idempotency[_-]?key["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, "$1[redacted]");
+
+const scrubValue = (value: unknown, seen = new WeakSet<object>()): unknown => {
+	if (typeof value === "string") return redact(value);
+	if (value === null || typeof value !== "object") return value;
+	if (seen.has(value)) return "[circular]";
+	seen.add(value);
+	if (Array.isArray(value)) return value.map((item) => scrubValue(item, seen));
+	return Object.fromEntries(
+		Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+			k,
+			SENSITIVE_KEY_RE.test(k) ? "[redacted]" : scrubValue(v, seen),
+		]),
+	);
+};
+
+export function sanitizeSentryBreadcrumb<T extends Record<string, any>>(breadcrumb: T): T {
+	if (!breadcrumb || typeof breadcrumb !== "object") return breadcrumb;
+	return scrubValue(breadcrumb) as T;
+}
+
+export function sanitizeSentryEvent<T extends Record<string, any>>(event: T): T {
+	if (!event || typeof event !== "object") return event;
+	const copy: any = { ...event, user: undefined };
+	if (copy.request) {
+		copy.request = {
+			...copy.request,
+			data: undefined,
+			cookies: undefined,
+			headers: undefined,
+			query_string: undefined,
+		};
+	}
+	return scrubValue(copy) as T;
+}
 
 export function reportError(error: unknown, context: string) {
 	if (!sentryEnabled) return;
@@ -72,20 +110,10 @@ export function installGlobalErrorHandlers() {
 			tracesSampleRate: 0,
 			environment: process.env.EXPO_PUBLIC_API_ENV || (__DEV__ ? "development" : "production"),
 			beforeSend(event) {
-				event.user = undefined;
-				if (event.request) {
-					event.request.data = undefined;
-					event.request.cookies = undefined;
-					event.request.headers = undefined;
-					event.request.query_string = undefined;
-				}
-				const scrub = (value: unknown): unknown => {
-					if (typeof value === "string") return redact(value);
-					if (Array.isArray(value)) return value.map(scrub);
-					if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, /phone|pan|aadhaar|account|email|token|authorization/i.test(k) ? "[redacted]" : scrub(v)]));
-					return value;
-				};
-				return scrub(event) as typeof event;
+				return sanitizeSentryEvent(event as Record<string, any>) as typeof event;
+			},
+			beforeBreadcrumb(breadcrumb) {
+				return sanitizeSentryBreadcrumb(breadcrumb as Record<string, any>) as typeof breadcrumb;
 			},
 		});
 		sentryEnabled = true;

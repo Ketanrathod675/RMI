@@ -1,7 +1,10 @@
 import { getHandshakeStatus, type AssessmentChecks } from "@/utils/api";
+import { isEmailFixable, isPanFixable } from "@/utils/assessmentChecksFlow";
 import Logger from "@/utils/logger";
 import { useCallback, useEffect, useRef } from "react";
 import { AppState } from "react-native";
+
+export { isEmailFixable, isPanFixable };
 
 export const ASSESSMENT_CHECKS_BACKOFF_DELAYS = [
 	2000, 3000, 5000, 5000, 8000, 8000, 10000, 10000,
@@ -218,26 +221,6 @@ export function pollAssessmentChecks(
 
 	return raceWithAbort(entry.promise, signal);
 }
-
-export const isEmailFixable = (checks: AssessmentChecks | null | undefined): boolean => {
-	if (!checks) return false;
-	return (
-		(checks.status === "rejected" || checks.status === "needs_update") &&
-		checks.failed_rule === "email" &&
-		Boolean(checks.can_update_email) &&
-		checks.remaining_email_updates > 0
-	);
-};
-
-export const isPanFixable = (checks: AssessmentChecks | null | undefined): boolean => {
-	if (!checks) return false;
-	return (
-		(checks.status === "rejected" || checks.status === "needs_update") &&
-		checks.failed_rule === "pan_card" &&
-		Boolean(checks.can_update_pan) &&
-		checks.remaining_pan_updates > 0
-	);
-};
 
 export function useAssessmentChecksController() {
 	const controllerRef = useRef<AbortController>(new AbortController());

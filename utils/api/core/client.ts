@@ -6,6 +6,7 @@ import Logger from "@/utils/logger";
 import SecureStorage from "@/utils/secure-storage";
 import {
 	AuthKeys,
+	clearIdempotencyKeys,
 	RemovableKeys,
 	removeMultipleStorageItems,
 	setStorageItem,
@@ -18,7 +19,7 @@ import { Alert } from "react-native";
 import Toast from "react-native-toast-message";
 import { API_URL } from "./config";
 import { URLS } from "./endpoints";
-import { isSessionReplacedError } from "./sessionErrors";
+import { isSessionExpirySuppressed, isSessionReplacedError } from "./sessionErrors";
 import { getFriendlyError } from "./friendlyError";
 import { isApplicationRejectedError, triggerGlobalApplicationRejected } from "@/utils/applicationRejection";
 
@@ -29,6 +30,7 @@ let sessionReplacedPromise: Promise<void> | null = null;
 let sessionReplacedAlertTimestamp = 0;
 
 const handleSessionReplaced = async (): Promise<void> => {
+	if (isSessionExpirySuppressed()) return;
 	if (sessionReplacedPromise) return sessionReplacedPromise;
 
 	sessionReplacedPromise = (async () => {
@@ -38,7 +40,11 @@ const handleSessionReplaced = async (): Promise<void> => {
 			sessionReplacedAlertTimestamp = now;
 		}
 
-		await Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
+		await Promise.all([
+			SecureStorage.clearAllTokens(),
+			removeMultipleStorageItems(RemovableKeys),
+			clearIdempotencyKeys(),
+		]);
 		store.dispatch(clearAuth());
 		router.replace("/login");
 
@@ -105,10 +111,13 @@ const showNetworkUnavailableToast = async (error?: unknown) => {
 };
 
 const expireSession = async (): Promise<void> => {
+	if (isSessionExpirySuppressed()) return;
 	if (sessionExpiryPromise) return sessionExpiryPromise;
 
 	sessionExpiryPromise = (async () => {
+		if (isSessionExpirySuppressed()) return;
 		await Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(AuthKeys)]);
+		if (isSessionExpirySuppressed()) return;
 		await showLocalizedToast(Toast.show, {
 			type: "error",
 			text1Key: "sessionExpired",
@@ -228,6 +237,10 @@ axios.interceptors.response.use(
 			) &&
 			error.response?.status === 401
 		) {
+			if (isSessionExpirySuppressed()) {
+				return Promise.reject(error);
+			}
+
 			// Check if kicked off because another device logged in
 			if (isSessionReplacedError(error)) {
 				await handleSessionReplaced();
@@ -246,6 +259,9 @@ axios.interceptors.response.use(
 						return axios(originalRequest);
 					}
 				} catch (refreshError: any) {
+					if (isSessionExpirySuppressed()) {
+						return Promise.reject(error);
+					}
 					Logger.error("Background token refresh failed", { code: refreshError?.response?.status ?? refreshError?.code ?? "unknown" });
 					// If the refresh call itself returned SESSION_REPLACED, handle that directly
 					// without triggering a generic session expired toast
@@ -258,6 +274,10 @@ axios.interceptors.response.use(
 					return Promise.reject(refreshError);
 					}
 				}
+			}
+
+			if (isSessionExpirySuppressed()) {
+				return Promise.reject(error);
 			}
 
 			// A shared promise prevents multiple simultaneous 401s from showing duplicate logout UI.

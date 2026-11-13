@@ -43,7 +43,11 @@ export interface DevMockOptions {
 		| "error";
 	activeLoan?: any;
 	canReapply?: boolean;
-	repaymentMockOutcome?: "success" | "delayed_success" | "failure";
+	repaymentMockOutcome?: "success" | "delayed_success" | "failure" | "not_started";
+	repaymentInitiateScenario?: "normal" | "resumed" | "already_paid";
+	repaymentCancelOutcome?: "CANCELLED" | "SUCCESS" | "PENDING";
+	bankPickerMockMode?: 0 | 1 | 3 | "blacklisted_error" | "not_accepted_409";
+	simulateAssessmentReplayPaid?: boolean;
 }
 
 let _mockOptions: DevMockOptions = {
@@ -73,6 +77,27 @@ let _brePollCount = 0;
 let _remainingPanUpdates = 2;
 let _remainingEmailUpdates = 2;
 let _mockProfessionalDetails: any = null;
+const _mockAssessmentIdempotencyStore = new Map<string, { fingerprint: string; payload: any }>();
+
+export function resetDevMockAssessmentIdempotencyCache(): void {
+	_mockAssessmentIdempotencyStore.clear();
+}
+
+function readMockHeader(headers: any, name: string): string | undefined {
+	if (!headers) return undefined;
+	if (typeof headers.get === "function") {
+		const val = headers.get(name) ?? headers.get(name.toLowerCase());
+		if (typeof val === "string" && val.trim()) return val.trim();
+	}
+	if (typeof headers === "object") {
+		for (const key of Object.keys(headers)) {
+			if (key.toLowerCase() === name.toLowerCase() && typeof headers[key] === "string") {
+				return headers[key].trim();
+			}
+		}
+	}
+	return undefined;
+}
 
 type MockListener = (enabled: boolean) => void;
 const _listeners = new Set<MockListener>();
@@ -405,6 +430,7 @@ export async function handleDevMockRequest(
 					can_reapply: true,
 					reason: null,
 					days_remaining: 0,
+					can_reapply_at: null,
 				},
 				status: 200,
 				statusText: "OK",
@@ -420,6 +446,9 @@ export async function handleDevMockRequest(
 					success: true,
 					workflow_id: "mock_reapply_wf",
 					current_step: "assessment_fee",
+					next_step: "professional_details",
+					lead_id: "mock_reapply_lead",
+					message: "Reapplication started",
 				},
 				status: 200,
 				statusText: "OK",
@@ -1383,21 +1412,69 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	// ─── 15. Endpoint: payment/initiate-assessment-fee & payments/initiate ───
 	if ((url.includes("initiate-assessment-fee") || url.includes("payments/initiate")) && method === "post") {
 		await delay(400);
+		let parsedBody: any = {};
+		try {
+			parsedBody = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data || {};
+		} catch {
+			parsedBody = config.data || {};
+		}
+
+		const idemKey = readMockHeader(config.headers, "Idempotency-Key");
+		const fingerprint = `${parsedBody.lead_id || ""}|${(parsedBody.coupon_code || "").toString().trim().toUpperCase()}`;
+
+		if (idemKey && _mockAssessmentIdempotencyStore.has(idemKey)) {
+			const cached = _mockAssessmentIdempotencyStore.get(idemKey)!;
+			if (cached.fingerprint !== fingerprint) {
+				const err = new Error("Idempotency key was previously used with a different payment amount.") as any;
+				err.response = {
+					status: 409,
+					data: { detail: "Idempotency key was previously used with a different payment amount." },
+					headers: {},
+					config,
+				};
+				throw err;
+			}
+			const replayPayload = _mockOptions.simulateAssessmentReplayPaid
+				? {
+						txnid: cached.payload.txnid,
+						amount: cached.payload.amount,
+						status: "SUCCESS",
+						order_id: cached.payload.order_id,
+						idempotent_replayed: true,
+						message: "Payment already completed [MOCK REPLAY]",
+					}
+				: {
+						...cached.payload,
+						idempotent_replayed: true,
+					};
+			return {
+				data: replayPayload,
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
 		_easebuzzPollCount = 0; // Reset poll counter for new payment
-Logger.warn("Operation failed", { code: "operation_failed" });
 		const mockOrderId = "AF_" + Date.now();
 		const mockTxnId = "txnid_mock_" + Date.now();
+		const payload = {
+			access_key: "mock_eb_access_key_" + Date.now(),
+			payment_url: `https://testpay.easebuzz.in/pay/mock_access_key_${Date.now()}`,
+			txnid: mockTxnId,
+			amount: 826.0,
+			status: "ACTIVE",
+			order_id: mockOrderId,
+			message: "Payment initiated successfully [MOCK MODE]",
+		};
+
+		if (idemKey) {
+			_mockAssessmentIdempotencyStore.set(idemKey, { fingerprint, payload });
+		}
 
 		return {
-			data: {
-				access_key: "mock_eb_access_key_" + Date.now(),
-				payment_url: `https://testpay.easebuzz.in/pay/mock_access_key_${Date.now()}`,
-				txnid: mockTxnId,
-				amount: 826.0,
-				status: "ACTIVE",
-				order_id: mockOrderId,
-				message: "Payment initiated successfully [MOCK MODE]",
-			},
+			data: payload,
 			status: 200,
 			statusText: "OK",
 			headers: {},
@@ -2746,29 +2823,56 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}
 
-	// ─── 41. Endpoint: bank-details/bank-accounts (GET) ─────────────────────
-	if ((url.includes("bank-details/bank-accounts") || url.includes("user-all-accounts")) && method === "get") {
+	// ─── 41. Endpoint: bank-details (GET: 0, 1, or 3 accounts) ──────────────
+	if (
+		(url.split("?")[0].endsWith("bank-details") ||
+			url.includes("bank-details/bank-accounts") ||
+			url.includes("user-all-accounts")) &&
+		method === "get"
+	) {
 		await delay(300);
-Logger.warn("Operation failed", { code: "operation_failed" });
+		const mode = _mockOptions.bankPickerMockMode;
+		const allMockAccounts = [
+			{
+				id: "mock_acc_1",
+				account_number_masked: "XXXXXXXX4821",
+				ifsc_code: "HDFC0000128",
+				bank_name: "HDFC Bank",
+				branch_name: "Andheri East Branch",
+				city: "Mumbai",
+				account_type: "savings",
+				last_used_at: new Date(Date.now() - 86_400_000).toISOString(),
+			},
+			{
+				id: "mock_acc_2",
+				account_number_masked: "XXXXXXXX9034",
+				ifsc_code: "ICIC0001042",
+				bank_name: "ICICI Bank",
+				branch_name: "Bandra Kurla Complex",
+				city: "Mumbai",
+				account_type: "savings",
+				last_used_at: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+			},
+			{
+				id: "mock_acc_3",
+				account_number_masked: "XXXXXXXX1189",
+				ifsc_code: "SBIN0004510",
+				bank_name: "State Bank of India",
+				branch_name: "Nariman Point",
+				city: "Mumbai",
+				account_type: "current",
+				last_used_at: new Date(Date.now() - 12 * 86_400_000).toISOString(),
+			},
+		];
+		const list =
+			mode === 0 ? [] : mode === 3 ? allMockAccounts : allMockAccounts.slice(0, 1);
+
 		return {
-			data: [
-				{
-					id: "mock_acc_1",
-					user_id: "mock_user_1",
-					account_holder_name: "Dev User",
-					account_number: "123456789012",
-					account_number_masked: "XXXXXX9012",
-					ifsc_code: "HDFC0000123",
-					bank_name: "HDFC Bank",
-					branch_name: "Mumbai Central",
-					city: "Mumbai",
-					state: "Maharashtra",
-					account_type: "savings",
-					is_primary: true,
-					verified_by_lender: true,
-					submitted_at: new Date().toISOString(),
-				},
-			],
+			data: {
+				success: true,
+				message: "Bank details retrieved successfully [MOCK MODE]",
+				data: list,
+			},
 			status: 200,
 			statusText: "OK",
 			headers: {},
@@ -2776,24 +2880,117 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}
 
-	// ─── 42. Endpoint: bank-details/submit (POST) ───────────────────────────
-	if (url.includes("bank-details/submit") && method === "post") {
-		await delay(500);
-Logger.warn("Operation failed", { code: "operation_failed" });
+	// ─── 41b. Endpoint: ifsc/:code (GET) ──────────────────────────────────────
+	if (url.includes("ifsc/") && method === "get") {
+		await delay(200);
+		const match = url.match(/ifsc\/([A-Za-z0-9]+)/);
+		const code = (match?.[1] || "").toUpperCase();
+		if (code.startsWith("BLCK")) {
+			return {
+				data: {
+					bank: "Blacklisted Demo Bank",
+					branch: "Demo Branch",
+					city: "Mumbai",
+					state: "Maharashtra",
+					district: "Mumbai",
+					is_blacklisted: true,
+					message: "Blacklisted Demo Bank is currently not supported for disbursal.",
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+		if (code === "KKBK0000261") {
+			return {
+				data: {
+					bank: "Kotak Mahindra Bank",
+					branch: "Nariman Point Branch",
+					city: "Mumbai",
+					state: "Maharashtra",
+					district: "Mumbai",
+					is_blacklisted: false,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+		return {
+			data: {
+				bank: code.startsWith("HDFC") ? "HDFC Bank Limited" : "Sample Mock Bank",
+				branch: "Andheri East Branch",
+				city: "Mumbai",
+				state: "Maharashtra",
+				district: "Mumbai Suburban",
+				is_blacklisted: false,
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 42. Endpoint: bank-details/select & bank-details/submit (POST) ────────
+	if ((url.includes("bank-details/select") || url.includes("bank-details/submit")) && method === "post") {
+		await delay(400);
 		const reqData = typeof config.data === "string" ? JSON.parse(config.data || "{}") : config.data;
+		const ifsc = String(reqData?.account?.ifsc_code || reqData?.ifsc_code || "").toUpperCase();
+
+		if (_mockOptions.bankPickerMockMode === "blacklisted_error" || ifsc.startsWith("BLCK")) {
+			const error = new Error("Blacklisted bank") as any;
+			error.response = {
+				status: 422,
+				data: {
+					detail: {
+						code: "BANK_BLACKLISTED",
+						message: "This bank is currently not supported for disbursal. Please choose another account.",
+					},
+				},
+			};
+			throw error;
+		}
+
+		if (
+			_mockOptions.bankPickerMockMode === "not_accepted_409" ||
+			reqData?.bank_details_id === "mock_acc_rejected"
+		) {
+			const error = new Error("Not accepted earlier") as any;
+			error.response = {
+				status: 409,
+				data: {
+					detail: "This account was not accepted earlier. Please use a different account.",
+				},
+			};
+			throw error;
+		}
+
 		updateDevMockOptions({ currentStep: "enach_mandate" });
+		const masked = reqData?.account?.account_number
+			? `XXXXXX${String(reqData.account.account_number).slice(-4)}`
+			: "XXXXXXXX4821";
 		return {
 			data: {
 				success: true,
-				message: "Bank details submitted successfully [MOCK MODE]",
-				verified: true,
-				bank_details: {
-					account_number: reqData?.account_number || "123456789012",
-					ifsc_code: reqData?.ifsc_code || "HDFC0000123",
-					bank_name: reqData?.bank_name || "HDFC Bank",
-					branch_name: reqData?.branch_name || "Mumbai Central",
-					account_type: reqData?.account_type || "savings",
-					account_holder_name: "Dev User",
+				message: "Bank account selected successfully [MOCK MODE]",
+				data: {
+					id: reqData?.bank_details_id || `mock_acc_${Date.now()}`,
+					account_number_masked: masked,
+					ifsc_code: ifsc || "HDFC0000128",
+					bank_name: ifsc.startsWith("KKBK") ? "Kotak Mahindra Bank" : "HDFC Bank",
+					branch_name: "Andheri East Branch",
+					city: "Mumbai",
+					account_holder_name:
+						typeof reqData?.account?.account_holder_name === "string" &&
+						reqData.account.account_holder_name.trim()
+							? reqData.account.account_holder_name.trim()
+							: undefined,
+					account_type: reqData?.account?.account_type || "savings",
+					reused: Boolean(reqData?.bank_details_id),
+					current_step: "enach_mandate",
 				},
 			},
 			status: 200,
@@ -3490,16 +3687,111 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	if (url.includes("repayments/initiate-manual-payment") && method === "post") {
 		await delay(350);
 		_repaymentPollCount = 0;
-		const mockTxnid = `mock-repay-${Date.now()}`;
+		const initiateScenario = _mockOptions.repaymentInitiateScenario ?? "normal";
+		const loanId = _mockOptions.activeLoan?.loan_id ?? "mock-loan-101";
+		const amount = _mockOptions.activeLoan?.amount_to_repay ?? 15000;
+
+		if (initiateScenario === "already_paid") {
+			return {
+				data: {
+					success: true,
+					status: "SUCCESS",
+					already_paid: true,
+					txnid: `mock-repay-paid-${Date.now()}`,
+					loan_id: loanId,
+					amount: "0.00",
+					outstanding_amount: "0.00",
+					message: "Your previous payment was received and confirmed.",
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		const mockTxnid =
+			initiateScenario === "resumed"
+				? _mockOptions.activeLoan?.active_payment?.txnid || `mock-repay-resumed-${Date.now()}`
+				: `mock-repay-${Date.now()}`;
+
 		return {
 			data: {
-				status: "success",
+				success: true,
+				txnid: mockTxnid,
+				loan_id: loanId,
+				amount: String(amount),
+				payment_url: `https://mock-gateway.rapidmoney.invalid/pay/${mockTxnid}`,
+				expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+				...(initiateScenario === "resumed" ? { resumed: true } : {}),
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
+	// ─── 54. Endpoint: repayments/payments/:txnid/cancel (POST) ────────────────
+	if (url.includes("repayments/payments") && url.includes("/cancel") && method === "post") {
+		await delay(250);
+		const match = url.match(/repayments\/payments\/([^/]+)\/cancel/);
+		const txnid = match?.[1] || "mock-repay-txn";
+		const cancelOutcome = _mockOptions.repaymentCancelOutcome ?? "CANCELLED";
+
+		if (cancelOutcome === "SUCCESS") {
+			return {
 				data: {
-					txnid: mockTxnid,
-					loan_id: "mock-loan-101",
-					amount: _mockOptions.activeLoan?.amount_to_repay ?? 15000,
-					payment_url: `rapid-money://repayment-status?txnid=${mockTxnid}&status=success`,
-					expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+					success: true,
+					data: {
+						status: "SUCCESS",
+						reason: null,
+						txnid,
+						amount: 15000,
+						loan_closed: true,
+						remaining_outstanding: 0,
+						can_reapply: true,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (cancelOutcome === "PENDING") {
+			return {
+				data: {
+					success: true,
+					data: {
+						status: "PENDING",
+						reason: "in_progress",
+						txnid,
+						amount: 15000,
+						loan_closed: false,
+						remaining_outstanding: 15000,
+						can_reapply: false,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		return {
+			data: {
+				success: true,
+				data: {
+					status: "CANCELLED",
+					reason: null,
+					txnid,
+					amount: 15000,
+					loan_closed: false,
+					remaining_outstanding: 15000,
+					can_reapply: false,
 				},
 			},
 			status: 200,
@@ -3509,13 +3801,34 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}
 
-	// ─── 54. Endpoint: repayments/payments/:txnid/verify-status (POST) ──────────
+	// ─── 55. Endpoint: repayments/payments/:txnid/verify-status (POST) ──────────
 	if (url.includes("repayments/payments") && url.includes("verify-status") && method === "post") {
 		await delay(300);
 		_repaymentPollCount++;
 		const outcome = _mockOptions.repaymentMockOutcome ?? "delayed_success";
 		const match = url.match(/repayments\/payments\/([^/]+)\/verify-status/);
 		const txnid = match?.[1] || "mock-repay-txn";
+
+		if (outcome === "not_started") {
+			return {
+				data: {
+					success: true,
+					data: {
+						status: _repaymentPollCount >= 2 ? "CANCELLED" : "PENDING",
+						reason: _repaymentPollCount >= 2 ? null : "not_started",
+						txnid,
+						amount: 15000,
+						loan_closed: false,
+						remaining_outstanding: 15000,
+						can_reapply: false,
+					},
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
 
 		if (outcome === "failure") {
 			return {

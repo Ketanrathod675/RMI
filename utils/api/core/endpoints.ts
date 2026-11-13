@@ -153,6 +153,8 @@ export const URLS = {
 	bank_details: {
 		submit: "bank-details",
 		get_accounts: "bank-details",
+		select: "bank-details/select",
+		ifsc: (ifscCode: string) => `ifsc/${ifscCode}`,
 		// NOT IN NEW BACKEND
 		hb_partner: "users/bank-details-hb-partner",
 	},
@@ -245,5 +247,6 @@ export const URLS = {
 	repayments: {
 		initiate: "repayments/initiate-manual-payment",
 		verify_status: (txnid: string) => `repayments/payments/${txnid}/verify-status`,
+		cancel_payment: (txnid: string) => `repayments/payments/${txnid}/cancel`,
 	},
 } as const;

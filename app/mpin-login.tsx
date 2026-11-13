@@ -8,6 +8,10 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { Layout01 } from "@/layouts/layout_01";
 import { errorHandler, mpinLogin } from "@/utils/api";
 import { clearApplicationRejectionFlags, resetApplicationRejectionGuard } from "@/utils/applicationRejection";
+import { clearStaleUserCacheOnLogin } from "@/utils/authCleanup";
+import { decode, getUserIdFromToken } from "@/utils/encode_decode";
+import { getStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { useQueryClient } from "@tanstack/react-query";
 import Logger from "@/utils/logger";
 import { height, width } from "@/utils/dimensions";
 import { router, useLocalSearchParams } from "expo-router";
@@ -42,6 +46,7 @@ export default function MpinLogin() {
 
 	const { isMpinSet, isLoading, logout, phoneNumber, handleSetTokens, handleMpinSignIn } =
 		useAuth();
+	const queryClient = useQueryClient();
 	const navigation = useTypedNavigation();
 	const params = useLocalSearchParams();
 
@@ -116,6 +121,7 @@ export default function MpinLogin() {
 	}, [showExitAlert, t, params]);
 
 	useEffect(() => {
+		let cancelled = false;
 		if (!isLoading && !isMpinSet) {
 			Toast.show({
 				type: "info",
@@ -123,12 +129,16 @@ export default function MpinLogin() {
 				text2: t("pleaseLoginToContinue"),
 			});
 
-			logout();
-
-			router.replace("/login");
-
-			return;
+			(async () => {
+				await logout();
+				if (!cancelled) {
+					router.replace("/login");
+				}
+			})();
 		}
+		return () => {
+			cancelled = true;
+		};
 	}, [isLoading, isMpinSet, logout]);
 
 	// Set up double-back exit functionality
@@ -177,10 +187,27 @@ export default function MpinLogin() {
 		onSuccess: async (data: any) => {
 
 			if (data?.access_token && data?.refresh_token && data?.token_type) {
+				const prevUserIdRaw = await getStorageItem(STORAGE_KEYS["@user-id"]);
+				let prevUserId: string | null = null;
+				if (prevUserIdRaw) {
+					try {
+						prevUserId = decode(prevUserIdRaw);
+					} catch {
+						prevUserId = prevUserIdRaw;
+					}
+				}
+
 				resetApplicationRejectionGuard();
 				await clearApplicationRejectionFlags();
-				handleSetTokens(data.access_token, data.refresh_token, data.token_type);
+				await handleSetTokens(data.access_token, data.refresh_token, data.token_type);
 				handleMpinSignIn(); // Set mpinSignedIn to true
+
+				await clearStaleUserCacheOnLogin({
+					queryClient,
+					previousUserId: prevUserId,
+					nextUserId: getUserIdFromToken(data.access_token),
+					forceClearCache: true,
+				});
 
 				Toast.show({
 					type: "success",

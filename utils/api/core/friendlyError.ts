@@ -1,4 +1,5 @@
 import { getSyncTranslation } from "@/utils/toast_translations";
+import { inferFieldFromMessage, sanitizeValidationText } from "./fieldErrors";
 
 export type FriendlyErrorKind = "offline" | "server" | "timeout" | "auth" | "forbidden" | "rate_limited" | "validation" | "not_found" | "unknown";
 export interface FriendlyError { kind: FriendlyErrorKind; title: string; message: string; retryable: boolean }
@@ -7,13 +8,46 @@ let deviceConnected: boolean | null = null;
 export const setDeviceConnected = (connected: boolean) => { deviceConnected = connected; };
 export const setDeviceOnline = setDeviceConnected;
 
-const safeServerText = (value: unknown): string | undefined => {
-	let text: string | undefined;
-	if (typeof value === "string") text = value;
-	else if (Array.isArray(value)) text = value.map((v) => typeof v === "string" ? v : v?.msg).filter((v) => typeof v === "string").join(" ");
-	else if (value && typeof value === "object") text = typeof (value as any).msg === "string" ? (value as any).msg : undefined;
-	if (!text || text.length > 140 || /traceback|exception|\bsql\b|psycopg|keyerror|<html|\bat\s+[\w$.<>]+\s+\([^)]*:\d+:\d+\)|cooling|cool-off|cool\s*off|30\s*days?/i.test(text)) return undefined;
-	return text;
+const extractRawText = (value: unknown): { text?: string; isFieldValidation: boolean } => {
+	if (typeof value === "string") {
+		return { text: value, isFieldValidation: Boolean(inferFieldFromMessage(value)) };
+	}
+	if (Array.isArray(value)) {
+		const joined = value
+			.map((v) => (typeof v === "string" ? v : v?.msg ?? v?.message))
+			.filter((v) => typeof v === "string")
+			.join(" ");
+		return { text: joined || undefined, isFieldValidation: true };
+	}
+	if (value && typeof value === "object") {
+		const anyVal = value as any;
+		if (Array.isArray(anyVal.errors) && anyVal.errors.length > 0) {
+			const first = anyVal.errors[0];
+			const firstMsg = first?.message ?? first?.msg;
+			if (typeof firstMsg === "string") {
+				return { text: firstMsg, isFieldValidation: true };
+			}
+		}
+		if (typeof anyVal.message === "string") {
+			return { text: anyVal.message, isFieldValidation: Boolean(inferFieldFromMessage(anyVal.message)) };
+		}
+		if (typeof anyVal.msg === "string") {
+			return { text: anyVal.msg, isFieldValidation: true };
+		}
+	}
+	return { text: undefined, isFieldValidation: false };
+};
+
+const safeServerText = (
+	value: unknown,
+	options?: { allowFieldValidation?: boolean; maxLength?: number },
+): string | undefined => {
+	const { text, isFieldValidation } = extractRawText(value);
+	if (!text) return undefined;
+	return sanitizeValidationText(text, {
+		allowCooldownKeywords: Boolean(options?.allowFieldValidation && isFieldValidation),
+		maxLength: options?.maxLength ?? 200,
+	});
 };
 
 export function getFriendlyError(error: unknown): FriendlyError {
@@ -87,7 +121,11 @@ export function getFriendlyError(error: unknown): FriendlyError {
 	}
 
 	if (status === 400 || status === 422) {
-		const serverMsg = safeServerText(err?.response?.data?.detail) ?? safeServerText(err?.response?.data?.message);
+		const data = err?.response?.data;
+		const serverMsg =
+			safeServerText(data?.detail, { allowFieldValidation: true, maxLength: 200 }) ??
+			safeServerText(data?.errors, { allowFieldValidation: true, maxLength: 200 }) ??
+			safeServerText(data?.message, { allowFieldValidation: true, maxLength: 200 });
 		return {
 			kind: "validation",
 			title: getSyncTranslation("errValidationGeneric", "Unable to submit"),

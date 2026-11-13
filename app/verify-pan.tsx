@@ -4,16 +4,23 @@ import { TranslatedText } from "@/components/TranslatedText";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { dark_primary, primary, white } from "@/constants/Colors";
 import {
-	isEmailFixable,
-	isPanFixable,
 	pollAssessmentChecks,
 	useAssessmentChecksController,
 } from "@/hooks/useAssessmentChecks";
+import {
+	ASSESSMENT_LOADER_TIMEOUT_MS,
+	isEmailFixable,
+	isPanFixable,
+	resolveErrorFallbackStatus,
+	shouldCallBackendRetry,
+} from "@/utils/assessmentChecksFlow";
 import { useTranslation } from "@/hooks/useTranslation";
+import { extractFieldErrors } from "@/utils/api/core/fieldErrors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import Logger from "@/utils/logger";
 import {
 	getHandshakeStatus,
+	getUserDashboardData,
 	getUserProfile,
 	retryAssessmentChecks,
 	type AssessmentChecks,
@@ -309,9 +316,19 @@ export default function VerifyPan() {
 								return { outcome: "recheck", checks };
 							}
 
+							const { fields: extractedFields, general: generalError } = extractFieldErrors(retryErr);
+							const msg =
+								extractedFields.pan_number ||
+								extractedFields.pan ||
+								generalError ||
+								getFriendlyError(retryErr).message;
+							if (msg) {
+								setPanError(msg);
+							}
 							Toast.show({
 								type: "error",
-								text1: getFriendlyError(retryErr).message,
+								text1: msg,
+								visibilityTime: 5000,
 							});
 							throw retryErr;
 						}
@@ -362,7 +379,7 @@ export default function VerifyPan() {
 					throw { isError: true, checks };
 				},
 				{
-					timeoutMs: 65000,
+					timeoutMs: ASSESSMENT_LOADER_TIMEOUT_MS,
 					treatErrorAsAttention: true,
 					markAttentionIf: (result: any) => ["needs_pan", "needs_email", "final_rejected", "recheck"].includes(result?.outcome),
 					attentionBadgeLabel: t("actionNeeded"),
@@ -372,22 +389,54 @@ export default function VerifyPan() {
 				}
 			);
 		} catch (pollErr: any) {
-			if (pollErr?.aborted) return;
-			const checks = pollErr?.checks;
-			if (checks?.status === "service_unavailable" || pollErr?.isServiceUnavailable) {
-				lastStatusRef.current = "service_unavailable";
-				if (typeof checks?.retry_after_seconds === "number") {
-					startCooldown(checks.retry_after_seconds);
-				}
-				setLastCheckError("service_unavailable");
-			} else {
-				lastStatusRef.current = pollErr?.isTimeout ? "timeout" : "error";
-				setLastCheckError(pollErr?.isTimeout ? "timeout" : "error");
-			}
-			setIsStillChecking(true);
+			await handleChecksFailure(pollErr);
 		} finally {
 			setIsVerifying(false);
 		}
+	};
+
+	const handleChecksFailure = async (err: any) => {
+		if (err?.aborted) return;
+		const freshChecks = await getHandshakeStatus().catch(() => null);
+		const dashboardData =
+			!freshChecks || freshChecks.status === "pending"
+				? await getUserDashboardData().catch(() => null)
+				: null;
+		const fallbackOutcome = resolveErrorFallbackStatus({
+			error: err,
+			freshChecks,
+			dashboardData,
+		});
+		if (fallbackOutcome.action === "approved") {
+			router.replace({
+				pathname: "/professional-details" as any,
+				params: { disableBack: "true" },
+			});
+			return;
+		}
+		if (fallbackOutcome.action === "needs_email") {
+			router.replace({
+				pathname: "/verify-email" as any,
+				params: { paymentConfirmed: "true", txnid: params.txnid || "" },
+			});
+			return;
+		}
+		if (fallbackOutcome.action === "needs_pan") {
+			setRemainingAttempts(fallbackOutcome.checks.remaining_pan_updates);
+			setServerError(t("panVerificationFailed"));
+			return;
+		}
+		if (fallbackOutcome.action === "rejected") {
+			setRejectionCountdown(15);
+			setRejectionModalVisible(true);
+			return;
+		}
+		lastStatusRef.current = fallbackOutcome.status;
+		if (typeof fallbackOutcome.retryAfterSeconds === "number") {
+			startCooldown(fallbackOutcome.retryAfterSeconds);
+		}
+		setLastCheckError(fallbackOutcome.status);
+		setIsStillChecking(true);
 	};
 
 	const handleRetryChecking = async () => {
@@ -400,26 +449,41 @@ export default function VerifyPan() {
 			await runStepThenNavigate(
 				"verifying_details",
 				async ({ signal: loaderSignal }) => {
-					const leadId = await resolveLeadId(params.lead_id as string);
-					const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
-					const shouldCallRetryBackend =
-						(lastStatusRef.current === "error" || lastStatusRef.current === "service_unavailable") &&
-						timeSinceLastRetry >= retryCooldownSecondsRef.current;
+					const leadId = await resolveLeadId(params.lead_id as string).catch(() => "");
+					const canRetryBackend =
+						Boolean(leadId) &&
+						shouldCallBackendRetry({
+							lastStatus: lastStatusRef.current,
+							lastRetryAtMs: lastRetryAtRef.current,
+							cooldownSeconds: retryCooldownSecondsRef.current,
+						});
 
-					if (shouldCallRetryBackend && leadId) {
+					let checks: AssessmentChecks | null = null;
+					if (canRetryBackend && leadId) {
 						lastRetryAtRef.current = Date.now();
-						startCooldown(retryCooldownSecondsRef.current);
 						try {
-							await retryAssessmentChecks({ lead_id: leadId });
+							const retryRes = await retryAssessmentChecks({
+								lead_id: leadId,
+								txnid: (params.txnid as string) || undefined,
+							});
+							if (retryRes && retryRes.status !== "pending") {
+								checks = retryRes;
+							} else if (typeof retryRes?.retry_after_seconds === "number") {
+								startCooldown(retryRes.retry_after_seconds);
+							} else {
+								startCooldown(retryCooldownSecondsRef.current);
+							}
 						} catch {
-							// Continue to poll
+							// Continue to poll / fresh status check
 						}
 					}
 
-					const checks = await pollAssessmentChecks({
-						signal: loaderSignal,
-						leadId,
-					});
+					if (!checks) {
+						checks = await pollAssessmentChecks({
+							signal: loaderSignal,
+							leadId,
+						});
+					}
 
 					if (checks.status === "approved") {
 						navTarget = () =>
@@ -459,7 +523,7 @@ export default function VerifyPan() {
 					throw { isError: true, checks };
 				},
 				{
-					timeoutMs: 65000,
+					timeoutMs: ASSESSMENT_LOADER_TIMEOUT_MS,
 					treatErrorAsAttention: true,
 					markAttentionIf: (result: any) => ["needs_pan", "needs_email", "final_rejected", "recheck"].includes(result?.outcome),
 					attentionBadgeLabel: t("actionNeeded"),
@@ -469,19 +533,7 @@ export default function VerifyPan() {
 				}
 			);
 		} catch (err: any) {
-			if (err?.aborted) return;
-			const checks = err?.checks;
-			if (checks?.status === "service_unavailable" || err?.isServiceUnavailable) {
-				lastStatusRef.current = "service_unavailable";
-				if (typeof checks?.retry_after_seconds === "number") {
-					startCooldown(checks.retry_after_seconds);
-				}
-				setLastCheckError("service_unavailable");
-			} else {
-				lastStatusRef.current = err?.isTimeout ? "timeout" : "error";
-				setLastCheckError(err?.isTimeout ? "timeout" : "error");
-			}
-			setIsStillChecking(true);
+			await handleChecksFailure(err);
 		} finally {
 			setIsVerifying(false);
 		}

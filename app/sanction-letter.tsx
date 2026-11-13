@@ -2,12 +2,16 @@ import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { dark, white } from "@/constants/Colors";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { QueryErrorState } from "@/components/QueryErrorState";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { formatWaitTime, getRateLimitInfo, isResendCooldownOnly } from "@/utils/api/core/rateLimit";
+import { useRateLimitLock } from "@/hooks/useRateLimitLock";
+import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	getSanctionLetterStatus,
@@ -212,6 +216,7 @@ export default function SanctionLetter() {
 	const router = useRouter();
 	const navigation = useTypedNavigation();
 	const queryClient = useQueryClient();
+	const { userId } = useAuth();
 
 	// Track this screen in the journey
 	useJourneyTracker("/sanction-letter");
@@ -222,6 +227,11 @@ export default function SanctionLetter() {
 		total: 0,
 	});
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
+	const {
+		isLocked: isRateLimitLocked,
+		remainingSeconds: rateLimitRemaining,
+		lockForSeconds,
+	} = useRateLimitLock();
 
 	// Fetch or generate Sanction Letter PDF
 	const {
@@ -231,7 +241,8 @@ export default function SanctionLetter() {
 		error: docError,
 		refetch: refetchDocument,
 	} = useNetworkAwareQuery({
-		queryKey: ["sanction-letter", "document"],
+		queryKey: ["sanction-letter", "document", userId],
+		enabled: !!userId,
 		queryFn: async () => {
 			const status = await getSanctionLetterStatus();
 			if (status.is_signed) {
@@ -329,18 +340,24 @@ export default function SanctionLetter() {
 				});
 			},
 			onError: (err: any) => {
+				const rateLimit = getRateLimitInfo(err);
+				if (rateLimit.isRateLimited) {
+					Logger.debug("Initiate KFS signing rate limited", { status: 429 });
+					lockForSeconds(rateLimit.retryAfterSeconds);
+					if (!isResendCooldownOnly(rateLimit)) {
+						showRateLimitModal({
+							context: "otp_request",
+							retryAfterSeconds: rateLimit.retryAfterSeconds,
+							primaryLabel: t("ok") || "OK",
+							onDismiss: () => {},
+						});
+					}
+					return;
+				}
+
 				const info = getApiErrorInfo(err);
 				const text = errorText(info);
 				Logger.debug("Initiate KFS signing error", { status: info.status });
-
-				if (info.status === 429) {
-					Toast.show({
-						type: "error",
-						text1: t("alert") || "Notice",
-						text2: getFriendlyError(err).message,
-					});
-					return;
-				}
 
 				if (info.status === 400 && text.includes("already signed")) {
 					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
@@ -411,7 +428,7 @@ export default function SanctionLetter() {
 
 	const isPdfReady = Boolean(docData?.uri && !docData.signed);
 	const isBusy = isLoading || isFetching || isInitiatingSign;
-	const isSignDisabled = !isPdfReady || isBusy;
+	const isSignDisabled = !isPdfReady || isBusy || isRateLimitLocked;
 
 	return (
 		<>
@@ -481,11 +498,13 @@ export default function SanctionLetter() {
 						disabled={isSignDisabled}>
 						<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
 							<Text style={styles.signButtonText}>
-								{isInitiatingSign
-									? t("sendingOTP") || "Sending OTP..."
-									: t("signAllDocumentsWithOTP") || "Sign with OTP"}
+								{isRateLimitLocked
+									? `${t("rateLimitTryAgainIn") || "Try again in"} ${formatWaitTime(rateLimitRemaining)}`
+									: isInitiatingSign
+										? t("sendingOTP") || "Sending OTP..."
+										: t("signAllDocumentsWithOTP") || "Sign with OTP"}
 							</Text>
-							<IconSymbol name="arrow.right" size={20} color="#333" />
+							{!isRateLimitLocked && <IconSymbol name="arrow.right" size={20} color="#333" />}
 						</View>
 					</TouchableOpacity>
 

@@ -21,6 +21,7 @@ export interface InitiateAssessmentFeeData {
 	original_amount?: number;
 	discount_amount?: number;
 	coupon_code?: string | null;
+	idempotent_replayed?: boolean;
 }
 
 export type InitiateAssessmentFeeResponse =

@@ -14,6 +14,7 @@ import {
 import { decode } from "@/utils/encode_decode";
 import Logger from "@/utils/logger";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/utils/idempotency";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -264,6 +265,7 @@ export const useAssessmentFeePayment = ({
 
 		await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], canonicalTxnId);
 		await clearStoredPayment();
+		await clearIdempotencyKey("assessment-fee");
 		const paymentRef = res?.data?.payment_id || res?.data?.easepayid || canonicalTxnId;
 		trackAssessmentFeePaid(processingFeeAmount, paymentRef).catch(() => { });
 		queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
@@ -276,6 +278,9 @@ export const useAssessmentFeePayment = ({
 	) => {
 		// "unconfirmed" keeps the txn id so we can re-check later (money may have left the account).
 		if (type !== "unconfirmed" && type !== "not_completed") await clearStoredPayment();
+		if (type === "failed" || type === "cancelled" || type === "expired") {
+			await clearIdempotencyKey("assessment-fee");
+		}
 		gatewayOpenRef.current = false;
 		activeRef.current = null;
 		resetPendingUi();
@@ -390,7 +395,10 @@ export const useAssessmentFeePayment = ({
 			const r = await checkOnce(pendingTxn, 8000);
 			if (cancelled || !mountedRef.current) return;
 			if (r.kind === "SUCCESS") return finishSuccess(pendingTxn, r.res);
-			if (["FAILED", "CANCELLED", "EXPIRED"].includes(r.kind)) await clearStoredPayment();
+			if (["FAILED", "CANCELLED", "EXPIRED"].includes(r.kind)) {
+				await clearStoredPayment();
+				await clearIdempotencyKey("assessment-fee");
+			}
 			// The user never reached the gateway / never paid: forget this attempt so no stale state is carried over.
 			if (r.kind === "PENDING" && r.notStarted) await clearStoredPayment();
 			// Other PENDING / ERROR: leave it; the server supersedes abandoned attempts when the user pays again.
@@ -460,7 +468,7 @@ export const useAssessmentFeePayment = ({
 						await setStorageItem(STORAGE_KEYS["@af-flag"], String(kycResp.af));
 					}
 				} catch (recoverErr) {
-					console.warn("⚠️ [useAssessmentFeePayment] Failed to recover leadId from /auth/me:", recoverErr);
+					Logger.warn("Failed to recover lead metadata from /auth/me", { error: recoverErr });
 				}
 			}
 			if (!targetLeadId) throw new Error("Lead ID is missing. Please submit your basic details again.");
@@ -497,13 +505,42 @@ export const useAssessmentFeePayment = ({
 				throw new Error("Valid email address required. Please complete your profile before proceeding.");
 			}
 
-			return await initiateAssessmentFee({
+			const normalizedCoupon = couponCode ? couponCode.trim().toUpperCase() : "";
+			const fingerprint = `${targetLeadId}|${normalizedCoupon}`;
+			const payload = {
 				lead_id: targetLeadId,
 				phone_no: resolvedPhone.slice(-10),
 				firstname: resolvedName.slice(0, 50),
 				email: resolvedEmail.slice(0, 100),
-				coupon_code: couponCode || null,
-			});
+				coupon_code: normalizedCoupon || null,
+			};
+
+			let idempotencyKey = await getOrCreateIdempotencyKey("assessment-fee", fingerprint);
+			try {
+				return await initiateAssessmentFee(payload, idempotencyKey);
+			} catch (err: any) {
+				const status = err?.response?.status;
+				const rawDetail = err?.response?.data?.detail;
+				const detailLower = typeof rawDetail === "string" ? rawDetail.toLowerCase() : "";
+
+				if (status === 409) {
+					if (
+						detailLower.includes("different payment amount") ||
+						detailLower.includes("retry with a new idempotency key") ||
+						detailLower.includes("different lead") ||
+						detailLower.includes("different user")
+					) {
+						await clearIdempotencyKey("assessment-fee");
+						idempotencyKey = await getOrCreateIdempotencyKey("assessment-fee", fingerprint);
+						return await initiateAssessmentFee(payload, idempotencyKey);
+					}
+					if (detailLower.includes("concurrent payment initiation")) {
+						await new Promise((resolve) => setTimeout(resolve, 1500));
+						return await initiateAssessmentFee(payload, idempotencyKey);
+					}
+				}
+				throw err;
+			}
 		},
 		onSuccess: async (res) => {
 			const data = (res as any)?.data ?? res;
@@ -514,6 +551,7 @@ export const useAssessmentFeePayment = ({
 
 			if (data.status === "WAIVED" || data.amount === 0) {
 				await clearTimer();
+				await clearIdempotencyKey("assessment-fee");
 				setIsPaymentInitiated(false);
 				setIsPaymentCompleted(true);
 				const waivedTxn = data.txnid || "WAIVED";
@@ -528,6 +566,22 @@ export const useAssessmentFeePayment = ({
 
 			const url = data.payment_url || data.payment_link;
 			const txnid = data.txnid || data.transaction_id || data.order_id;
+			const statusUpper = String(data.status ?? "").toUpperCase();
+			if (
+				data.idempotent_replayed === true &&
+				!url &&
+				["SUCCESS", "PAID", "COMPLETED"].includes(statusUpper)
+			) {
+				if (txnid) {
+					await clearTimer();
+					dispatch(setTransactionId(txnid));
+					await setStorageItem(STORAGE_KEYS["@transaction-id"], txnid);
+					await setStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"], txnid);
+					verifyPayment(txnid, "browser_closed");
+					return;
+				}
+			}
+
 			if (!url || !txnid) {
 				Toast.show({ type: "error", text1: t("unableToInitiatePayment"), text2: t("pleaseRetryPayment") });
 				return;
@@ -621,16 +675,17 @@ export const useAssessmentFeePayment = ({
 	const initiatePayment = useCallback(async () => {
 		setIsPaymentCompleted(false);
 		if (submitGuardRef.current) return;
+		submitGuardRef.current = true;
 		try {
 			const progressRes = await getWorkflowProgress().catch(() => null);
 			if (isRejectedStatus(progressRes?.data)) {
+				submitGuardRef.current = false;
 				handleApplicationRejected({ router, queryClient, source: "useAssessmentFeePayment" });
 				return;
 			}
 		} catch {
 			// ignore pre-check error
 		}
-		submitGuardRef.current = true;
 		rawInitiatePayment();
 	}, [rawInitiatePayment, router, queryClient]);
 

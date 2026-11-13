@@ -13,17 +13,18 @@ import {
 	toggleMpinSignedIn,
 } from "@/store/slices/auth";
 import type { SigninState } from "@/store/slices/signin";
+import { clearExplicitLogoutSuppression } from "@/utils/api/core/sessionErrors";
+import { performLogoutCleanup } from "@/utils/authCleanup";
 import { decode, encode, getUserIdFromToken } from "@/utils/encode_decode";
-import { resetLoanSearchSession } from "@/utils/loanSearchSession";
 import SecureStorage from "@/utils/secure-storage";
 import {
 	AuthKeys,
 	getStorageItem,
-	RemovableKeys,
 	removeMultipleStorageItems,
 	setStorageItem,
 	STORAGE_KEYS,
 } from "@/utils/storage";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { z } from "zod";
 
@@ -38,6 +39,7 @@ let activeAuthPromise: Promise<boolean> | null = null;
 export const useAuth = (shouldAutoLoad = false) => {
 	const [isLoading, setIsLoading] = useState(true);
 	const dispatch = useAppDispatch();
+	const queryClient = useQueryClient();
 
 	const isLoggedIn = useAppSelector((state) => state.auth.isLoggedIn);
 	const isMpinSet = useAppSelector((state) => state.auth.isMpinSet);
@@ -179,6 +181,8 @@ export const useAuth = (shouldAutoLoad = false) => {
 				parsedCountryCode = CountryCodeSchema.safeParse("+91");
 			}
 
+			clearExplicitLogoutSuppression();
+
 			setStorageItem(STORAGE_KEYS["@country-code"], encode(parsedCountryCode.data!));
 			setStorageItem(STORAGE_KEYS["@phone-number"], encode(parsedPhoneNumber.data!));
 			setStorageItem(STORAGE_KEYS["@is-logged-in"], encode("true"));
@@ -199,6 +203,8 @@ export const useAuth = (shouldAutoLoad = false) => {
 			if (!accessTokenVal || !refreshTokenVal || !tokenTypeVal) {
 				return false;
 			}
+
+			clearExplicitLogoutSuppression();
 
 			await SecureStorage.setSensitive(STORAGE_KEYS["@access-token"], accessTokenVal);
 			await SecureStorage.setSensitive(STORAGE_KEYS["@token"], accessTokenVal);
@@ -233,21 +239,32 @@ export const useAuth = (shouldAutoLoad = false) => {
 	);
 
 	const logout = useCallback(async () => {
-		try {
-			const token =
-				accessToken ||
-				(await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]));
-			if (token) {
-				const { logoutSession } = await import("@/utils/api/services/auth.service");
-				void logoutSession(token);
+		let tokenToRevoke: string | null = accessToken ?? null;
+		if (!tokenToRevoke) {
+			try {
+				tokenToRevoke = await SecureStorage.getSensitiveWithLegacyMigration(
+					STORAGE_KEYS["@access-token"],
+				);
+			} catch {
+				tokenToRevoke = null;
 			}
-		} catch {
-			// Ignore error capturing token for logout
 		}
-		resetLoanSearchSession();
-		void Promise.all([SecureStorage.clearAllTokens(), removeMultipleStorageItems(RemovableKeys)]);
-		dispatch(clearAuth());
-	}, [accessToken, dispatch]);
+
+		await performLogoutCleanup({
+			queryClient,
+			dispatch,
+			revokeSession: tokenToRevoke
+				? async () => {
+						const { logoutSession } = await import("@/utils/api/services/auth.service");
+						await logoutSession(tokenToRevoke!);
+				  }
+				: undefined,
+		});
+
+		if (__DEV__) {
+			console.log("[useAuth] Query cache count after logout:", queryClient.getQueryCache().getAll().length);
+		}
+	}, [accessToken, dispatch, queryClient]);
 
 	useEffect(() => {
 		if (shouldAutoLoad) {

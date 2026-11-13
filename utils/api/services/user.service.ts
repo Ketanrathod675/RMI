@@ -1,3 +1,4 @@
+import { adaptAuthProfileToDashboard } from "@/utils/postLoginRouting";
 import { setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { axios } from "../core/client";
 import { URLS } from "../core/endpoints";
@@ -25,7 +26,6 @@ export const getUserDashboardData = async (): Promise<UserDashboardResponseType>
 	const response = await axios.get<any>(URLS.auth.me);
 	const authData = response.data?.data || response.data;
 	const workflow = authData?.current_workflow;
-	const kyc = authData?.profile;
 	const kycResponse = workflow?.profile_response;
 
 	// Hydrate local storage with workflow metadata for offline / recovery support
@@ -57,7 +57,7 @@ export const getUserDashboardData = async (): Promise<UserDashboardResponseType>
 		if (kycResponse) {
 			await setStorageItem(STORAGE_KEYS["@kyc-response"], JSON.stringify(kycResponse));
 		}
-		if (workflow?.overall_status === "rejected" && workflow?.bre_status !== "rejected") {
+		if ((workflow?.overall_status === "rejected" || authData?.is_rejected) && workflow?.bre_status !== "rejected") {
 			await setStorageItem(STORAGE_KEYS["@loan-rejected-flag"], "true");
 			await setStorageItem(STORAGE_KEYS["@no-approved-amount-flag"], "true");
 		}
@@ -65,55 +65,7 @@ export const getUserDashboardData = async (): Promise<UserDashboardResponseType>
 		console.warn("⚠️ [getUserDashboardData] Failed to hydrate storage from workflow:", storageErr);
 	}
 
-	const currentStep = workflow?.current_step || "basic_details";
-	const nextStep = workflow?.next_step || "";
-	const percentage = workflow?.overall_percentage ?? 0;
-	const overallStatus = workflow?.overall_status || "in_progress";
-
-	return {
-		dashboard_type: "workflow_dashboard",
-		user_summary: {
-			name: kyc?.full_name || authData?.phone_number || "Applicant",
-			customer_id: authData?.id || "",
-			phone_number: authData?.phone_number || "",
-			profile_completion: percentage,
-			kyc_status: overallStatus,
-			member_since: authData?.created_at || new Date().toISOString(),
-			last_login: new Date(),
-		},
-		workflow_progress: {
-			current_step: currentStep,
-			current_step_name: currentStep.replace(/_/g, " "),
-			completion_percentage: percentage,
-			overall_status: overallStatus,
-			steps_completed: Math.round((percentage / 100) * 10),
-			total_steps: 10,
-			last_activity_at: new Date(),
-			next_required_step: nextStep,
-			workflow_started_at: new Date(),
-			bre_status: workflow?.bre_status || null,
-			bre_failed_rule: workflow?.bre_failed_rule || null,
-		},
-		workflow_steps: [],
-		current_step_info: {
-			step: currentStep,
-			step_name: currentStep.replace(/_/g, " "),
-			percentage: percentage,
-			is_accessible: true,
-			description: "",
-		},
-		notifications: {
-			unread_count: 0,
-			recent_notifications: [],
-		},
-		progress_summary: {
-			days_since_started: 0,
-			estimated_completion_time: "",
-			next_milestone: nextStep,
-		},
-		active_loan: authData?.active_loan ?? null,
-		can_reapply: authData?.can_reapply ?? null,
-	};
+	return adaptAuthProfileToDashboard(authData);
 };
 
 /**
@@ -319,13 +271,16 @@ export interface BackendCanReapplyResponse {
 	can_reapply: boolean;
 	reason?: string | null;
 	days_remaining?: number | null;
+	can_reapply_at?: string | null;
 }
 
 export interface ReapplyLoanResponse {
 	success: boolean;
 	workflow_id: string;
 	current_step: string;
-	lead_id?: string | number;
+	next_step?: string | null;
+	lead_id?: string;
+	message?: string;
 }
 
 /**
@@ -354,6 +309,7 @@ export const checkCanReapply = async (): Promise<CanReapplyResponseType> => {
 			address_details: false,
 		},
 		rejection_count: 0,
+		can_reapply_at: data.can_reapply_at ?? null,
 	};
 };
 
@@ -380,6 +336,7 @@ export type WorkflowProgressData = {
 	rejection_source?: "bre" | "kyc" | "lender" | "admin" | string;
 	rejection_reason?: string | null;
 	can_reapply?: boolean;
+	can_reapply_at?: string | null;
 	steps?: Record<string, string>;
 	all_steps?: string[];
 	[key: string]: any;

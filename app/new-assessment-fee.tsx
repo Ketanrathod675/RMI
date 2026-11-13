@@ -15,11 +15,18 @@ import { useAuth } from "@/hooks/useAuth";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
-	isEmailFixable,
-	isPanFixable,
 	pollAssessmentChecks,
 	useAssessmentChecksController,
 } from "@/hooks/useAssessmentChecks";
+import {
+	ASSESSMENT_LOADER_TIMEOUT_MS,
+	classifyAssessmentChecksOutcome,
+	executeAssessmentRetry,
+	isEmailFixable,
+	isPanFixable,
+	resolveErrorFallbackStatus,
+	type AssessmentOutcomeAction,
+} from "@/utils/assessmentChecksFlow";
 import {
 	allocateLenderForUser,
 	getHandshakeStatus,
@@ -117,6 +124,8 @@ export default function AssessmentFeeScreen() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const params = useLocalSearchParams();
+	const isFromReapply = params.fromReapply === "true";
+	const paramLeadId = typeof params.lead_id === "string" ? params.lead_id.trim() : "";
 	const insets = useSafeAreaInsets();
 	const navigation = useTypedNavigation();
 
@@ -160,6 +169,7 @@ export default function AssessmentFeeScreen() {
 
 	const lastRetryAtRef = useRef<number>(0);
 	const retryCooldownSecondsRef = useRef<number>(60);
+	const isRetryingChecksRef = useRef<boolean>(false);
 	const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
 
 	useEffect(() => {
@@ -217,6 +227,16 @@ export default function AssessmentFeeScreen() {
 		setIsFeeLoading(true);
 		try {
 			let existingLeadId = await AsyncStorage.getItem(STORAGE_KEYS["@lead-id"]);
+
+			// Safety net: after reapply, ignore any stale cached @lead-id that differs from params.lead_id
+			if (isFromReapply && paramLeadId) {
+				if (existingLeadId !== paramLeadId) {
+					Logger.info("Using reapply lead_id param instead of cached lead_id");
+					await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], paramLeadId);
+				}
+				existingLeadId = paramLeadId;
+			}
+
 			const savedFee = await AsyncStorage.getItem(STORAGE_KEYS["@assessment-fee-amount"]);
 			if (savedFee) {
 				const parsed = Number(savedFee);
@@ -226,14 +246,14 @@ export default function AssessmentFeeScreen() {
 				}
 			}
 
-			if (!existingLeadId || !savedFee) {
+			if (!existingLeadId || !savedFee || (isFromReapply && !paramLeadId)) {
 				try {
 					const profile = await getUserProfile();
 					const meData = (profile as any)?.data || profile;
 					const wf = meData?.current_workflow;
 					const kycResp = wf?.profile_response;
 					const recoveredLeadId = wf?.lead_id || kycResp?.lead_id;
-					if (recoveredLeadId && !existingLeadId) {
+					if (recoveredLeadId && (!existingLeadId || (isFromReapply && !paramLeadId && String(recoveredLeadId) !== existingLeadId))) {
 						await AsyncStorage.setItem(STORAGE_KEYS["@lead-id"], String(recoveredLeadId));
 					}
 					const fee = kycResp?.af_amount || kycResp?.assessment_fee;
@@ -252,7 +272,7 @@ export default function AssessmentFeeScreen() {
 		} catch { } finally {
 			setIsFeeLoading(false);
 		}
-	}, []);
+	}, [isFromReapply, paramLeadId]);
 
 	useEffect(() => {
 		loadFeeAndLead();
@@ -306,7 +326,7 @@ export default function AssessmentFeeScreen() {
 		setCouponError("");
 		setIsCouponVerifying(true);
 		try {
-			const leadId = (params.lead_id as string) || (await getStorageItem(STORAGE_KEYS["@lead-id"])) || undefined;
+			const leadId = paramLeadId || (await resolveLeadId()) || undefined;
 			const res = await verifyCoupon(trimmedCode, leadId);
 			if (res.success && res.data) {
 				setAppliedDiscount(Math.min(res.data.discount || 0, res.data.original_amount ?? Infinity));
@@ -405,13 +425,12 @@ export default function AssessmentFeeScreen() {
 		if (isReapp && isPanVer && isEmailVer) {
 			const txnid =
 				(await getStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"])) ||
-				(await getStorageItem(STORAGE_KEYS["@transaction-id"]));
-			if (!txnid) {
-				router.replace("/(tabs)");
-				return;
+				(await getStorageItem(STORAGE_KEYS["@transaction-id"])) ||
+				undefined;
+			if (txnid) {
+				activeTxnidRef.current = txnid;
 			}
-			activeTxnidRef.current = txnid;
-			const leadId = await resolveLeadId();
+			const leadId = await resolveLeadId(paramLeadId || undefined).catch(() => "");
 
 			// Always call getHandshakeStatus first
 			let initialChecks: AssessmentChecks | null = null;
@@ -421,29 +440,45 @@ export default function AssessmentFeeScreen() {
 				Logger.warn("Failed to fetch initial handshake status in reapplication", err);
 			}
 
-			if (initialChecks?.status === "approved") {
-				await proceedToProfessionalDetails();
-				return;
+			if (initialChecks) {
+				const initialOutcome = classifyAssessmentChecksOutcome(initialChecks);
+				if (initialOutcome.action !== "poll" && initialOutcome.action !== "still_checking") {
+					if (applyImmediateChecksOutcome(initialOutcome, txnid)) {
+						return;
+					}
+				}
 			}
 
-			// Only call retryAssessmentChecks if status is "error" or "service_unavailable"
+			// Retry backend if status is "error", "service_unavailable", or "timeout"
 			if (initialChecks?.status === "error" || initialChecks?.status === "service_unavailable") {
-				const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
-				if (timeSinceLastRetry >= retryCooldownSecondsRef.current) {
-					lastRetryAtRef.current = Date.now();
-					startCooldown(
+				const retryResult = await executeAssessmentRetry({
+					lastStatus: initialChecks.status,
+					lastRetryAtMs: lastRetryAtRef.current,
+					cooldownSeconds:
 						typeof initialChecks.retry_after_seconds === "number"
 							? initialChecks.retry_after_seconds
 							: retryCooldownSecondsRef.current,
-					);
-					try {
-						await retryAssessmentChecks({
-							lead_id: leadId,
-							txnid: activeTxnidRef.current || undefined,
-						});
-					} catch (e) {
-						Logger.warn("retryAssessmentChecks in reapplication failed, continuing to check flow", e);
-					}
+					callRetry: leadId
+						? () =>
+								retryAssessmentChecks({
+									lead_id: leadId,
+									txnid: activeTxnidRef.current || undefined,
+								})
+						: undefined,
+					callHandshakeStatus: () => getHandshakeStatus(txnid),
+					callDashboard: () => getUserDashboardData(),
+				});
+				if (retryResult.nextRetryAtMs) {
+					lastRetryAtRef.current = retryResult.nextRetryAtMs;
+				}
+				if (typeof retryResult.cooldownSecondsToStart === "number") {
+					startCooldown(retryResult.cooldownSecondsToStart);
+				}
+				if (
+					retryResult.outcome.action !== "poll" &&
+					applyImmediateChecksOutcome(retryResult.outcome, txnid)
+				) {
+					return;
 				}
 			}
 
@@ -464,22 +499,69 @@ export default function AssessmentFeeScreen() {
 		});
 	};
 
+	const applyImmediateChecksOutcome = (
+		outcome: AssessmentOutcomeAction,
+		txnid?: string,
+	): boolean => {
+		if (outcome.action === "approved") {
+			setDelayVisible(false);
+			router.replace({
+				pathname: "/professional-details" as any,
+				params: { disableBack: "true" },
+			});
+			return true;
+		}
+		if (outcome.action === "needs_email") {
+			router.replace({
+				pathname: "/verify-email" as any,
+				params: txnid
+					? { paymentConfirmed: "true", txnid }
+					: { paymentConfirmed: "true" },
+			});
+			return true;
+		}
+		if (outcome.action === "needs_pan") {
+			router.replace({
+				pathname: "/verify-pan" as any,
+				params: txnid
+					? { paymentConfirmed: "true", txnid }
+					: { paymentConfirmed: "true" },
+			});
+			return true;
+		}
+		if (outcome.action === "rejected") {
+			if (outcome.isDashboardRejected) {
+				handleApplicationRejected({
+					router,
+					queryClient,
+					source: "new-assessment-fee-verify",
+				});
+			} else {
+				setRejectionCountdown(15);
+				setRejectionModalVisible(true);
+			}
+			return true;
+		}
+		if (outcome.action === "still_checking") {
+			lastStatusRef.current = outcome.status;
+			if (typeof outcome.retryAfterSeconds === "number") {
+				startCooldown(outcome.retryAfterSeconds);
+			}
+			setStillCheckingModalVisible(true);
+			return true;
+		}
+		return false;
+	};
+
 	// Start post-payment verification flow via JourneyLoader
 	const startVerifyLeadFlow = async (txnId?: string) => {
 		const activeTxnid =
 			txnId ||
 			(await getStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"])) ||
-			(await getStorageItem(STORAGE_KEYS["@transaction-id"]));
+			(await getStorageItem(STORAGE_KEYS["@transaction-id"])) ||
+			undefined;
 
-		if (!activeTxnid) {
-			Logger.warn("startVerifyLeadFlow: No transaction ID found, redirecting to dashboard");
-			if (pollingLoaderTokenRef.current !== null) {
-				hide(pollingLoaderTokenRef.current);
-				pollingLoaderTokenRef.current = null;
-			}
-			router.replace("/(tabs)");
-			return;
-		}
+		const flightRunKey = activeTxnid || "__active_lead__";
 
 		// Check rejection status before starting lead verification
 		try {
@@ -496,7 +578,7 @@ export default function AssessmentFeeScreen() {
 			// ignore check error
 		}
 
-		if (verifyFlowRunningRef.current === activeTxnid) {
+		if (verifyFlowRunningRef.current === flightRunKey) {
 			Logger.info("startVerifyLeadFlow: Flow already running for txn:", { activeTxnid });
 			if (pollingLoaderTokenRef.current !== null) {
 				hide(pollingLoaderTokenRef.current);
@@ -504,8 +586,10 @@ export default function AssessmentFeeScreen() {
 			}
 			return;
 		}
-		verifyFlowRunningRef.current = activeTxnid;
-		activeTxnidRef.current = activeTxnid;
+		verifyFlowRunningRef.current = flightRunKey;
+		if (activeTxnid) {
+			activeTxnidRef.current = activeTxnid;
+		}
 
 		setIsSuccessModalVisible(false);
 		setStillCheckingModalVisible(false);
@@ -543,7 +627,9 @@ export default function AssessmentFeeScreen() {
 							navTarget = () => {
 								router.replace({
 									pathname: "/verify-email" as any,
-									params: { paymentConfirmed: "true", txnid: activeTxnid },
+									params: activeTxnid
+										? { paymentConfirmed: "true", txnid: activeTxnid }
+										: { paymentConfirmed: "true" },
 								});
 							};
 							return { outcome: "needs_email", checks: res };
@@ -553,7 +639,9 @@ export default function AssessmentFeeScreen() {
 							navTarget = () => {
 								router.replace({
 									pathname: "/verify-pan" as any,
-									params: { paymentConfirmed: "true", txnid: activeTxnid },
+									params: activeTxnid
+										? { paymentConfirmed: "true", txnid: activeTxnid }
+										: { paymentConfirmed: "true" },
 								});
 							};
 							return { outcome: "needs_pan", checks: res };
@@ -575,7 +663,7 @@ export default function AssessmentFeeScreen() {
 					throw { isError: true, checks: res };
 				},
 				{
-					timeoutMs: 65000,
+					timeoutMs: ASSESSMENT_LOADER_TIMEOUT_MS,
 					treatErrorAsAttention: true,
 					markAttentionIf: (result: any) => result?.outcome === "final_rejected",
 					attentionBadgeLabel: t("actionNeeded"),
@@ -594,61 +682,64 @@ export default function AssessmentFeeScreen() {
 			}
 		} catch (error: any) {
 			verifyFlowRunningRef.current = null;
-			// Error or timeout: Fail-closed (NEVER navigate to /professional-details)
-			const checks = error?.checks;
-			if (isEmailFixable(checks)) {
-				router.replace({
-					pathname: "/verify-email" as any,
-					params: { paymentConfirmed: "true", txnid: activeTxnid },
-				});
+			if (error?.aborted || checksSignal.aborted) {
 				return;
 			}
-			if (isPanFixable(checks)) {
-				router.replace({
-					pathname: "/verify-pan" as any,
-					params: { paymentConfirmed: "true", txnid: activeTxnid },
-				});
-				return;
-			}
-			if (checks?.status === "service_unavailable" || error?.isServiceUnavailable) {
-				lastStatusRef.current = "service_unavailable";
-				if (typeof checks?.retry_after_seconds === "number") {
-					startCooldown(checks.retry_after_seconds);
-				}
-			} else {
-				lastStatusRef.current = error?.isError ? "error" : "timeout";
-			}
-			setStillCheckingModalVisible(true);
+			// Fail-closed recovery check: in case poll timed out or aborted right as backend finalized
+			const freshChecks = await getHandshakeStatus(activeTxnid).catch(() => null);
+			const dashboardData =
+				!freshChecks || freshChecks.status === "pending"
+					? await getUserDashboardData().catch(() => null)
+					: null;
+			const fallbackOutcome = resolveErrorFallbackStatus({
+				error,
+				freshChecks,
+				dashboardData,
+			});
+			applyImmediateChecksOutcome(fallbackOutcome, activeTxnid);
 		}
 	};
 
 	const handleRetryChecking = async () => {
+		if (isRetryingChecksRef.current) return;
+		isRetryingChecksRef.current = true;
 		setStillCheckingModalVisible(false);
-		const txnid = activeTxnidRef.current;
-		if (!txnid) {
-			router.replace("/(tabs)");
-			return;
-		}
+		const txnid = activeTxnidRef.current || undefined;
 
-		const timeSinceLastRetry = (Date.now() - lastRetryAtRef.current) / 1000;
-		const canRetryBackend =
-			(lastStatusRef.current === "error" || lastStatusRef.current === "service_unavailable") &&
-			timeSinceLastRetry >= retryCooldownSecondsRef.current;
+		try {
+			const leadId = await resolveLeadId(paramLeadId || undefined).catch(() => "");
+			const retryResult = await executeAssessmentRetry({
+				lastStatus: lastStatusRef.current,
+				lastRetryAtMs: lastRetryAtRef.current,
+				cooldownSeconds: retryCooldownSecondsRef.current,
+				callRetry: leadId
+					? () =>
+							retryAssessmentChecks({
+								lead_id: leadId,
+								txnid,
+							})
+					: undefined,
+				callHandshakeStatus: () => getHandshakeStatus(txnid),
+				callDashboard: () => getUserDashboardData(),
+			});
 
-		if (canRetryBackend) {
-			lastRetryAtRef.current = Date.now();
-			startCooldown(retryCooldownSecondsRef.current);
-			try {
-				const leadId = await resolveLeadId();
-				await retryAssessmentChecks({
-					lead_id: leadId,
-					txnid: activeTxnidRef.current || undefined,
-				});
-			} catch (e) {
-				Logger.warn("retryAssessmentChecks on retry failed", e);
+			if (retryResult.nextRetryAtMs) {
+				lastRetryAtRef.current = retryResult.nextRetryAtMs;
 			}
+			if (typeof retryResult.cooldownSecondsToStart === "number") {
+				startCooldown(retryResult.cooldownSecondsToStart);
+			}
+			if (applyImmediateChecksOutcome(retryResult.outcome, txnid)) {
+				return;
+			}
+
+			await startVerifyLeadFlow(txnid);
+		} catch (e) {
+			Logger.warn("handleRetryChecking failed, falling back to verification poll", e);
+			await startVerifyLeadFlow(txnid);
+		} finally {
+			isRetryingChecksRef.current = false;
 		}
-		startVerifyLeadFlow(txnid);
 	};
 
 	// Auto-resume checking if resumeChecks param is set
@@ -658,12 +749,9 @@ export default function AssessmentFeeScreen() {
 				const txnid =
 					(params.txnid as string) ||
 					(await getStorageItem(STORAGE_KEYS["@latest-assessment-fee-txnid"])) ||
-					(await getStorageItem(STORAGE_KEYS["@transaction-id"]));
-				if (txnid) {
-					startVerifyLeadFlow(txnid);
-				} else {
-					router.replace("/(tabs)");
-				}
+					(await getStorageItem(STORAGE_KEYS["@transaction-id"])) ||
+					undefined;
+				startVerifyLeadFlow(txnid);
 			})();
 		}
 	}, [params.resumeChecks]);
@@ -993,6 +1081,7 @@ export default function AssessmentFeeScreen() {
 				countdown={rejectionCountdown}
 				setCountdown={setRejectionCountdown}
 				onClose={() => setRejectionModalVisible(false)}
+				showPaymentReceivedCard={afFlag !== "no"}
 			/>
 
 			<ExitIntentModal
