@@ -1,6 +1,7 @@
 import Logger from "@/utils/logger";
 import { axios } from "../core/client";
 import { URLS } from "../core/endpoints";
+import { getUserProfile } from "./user.service";
 import type {
 	CouponVerifyResponse,
 	LenderAllocationResult,
@@ -11,10 +12,12 @@ import type {
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * LENDER ALLOCATION (User-facing part)
+ * LENDER ALLOCATION (Employee / Admin use only)
  * POST /lender-allocations/allocate-for-user/{user_id}
- * Backend returns raw LenderAllocationSelectionResult.
- * Normalised into NormalizedResponse<LenderAllocationResult> so screens never care.
+ * ⚠️ WARNING: This endpoint is employee-only (Depends(require_active_employee)).
+ * For a borrower token it returns 401 ("Employee not found") which logs the user out.
+ * Must NOT be called from borrower screens. The borrower's allocated lender
+ * is assigned server-side and retrieved via GET /auth/me.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export const allocateLenderForUser = async (
@@ -34,27 +37,75 @@ export const allocateLenderForUser = async (
 };
 
 /**
- * ADAPTER: Post-KYC Lender Allocation Trigger (uses authenticated user "me")
+ * The borrower app must never call lender-allocations/allocate-for-user (employee-only,
+ * returns 401 and would log the user out); the allocated lender comes from GET /auth/me.
  */
-export const shouldClientTriggerAllocation = true;
+export const shouldClientTriggerAllocation = false;
 
+/**
+ * ADAPTER: Post-KYC Lender Allocation Reader.
+ * Safely resolves the server-allocated lender for the borrower from GET /auth/me.
+ * Never calls the employee-only allocate-for-user route and never throws.
+ */
 export const triggerPostKycAllocationAdapter = async (
 	userId?: string,
 ): Promise<LenderAllocationResult | null> => {
-	if (!shouldClientTriggerAllocation) {
-		return null;
-	}
 	try {
-		const res = await allocateLenderForUser("me");
-		return res.data ?? null;
+		const profile = await getUserProfile();
+		const meData = (profile as any)?.data || profile;
+		const wf = meData?.current_workflow;
+		const kycResp = wf?.profile_response;
+
+		const allocatedId =
+			kycResp?.allocated_lender_id ??
+			wf?.allocated_lender_id ??
+			meData?.allocated_lender_id ??
+			meData?.lead?.allocated_lender_id ??
+			null;
+
+		const lenderName =
+			kycResp?.lender_name ??
+			wf?.allocated_lender_name ??
+			wf?.lender_name ??
+			meData?.allocated_lender_name ??
+			meData?.lender_name ??
+			meData?.lead?.allocated_lender_name ??
+			meData?.lead?.lender_name ??
+			null;
+
+		if (!allocatedId && !lenderName) {
+			return null;
+		}
+
+		const cleanId =
+			allocatedId !== null && allocatedId !== undefined && String(allocatedId) !== "null"
+				? String(allocatedId)
+				: null;
+		const cleanName =
+			lenderName !== null && lenderName !== undefined && String(lenderName).trim() !== ""
+				? String(lenderName).trim()
+				: null;
+
+		if (!cleanId && !cleanName) {
+			return null;
+		}
+
+		return {
+			allocated_lender_id: cleanId,
+			lender_name: cleanName,
+			selection_reason: "Server-side allocated lender from /auth/me",
+			precedence_rule: "server_allocated",
+			user_category: "standard",
+			eligible_lenders: [],
+			excluded_lender_ids: [],
+		};
 	} catch (error) {
 		if (__DEV__) {
-Logger.warn("Operation failed", { code: "operation_failed" });
+			Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 		return null;
 	}
 };
-
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +149,7 @@ export const getLenders = async (): Promise<LenderItem[]> => {
 		return [];
 	} catch (err) {
 		if (__DEV__) {
-Logger.warn("Operation failed", { code: "operation_failed" });
+			Logger.warn("Operation failed", { code: "operation_failed" });
 		}
 		return [];
 	}

@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
-import { JAKARTA } from "@/constants/typography";
+import { primaryFont } from "@/constants/typography";
 import { useMountedRef } from "@/hooks/useMountedRef";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { ScrollViewRef } from "@/types/rn-refs";
@@ -825,7 +825,7 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 4,
 	},
 	sectionEyebrow: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 11,
 		letterSpacing: 0.7,
 		color: "#64748B",
@@ -854,13 +854,13 @@ const styles = StyleSheet.create({
 		flexWrap: "wrap",
 	},
 	fieldLabel: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 12,
 		color: "#334155",
 		includeFontPadding: false,
 	},
 	holderHelperText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		marginTop: 6,
@@ -876,7 +876,7 @@ const styles = StyleSheet.create({
 		backgroundColor: "#ECFDF5",
 	},
 	countPillText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		includeFontPadding: false,
@@ -909,7 +909,7 @@ const styles = StyleSheet.create({
 	input: {
 		flex: 1,
 		height: "100%",
-		fontFamily: JAKARTA.semibold,
+		...primaryFont("semibold"),
 		fontSize: 14,
 		color: "#0F172A",
 		paddingVertical: 0,
@@ -918,7 +918,7 @@ const styles = StyleSheet.create({
 		letterSpacing: 1.4,
 	},
 	ifscInput: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		letterSpacing: 0.8,
 	},
 	inputIconBtn: {
@@ -940,7 +940,7 @@ const styles = StyleSheet.create({
 		marginTop: 6,
 	},
 	safetyHintText: {
-		fontFamily: JAKARTA.regular,
+		...primaryFont("regular"),
 		fontSize: 11,
 		color: "#64748B",
 		flex: 1,
@@ -964,7 +964,7 @@ const styles = StyleSheet.create({
 		borderColor: "#FECACA",
 	},
 	matchPillText: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 11,
 		includeFontPadding: false,
 	},
@@ -1024,15 +1024,15 @@ const styles = StyleSheet.create({
 		includeFontPadding: false,
 	},
 	typeChipTextSelected: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		color: "#0F172A",
 	},
 	typeChipTextDefault: {
-		fontFamily: JAKARTA.semibold,
+		...primaryFont("semibold"),
 		color: "#334155",
 	},
 	ifscFormatHint: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		includeFontPadding: false,
@@ -1101,7 +1101,7 @@ const styles = StyleSheet.create({
 		gap: 6,
 	},
 	ifscBankName: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 12,
 		color: "#0F172A",
 		flexShrink: 1,
@@ -1114,21 +1114,21 @@ const styles = StyleSheet.create({
 		borderRadius: 4,
 	},
 	autoFilledChipText: {
-		fontFamily: JAKARTA.extraBold,
+		...primaryFont("extraBold"),
 		fontSize: 9,
 		color: "#065F46",
 		textTransform: "uppercase",
 		includeFontPadding: false,
 	},
 	ifscBranchCity: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#475569",
 		marginTop: 3,
 		includeFontPadding: false,
 	},
 	errorText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#E5484D",
 		marginTop: 5,

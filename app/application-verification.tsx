@@ -14,7 +14,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
 	Animated,
-	AppState,
 	BackHandler,
 	StyleSheet,
 	Text,
@@ -31,6 +30,15 @@ export default function ApplicationVerification() {
 	const { userId } = useAuth();
 	const [isFocused, setIsFocused] = useState(true);
 	const scaleAnim = useRef(new Animated.Value(0)).current;
+	const mountedAtRef = useRef(Date.now());
+	const [isTakingLonger, setIsTakingLonger] = useState(false);
+
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			setIsTakingLonger(true);
+		}, 10 * 60 * 1000);
+		return () => clearTimeout(timer);
+	}, []);
 
 	useFocusEffect(
 		React.useCallback(() => {
@@ -73,21 +81,17 @@ export default function ApplicationVerification() {
 			if (currentStatus === "approved" || canProceed || currentStatus === "rejected") {
 				return false;
 			}
-			return 10000;
+			const elapsed = Date.now() - mountedAtRef.current;
+			if (elapsed > 10 * 60 * 1000) {
+				return false;
+			}
+			if (elapsed < 2 * 60 * 1000) {
+				return 10_000;
+			}
+			return 20_000;
 		},
 		refetchOnWindowFocus: true,
 	});
-
-	// Refetch when returning to foreground
-	useEffect(() => {
-		const subscription = AppState.addEventListener("change", (nextState) => {
-			if (nextState === "active" && isFocused) {
-				refetch();
-			}
-		});
-
-		return () => subscription.remove();
-	}, [isFocused, refetch]);
 
 	// React to credit queue result
 	useEffect(() => {
@@ -161,6 +165,14 @@ export default function ApplicationVerification() {
 							style={styles.note}
 							translationKey="applicationUnderProcessNote"
 						/>
+
+						{isTakingLonger && (
+							<TranslatedText
+								style={styles.note}
+								translationKey="takingLongerThanUsual"
+								fallback="Taking longer than usual. Please keep the app open."
+							/>
+						)}
 
 						{data?.status === "rejected" && data.rejection_reason && !/cooling|cool-off|cool\s*off|30\s*days?|period|rule|bre|policy/i.test(data.rejection_reason) ? (
 							<Text style={styles.rejectionReason}>{data.rejection_reason}</Text>

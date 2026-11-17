@@ -20,11 +20,11 @@ export interface NormalizedResponse<T> {
 export interface LenderAllocationResult {
 	allocated_lender_id: string | null;
 	lender_name: string | null;
-	selection_reason: string;
-	precedence_rule: string;
-	user_category: string;
-	eligible_lenders: Array<Record<string, any>>;
-	excluded_lender_ids: string[];
+	selection_reason?: string;
+	precedence_rule?: string;
+	user_category?: string;
+	eligible_lenders?: Array<Record<string, any>>;
+	excluded_lender_ids?: string[];
 }
 
 

@@ -54,8 +54,10 @@ export type AssessmentChecks = {
 	status: "pending" | "approved" | "rejected" | "needs_update" | "error" | "service_unavailable";
 	failed_rule: null | "age" | "pin_code" | "email" | "pan_card" | "bureau";
 	message?: string;
-	handshake_success?: boolean | null;
+	booking_success?: boolean | null;
+	booking_status?: "pending" | "success" | "error" | "service_unavailable" | null;
 	lender_lead_id?: string | null;
+	loan_account_number?: string | null;
 	can_update_email: boolean;
 	can_update_pan: boolean;
 	remaining_email_updates: number;

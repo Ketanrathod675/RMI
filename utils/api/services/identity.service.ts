@@ -13,13 +13,23 @@ export class IdentityApiError extends Error {
 	status?: number;
 	detail?: string;
 	code?: string;
+	response?: any;
+	data?: any;
 
-	constructor(message: string, status?: number, detail?: string, code?: string) {
+	constructor(
+		message: string,
+		status?: number,
+		detail?: string,
+		code?: string,
+		response?: any,
+	) {
 		super(message);
 		this.name = "IdentityApiError";
 		this.status = status;
 		this.detail = detail;
 		this.code = code;
+		this.response = response;
+		this.data = response?.data;
 	}
 }
 
@@ -47,7 +57,7 @@ async function requestIdentity<T>(
 		};
 	} catch (err: any) {
 		const status = err.response?.status;
-		const code = err.response?.data?.code || err.response?.data?.data?.code;
+		const code = err.code || err.response?.data?.code || err.response?.data?.data?.code;
 		const detail =
 			typeof err.response?.data?.detail === "string"
 				? err.response.data.detail
@@ -56,7 +66,7 @@ async function requestIdentity<T>(
 				: err.response?.data?.message || err.message;
 
 		Logger.error(`Identity API [${actionName}] transport/HTTP error`, { status, code });
-		throw new IdentityApiError(detail || "Network error", status, detail, code);
+		throw new IdentityApiError(detail || "Network error", status, detail, code, err.response);
 	}
 }
 
@@ -231,6 +241,7 @@ export const uploadSelfie = async (
 				headers: {
 					"Content-Type": "multipart/form-data",
 				},
+				timeout: 60_000,
 			}),
 		"uploadSelfie",
 	);

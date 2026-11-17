@@ -13,7 +13,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { JAKARTA } from "@/constants/typography";
+import { primaryFont } from "@/constants/typography";
 import { useKeyboardVisible } from "@/hooks/useKeyboardVisible";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { ScrollViewRef } from "@/types/rn-refs";
@@ -228,13 +228,13 @@ const styles = StyleSheet.create({
 		flex: 1,
 	},
 	sheetTitle: {
-		fontFamily: JAKARTA.extraBold,
+		...primaryFont("extraBold"),
 		fontSize: 16,
 		color: "#0F172A",
 		includeFontPadding: false,
 	},
 	sheetSubtitle: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		marginTop: 2,
@@ -263,7 +263,7 @@ const styles = StyleSheet.create({
 		paddingTop: 12,
 	},
 	missingHintText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		textAlign: "center",
@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 16,
 	},
 	ctaText: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 16,
 		color: "#FFFFFF",
 		textShadowColor: "rgba(0, 0, 0, 0.22)",

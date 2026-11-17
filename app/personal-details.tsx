@@ -6,13 +6,15 @@ import { useDefault } from "@/hooks/useDefault";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareQuery } from "@/hooks/useNetworkAwareQuery";
 import { useTranslation } from "@/hooks/useTranslation";
-import { fetchSelfie } from "@/utils/api/kyc";
+import { getSelfieStatus } from "@/utils/api/services/identity.service";
 import { getUserProfile } from "@/utils/api/user";
+import { extractSelfieUrl, getImageHeaders, resolveImageUrl } from "@/utils/imageUrl";
+import { getUserSelfie } from "@/utils/selfie";
 import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, Stack, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
 	ActivityIndicator,
 	BackHandler,
@@ -35,7 +37,25 @@ export default function PersonalDetails() {
 
 	// Selfie state
 	const [selfieUri, setSelfieUri] = useState<string | null>(null);
+	const [localSelfie, setLocalSelfie] = useState<string | null>(null);
+	const [remoteImageFailed, setRemoteImageFailed] = useState(false);
+	const [localImageFailed, setLocalImageFailed] = useState(false);
 	const [showImageModal, setShowImageModal] = useState(false);
+
+	// Load local cached selfie immediately as instant fallback
+	useEffect(() => {
+		let isMounted = true;
+		getUserSelfie()
+			.then((saved) => {
+				if (isMounted && saved) {
+					setLocalSelfie(saved);
+				}
+			})
+			.catch(() => {});
+		return () => {
+			isMounted = false;
+		};
+	}, []);
 
 	// All fields are read-only, computed from API data
 	const [displayData, setDisplayData] = useState({
@@ -70,25 +90,65 @@ export default function PersonalDetails() {
 		refetch: refetchSelfie,
 	} = useNetworkAwareQuery({
 		queryKey: ["userSelfie", userId],
-		queryFn: fetchSelfie,
+		queryFn: async () => {
+			try {
+				const res = await getSelfieStatus();
+				return res.data;
+			} catch {
+				return { selfie_url: null };
+			}
+		},
 		enabled: !!userId,
-		retry: 1,
 	});
 
-	// Update selfie URI when data is fetched from API only
+	// Update selfie URI when data is fetched from API
 	useEffect(() => {
-		if (selfieData?.selfie_url) {
-			setSelfieUri(selfieData.selfie_url);
-		} else {
-			setSelfieUri(null);
+		const extracted = extractSelfieUrl(selfieData);
+		if (extracted) {
+			setSelfieUri(extracted);
 		}
 	}, [selfieData]);
+
+	// Remote candidate URL from API / profile response
+	const remoteCandidate = useMemo(() => {
+		const raw =
+			extractSelfieUrl(selfieData) ||
+			extractSelfieUrl(userProfile) ||
+			extractSelfieUrl((userProfile as any)?.profile) ||
+			selfieUri;
+		return resolveImageUrl(raw);
+	}, [selfieData, userProfile, selfieUri]);
+
+	// Reset error flags whenever URLs change
+	useEffect(() => {
+		setRemoteImageFailed(false);
+	}, [remoteCandidate]);
+
+	useEffect(() => {
+		setLocalImageFailed(false);
+	}, [localSelfie]);
+
+	// Resolved profile image / avatar URI: prefers remote candidate, falls back to local storage cache
+	const effectiveImageUri = useMemo(() => {
+		if (remoteCandidate && !remoteImageFailed) {
+			return remoteCandidate;
+		}
+		if (localSelfie && !localImageFailed) {
+			return resolveImageUrl(localSelfie);
+		}
+		return null;
+	}, [remoteCandidate, remoteImageFailed, localSelfie, localImageFailed]);
 
 	// Reload selfie when screen comes into focus
 	useFocusEffect(
 		React.useCallback(() => {
 			refetchSelfie();
-		}, [refetchSelfie])
+			getUserSelfie()
+				.then((saved) => {
+					if (saved) setLocalSelfie(saved);
+				})
+				.catch(() => {});
+		}, [refetchSelfie]),
 	);
 
 	// Ensure system status bar is visible (dark icons over white header) when Personal Details is focused
@@ -301,10 +361,30 @@ export default function PersonalDetails() {
 			<View style={styles.profileSection}>
 				<TouchableOpacity
 					style={styles.imageContainer}
-					onPress={() => selfieUri && setShowImageModal(true)}
-					disabled={!selfieUri}>
-					{selfieUri ? (
-						<Image source={{ uri: selfieUri }} style={styles.profileImage} />
+					onPress={() => effectiveImageUri && setShowImageModal(true)}
+					disabled={!effectiveImageUri}>
+					{effectiveImageUri ? (
+						<Image
+							source={{
+								uri: effectiveImageUri,
+								headers: getImageHeaders(effectiveImageUri),
+							}}
+							style={styles.profileImage}
+							onError={(e) => {
+								if (__DEV__) {
+									console.warn("[PersonalDetails] Failed to load avatar image", {
+										uri: effectiveImageUri,
+										isRemote: effectiveImageUri === remoteCandidate,
+										error: e?.nativeEvent,
+									});
+								}
+								if (effectiveImageUri === remoteCandidate) {
+									setRemoteImageFailed(true);
+								} else {
+									setLocalImageFailed(true);
+								}
+							}}
+						/>
 					) : (
 						<MaterialIcons name="person" size={60} color="#999" />
 					)}
@@ -328,11 +408,15 @@ export default function PersonalDetails() {
 					activeOpacity={1}
 					onPress={() => setShowImageModal(false)}>
 					<View style={styles.modalContent}>
-						{selfieUri && (
+						{effectiveImageUri && (
 							<Image
-								source={{ uri: selfieUri }}
+								source={{
+									uri: effectiveImageUri,
+									headers: getImageHeaders(effectiveImageUri),
+								}}
 								style={styles.enlargedImage}
 								resizeMode="contain"
+								onError={() => setShowImageModal(false)}
 							/>
 						)}
 						<TouchableOpacity

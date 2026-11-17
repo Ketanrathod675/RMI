@@ -97,25 +97,6 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 		) {
 			status = bs as any;
 		}
-	} else {
-		// Older backend shape derivation:
-		// NEVER treat is_rejected_during_rapid_money_assessment: "No" as approval (it's default while pending).
-		const initialCreated = Boolean(raw.initial_payload_created);
-		const breDecision = raw.bre_decision ? String(raw.bre_decision).toUpperCase().trim() : "";
-
-		if (!initialCreated || !breDecision) {
-			status = "pending";
-		} else if (breDecision === "REJECTED") {
-			status = "rejected";
-		} else if (breDecision === "APPROVED") {
-			if (raw.handshake_success === false) {
-				status = "error";
-			} else {
-				status = "approved";
-			}
-		} else {
-			status = "pending";
-		}
 	}
 
 	const validFailedRules = ["age", "pin_code", "email", "pan_card", "bureau"] as const;
@@ -149,13 +130,23 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 	const unavailable_service =
 		typeof raw.unavailable_service === "string" ? raw.unavailable_service : undefined;
 
+	const validBookingStatuses = ["pending", "success", "error", "service_unavailable"] as const;
+	const rawBookingStatus =
+		typeof raw.booking_status === "string" ? raw.booking_status.toLowerCase().trim() : null;
+	const booking_status =
+		rawBookingStatus && (validBookingStatuses as readonly string[]).includes(rawBookingStatus)
+			? (rawBookingStatus as AssessmentChecks["booking_status"])
+			: null;
+
 	return {
 		status,
 		failed_rule,
 		message: raw.message || raw.msg || undefined,
-		handshake_success:
-			typeof raw.handshake_success === "boolean" ? raw.handshake_success : null,
+		booking_success:
+			typeof raw.booking_success === "boolean" ? raw.booking_success : null,
+		booking_status,
 		lender_lead_id: raw.lender_lead_id ? String(raw.lender_lead_id) : null,
+		loan_account_number: raw.loan_account_number ? String(raw.loan_account_number) : null,
 		can_update_email,
 		can_update_pan,
 		remaining_email_updates,
@@ -166,20 +157,48 @@ export const normalizeAssessmentChecks = (raw: any): AssessmentChecks => {
 };
 
 /**
- * Fetch Handshake / BRE Status
- * GET /payment/handshake-status?txnid={txnid}
+ * Fetch BRE and Booking Status
+ * GET /payment/booking-status?txnid={txnid}&lead_id={leadId}
  */
-export const getHandshakeStatus = async (
-	txnid?: string,
+export const getBookingStatus = async (
+	params?: { txnid?: string; leadId?: string },
 	options?: { signal?: AbortSignal },
 ): Promise<AssessmentChecks> => {
-	Logger.debug("Fetching handshake status", txnid ? { txnid } : {});
-	const response = await axios.get(URLS.payments.handshake_status, {
-		params: txnid ? { txnid } : undefined,
-		signal: options?.signal,
-	});
-	const raw = response.data?.data || response.data;
-	return normalizeAssessmentChecks(raw);
+	Logger.debug("Fetching booking status", params || {});
+	const queryParams: Record<string, string> = {};
+	if (params?.txnid) {
+		queryParams.txnid = params.txnid;
+	}
+	if (params?.leadId) {
+		queryParams.lead_id = params.leadId;
+	}
+
+	try {
+		const response = await axios.get(URLS.payments.booking_status, {
+			params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
+			signal: options?.signal,
+		});
+		const raw = response.data?.data || response.data;
+		return normalizeAssessmentChecks(raw);
+	} catch (error: any) {
+		const httpStatus = error?.response?.status;
+		const rawDetail =
+			error?.response?.data?.detail ||
+			error?.response?.data?.message ||
+			error?.message ||
+			"Failed to fetch booking status";
+		const detailStr =
+			typeof rawDetail === "string" ? rawDetail : JSON.stringify(rawDetail);
+		const err = new Error(detailStr) as any;
+		err.detail = detailStr;
+		err.status = httpStatus;
+		if (httpStatus === 404) {
+			err.isNotFound = true;
+		} else if (httpStatus === 409) {
+			err.isPaymentPending = true;
+		}
+		throw err;
+	}
 };
 
 /**

@@ -162,7 +162,7 @@ export const URLS = {
 		initiate_assessment_fee: "payment/initiate-assessment-fee",
 		verify_status: (txnid: string) => `payment/verify-status/${txnid}`,
 		initiate_payment: "payment/initiate-assessment-fee",
-		handshake_status: "payment/handshake-status",
+		booking_status: "payment/booking-status",
 		retry_assessment_checks: "payment/retry-assessment-checks",
 	},
 	pincode: {

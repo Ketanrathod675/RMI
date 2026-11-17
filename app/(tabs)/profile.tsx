@@ -8,12 +8,14 @@ import { useTranslation } from "@/hooks/useTranslation";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { LANGUAGES, type Languages } from "@/store";
 import { getUserDashboardData, getUserProfile, getUserFeedback, saveFeedback } from "@/utils/api";
-import { fetchSelfie } from "@/utils/api/kyc";
+import { getSelfieStatus } from "@/utils/api/services/identity.service";
+import { extractSelfieUrl, getImageHeaders, resolveImageUrl } from "@/utils/imageUrl";
+import { getUserSelfie } from "@/utils/selfie";
 import { font, height, width } from "@/utils/dimensions";
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, useFocusEffect, useNavigation } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Animated,
@@ -68,7 +70,25 @@ export default function Profile() {
 
 	// Selfie state
 	const [selfieUri, setSelfieUri] = useState<string | null>(null);
+	const [localSelfie, setLocalSelfie] = useState<string | null>(null);
+	const [remoteImageFailed, setRemoteImageFailed] = useState(false);
+	const [localImageFailed, setLocalImageFailed] = useState(false);
 	const { userId } = useAuth();
+
+	// Load local cached selfie immediately as instant fallback
+	useEffect(() => {
+		let isMounted = true;
+		getUserSelfie()
+			.then((saved) => {
+				if (isMounted && saved) {
+					setLocalSelfie(saved);
+				}
+			})
+			.catch(() => {});
+		return () => {
+			isMounted = false;
+		};
+	}, []);
 
 	// Fetch selfie from API
 	const {
@@ -78,17 +98,22 @@ export default function Profile() {
 		refetch: refetchSelfie,
 	} = useNetworkAwareQuery({
 		queryKey: ["userSelfie", userId],
-		queryFn: fetchSelfie,
+		queryFn: async () => {
+			try {
+				const res = await getSelfieStatus();
+				return res.data;
+			} catch {
+				return { selfie_url: null };
+			}
+		},
 		enabled: !!userId,
-		retry: 1,
 	});
 
-	// Update selfie URI when data is fetched from API only
+	// Update selfie URI when data is fetched from API
 	useEffect(() => {
-		if (selfieData?.selfie_url) {
-			setSelfieUri(selfieData.selfie_url);
-		} else {
-			setSelfieUri(null);
+		const extracted = extractSelfieUrl(selfieData);
+		if (extracted) {
+			setSelfieUri(extracted);
 		}
 	}, [selfieData]);
 
@@ -96,6 +121,11 @@ export default function Profile() {
 	useFocusEffect(
 		React.useCallback(() => {
 			refetchSelfie();
+			getUserSelfie()
+				.then((saved) => {
+					if (saved) setLocalSelfie(saved);
+				})
+				.catch(() => {});
 		}, [refetchSelfie]),
 	);
 
@@ -272,11 +302,15 @@ export default function Profile() {
 	};
 
 	const menuItems: MenuItem[] = [
-		{
-			title: "Sentry Test Screen",
-			icon: "bug-report",
-			onPress: () => router.push("/sentry-test" as any),
-		},
+		...(__DEV__
+			? [
+					{
+						title: "Sentry Test Screen",
+						icon: "bug-report" as const,
+						onPress: () => router.push("/sentry-test" as any),
+					},
+			  ]
+			: []),
 		{
 			title: t("loanDetails"),
 			icon: "currency-rupee",
@@ -336,6 +370,36 @@ export default function Profile() {
 		queryFn: getUserProfile,
 		enabled: !!userId,
 	});
+
+	// Remote candidate URL from API / profile response
+	const remoteCandidate = useMemo(() => {
+		const raw =
+			extractSelfieUrl(selfieData) ||
+			extractSelfieUrl(userProfile) ||
+			extractSelfieUrl((userProfile as any)?.profile) ||
+			selfieUri;
+		return resolveImageUrl(raw);
+	}, [selfieData, userProfile, selfieUri]);
+
+	// Reset error flags whenever URLs change
+	useEffect(() => {
+		setRemoteImageFailed(false);
+	}, [remoteCandidate]);
+
+	useEffect(() => {
+		setLocalImageFailed(false);
+	}, [localSelfie]);
+
+	// Resolved profile image / avatar URI: prefers remote candidate, falls back to local storage cache
+	const effectiveImageUri = useMemo(() => {
+		if (remoteCandidate && !remoteImageFailed) {
+			return remoteCandidate;
+		}
+		if (localSelfie && !localImageFailed) {
+			return resolveImageUrl(localSelfie);
+		}
+		return null;
+	}, [remoteCandidate, remoteImageFailed, localSelfie, localImageFailed]);
 
 	// Fetch dashboard data
 	const {
@@ -425,8 +489,28 @@ export default function Profile() {
 					activeOpacity={0.8}>
 					{/* Avatar */}
 					<View style={styles.avatarContainer}>
-						{selfieUri ? (
-							<Image source={{ uri: selfieUri }} style={styles.profileImage} />
+						{effectiveImageUri ? (
+							<Image
+								source={{
+									uri: effectiveImageUri,
+									headers: getImageHeaders(effectiveImageUri),
+								}}
+								style={styles.profileImage}
+								onError={(e) => {
+									if (__DEV__) {
+										console.warn("[Profile] Failed to load avatar image", {
+											uri: effectiveImageUri,
+											isRemote: effectiveImageUri === remoteCandidate,
+											error: e?.nativeEvent,
+										});
+									}
+									if (effectiveImageUri === remoteCandidate) {
+										setRemoteImageFailed(true);
+									} else {
+										setLocalImageFailed(true);
+									}
+								}}
+							/>
 						) : (
 							<MaterialIcons name="person" size={38} color="#D97706" />
 						)}

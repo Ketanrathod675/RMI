@@ -19,7 +19,7 @@ import { extractFieldErrors } from "@/utils/api/core/fieldErrors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import Logger from "@/utils/logger";
 import {
-	getHandshakeStatus,
+	getBookingStatus,
 	getUserDashboardData,
 	getUserProfile,
 	retryAssessmentChecks,
@@ -143,7 +143,11 @@ export default function VerifyPan() {
 					// Fallback
 				}
 
-				const checks = await getHandshakeStatus();
+				const initialLeadId =
+					(params.lead_id as string) || (await resolveLeadId().catch(() => ""));
+				const checks = await getBookingStatus({
+					leadId: initialLeadId || undefined,
+				});
 				if (!isMounted) return;
 
 				if (checks.status === "approved") {
@@ -303,7 +307,7 @@ export default function VerifyPan() {
 							const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
 
 							if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
-								const checks = await getHandshakeStatus();
+								const checks = await getBookingStatus({ leadId });
 								if (checks.status === "approved") {
 									navTarget = () =>
 										router.replace({
@@ -334,7 +338,7 @@ export default function VerifyPan() {
 						}
 					}
 
-					// Poll handshake status
+					// Poll booking status
 					const checks = await pollAssessmentChecks({
 						signal: loaderSignal,
 						leadId,
@@ -397,7 +401,11 @@ export default function VerifyPan() {
 
 	const handleChecksFailure = async (err: any) => {
 		if (err?.aborted) return;
-		const freshChecks = await getHandshakeStatus().catch(() => null);
+		const resolvedLeadId =
+			(params.lead_id as string) || (await resolveLeadId().catch(() => ""));
+		const freshChecks = await getBookingStatus({
+			leadId: resolvedLeadId || undefined,
+		}).catch(() => null);
 		const dashboardData =
 			!freshChecks || freshChecks.status === "pending"
 				? await getUserDashboardData().catch(() => null)

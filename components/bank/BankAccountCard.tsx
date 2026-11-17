@@ -2,7 +2,7 @@ import React from "react";
 import { Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { JAKARTA } from "@/constants/typography";
+import { primaryFont } from "@/constants/typography";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
 	formatMaskedAccountNumber,
@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
 		flexShrink: 0,
 	},
 	avatarText: {
-		fontFamily: JAKARTA.extraBold,
+		...primaryFont("extraBold"),
 		fontSize: 12,
 		color: "#FFFFFF",
 		includeFontPadding: false,
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
 		gap: 6,
 	},
 	bankName: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 14,
 		color: "#0F172A",
 		flexShrink: 1,
@@ -268,13 +268,13 @@ const styles = StyleSheet.create({
 		paddingVertical: 2,
 	},
 	draftChipText: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 10,
 		color: "#B45309",
 		includeFontPadding: false,
 	},
 	maskedNumber: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 12,
 		letterSpacing: 0.9,
 		color: "#334155",
@@ -335,19 +335,19 @@ const styles = StyleSheet.create({
 		borderRadius: 6,
 	},
 	typePillText: {
-		fontFamily: JAKARTA.semibold,
+		...primaryFont("semibold"),
 		fontSize: 10,
 		color: "#334155",
 		includeFontPadding: false,
 	},
 	ifscText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		includeFontPadding: false,
 	},
 	blacklistedErrorText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#BE123C",
 		marginTop: 8,

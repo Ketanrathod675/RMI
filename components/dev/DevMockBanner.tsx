@@ -414,12 +414,13 @@ export function DevMockBanner() {
 							</View>
 
 							<View style={styles.divider} />
-							<Text style={styles.sectionHeader}>⚖️ BRE / Handshake Simulation</Text>
-							<Text style={styles.optionDesc}>Select BRE outcome for payment handshake:</Text>
+							<Text style={styles.sectionHeader}>⚖️ BRE / Booking Simulation</Text>
+							<Text style={styles.optionDesc}>Select BRE outcome for payment booking:</Text>
 							<View style={styles.stepChipsRow}>
 								{[
 									{ label: "Pending → Approved", value: "pending_then_approved" },
 									{ label: "Approved Immediately", value: "approved" },
+									{ label: "Approved (Booking Unavailable)", value: "approved_booking_unavailable" },
 									{ label: "Rejected (Bureau)", value: "rejected_bureau" },
 									{ label: "Rejected (PAN Fixable)", value: "rejected_pan_fixable" },
 									{ label: "Rejected (Email Fixable)", value: "rejected_email_fixable" },

@@ -37,6 +37,7 @@ export interface DevMockOptions {
 	breOutcome?:
 		| "approved"
 		| "pending_then_approved"
+		| "approved_booking_unavailable"
 		| "rejected_bureau"
 		| "rejected_pan_fixable"
 		| "rejected_email_fixable"
@@ -643,13 +644,18 @@ export async function handleDevMockRequest(
 	// 6. Selfie Status
 	if (url.includes("selfie/status") && method === "get") {
 		await delay(150);
+		const isPendingSelfie = _mockOptions.currentStep === "selfie_match";
 		return {
 			data: {
 				success: true,
 				message: "Selfie status retrieved",
 				data: {
-					status: "pending",
-					workflow_completed: false,
+					status: isPendingSelfie ? "pending" : "approved",
+					workflow_completed: !isPendingSelfie,
+					selfie_uploaded: !isPendingSelfie,
+					selfie_url: isPendingSelfie
+						? null
+						: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
 				},
 			},
 			status: 200,
@@ -1546,12 +1552,12 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}
 
-	// ─── Endpoint: payment/handshake-status ──────────────────────────────────
-	if (url.includes("payment/handshake-status") && method === "get") {
+	// ─── Endpoint: payment/booking-status ──────────────────────────────────
+	if (url.includes("payment/booking-status") && method === "get") {
 		await delay(350);
 		_brePollCount++;
 		const outcome = _mockOptions.breOutcome || "pending_then_approved";
-		console.log(`🛠️ [DEV MOCK API] ⚡ Handshake status check #${_brePollCount}, outcome: ${outcome}`);
+		console.log(`🛠️ [DEV MOCK API] ⚡ Booking status check #${_brePollCount}, outcome: ${outcome}`);
 
 		if (outcome === "pending_then_approved") {
 			if (_brePollCount <= 2) {
@@ -1575,7 +1581,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "approved",
 					failed_rule: null,
-					handshake_success: true,
+					booking_success: true,
+					booking_status: "success",
 					can_update_email: false,
 					can_update_pan: false,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1593,7 +1600,27 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "approved",
 					failed_rule: null,
-					handshake_success: true,
+					booking_success: true,
+					booking_status: "success",
+					can_update_email: false,
+					can_update_pan: false,
+					remaining_email_updates: _remainingEmailUpdates,
+					remaining_pan_updates: _remainingPanUpdates,
+				},
+				status: 200,
+				statusText: "OK",
+				headers: {},
+				config,
+			};
+		}
+
+		if (outcome === "approved_booking_unavailable") {
+			return {
+				data: {
+					status: "approved",
+					failed_rule: null,
+					booking_success: false,
+					booking_status: "service_unavailable",
 					can_update_email: false,
 					can_update_pan: false,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1611,7 +1638,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "rejected",
 					failed_rule: "bureau",
-					handshake_success: false,
+					booking_success: false,
+					booking_status: "error",
 					can_update_email: false,
 					can_update_pan: false,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1629,7 +1657,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "rejected",
 					failed_rule: "pan_card",
-					handshake_success: false,
+					booking_success: false,
+					booking_status: "error",
 					can_update_email: false,
 					can_update_pan: _remainingPanUpdates > 0,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1647,7 +1676,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "rejected",
 					failed_rule: "email",
-					handshake_success: false,
+					booking_success: false,
+					booking_status: "error",
 					can_update_email: _remainingEmailUpdates > 0,
 					can_update_pan: false,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1665,7 +1695,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 			data: {
 				status: "error",
 				failed_rule: null,
-				handshake_success: false,
+				booking_success: false,
+				booking_status: "error",
 				can_update_email: false,
 				can_update_pan: false,
 				remaining_email_updates: _remainingEmailUpdates,
@@ -1702,7 +1733,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "approved",
 					failed_rule: null,
-					handshake_success: true,
+					booking_success: true,
+					booking_status: "success",
 					can_update_email: false,
 					can_update_pan: false,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1733,7 +1765,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				data: {
 					status: "approved",
 					failed_rule: null,
-					handshake_success: true,
+					booking_success: true,
+					booking_status: "success",
 					can_update_email: false,
 					can_update_pan: false,
 					remaining_email_updates: _remainingEmailUpdates,
@@ -1750,7 +1783,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 			data: {
 				status: "approved",
 				failed_rule: null,
-				handshake_success: true,
+				booking_success: true,
+				booking_status: "success",
 				can_update_email: false,
 				can_update_pan: false,
 				remaining_email_updates: _remainingEmailUpdates,
@@ -2366,6 +2400,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 			status: "active",
 			is_phone_verified: true,
 			is_email_verified: true,
+			image_url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
+			selfie_url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
 			personal_details: {
 				full_name: "Dev User",
 				father_name: "Mock Father",
@@ -3465,6 +3501,9 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 	}
 
 	// ─── 46. Endpoint: lender-allocations/allocate-for-user ──────────────────
+	// NOTE: Real backend route POST lender-allocations/allocate-for-user/{user_id}
+	// is employee-only (Depends(require_active_employee)) and returns 401 for borrowers.
+	// Kept here for dev/admin testing, but borrower app must not call it.
 	if (url.includes("lender-allocations/allocate-for-user") && method === "post") {
 		await delay(350);
 Logger.warn("Operation failed", { code: "operation_failed" });
@@ -3645,6 +3684,8 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 					profile: {
 						full_name: "Applicant",
 						father_name: "Father",
+						image_url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
+						selfie_url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
 						pan_number: "ABCDE1234F",
 						dob: "1995-01-01",
 						gender: "male",
@@ -3668,8 +3709,9 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 							af_amount: 99,
 							assessment_fee: 99,
 							af: "0",
-							allocated_lender_id: 1,
+							allocated_lender_id: "lender_ruloans_01",
 							lender_name: "RapidMoney Finance",
+							lender_allocated: true,
 						},
 					},
 					active_loan: _mockOptions.activeLoan ?? null,

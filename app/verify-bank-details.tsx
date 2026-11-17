@@ -18,7 +18,7 @@ import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import AddBankAccountSheet from "@/components/bank/AddBankAccountSheet";
 import BankAccountCard from "@/components/bank/BankAccountCard";
 import BankAccountForm, { useBankAccountForm } from "@/components/bank/BankAccountForm";
-import { JAKARTA } from "@/constants/typography";
+import { primaryFont } from "@/constants/typography";
 import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { useBankAccountPicker } from "@/hooks/useBankAccountPicker";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
@@ -397,13 +397,13 @@ const styles = StyleSheet.create({
 		flex: 1,
 	},
 	headerTitle: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 16,
 		color: "#0F172A",
 		includeFontPadding: false,
 	},
 	headerSubtitle: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		marginTop: 2,
@@ -435,14 +435,14 @@ const styles = StyleSheet.create({
 		gap: 8,
 	},
 	errorStateTitle: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 16,
 		color: "#0F172A",
 		textAlign: "center",
 		marginTop: 4,
 	},
 	errorStateSubtitle: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 13,
 		color: "#64748B",
 		textAlign: "center",
@@ -456,7 +456,7 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	retryBtnText: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 14,
 		color: "#FFFFFF",
 	},
@@ -471,14 +471,14 @@ const styles = StyleSheet.create({
 		gap: 14,
 	},
 	pickerHeading: {
-		fontFamily: JAKARTA.extraBold,
+		...primaryFont("extraBold"),
 		fontSize: 18,
 		color: "#0F172A",
 		lineHeight: 24,
 		includeFontPadding: false,
 	},
 	pickerSubheading: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 12,
 		color: "#64748B",
 		marginTop: 3,
@@ -496,7 +496,7 @@ const styles = StyleSheet.create({
 	},
 	selectionBannerText: {
 		flex: 1,
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 12,
 		color: "#BE123C",
 		includeFontPadding: false,
@@ -526,7 +526,7 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	addNewText: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 13,
 		color: "#334155",
 		includeFontPadding: false,
@@ -546,13 +546,13 @@ const styles = StyleSheet.create({
 		marginBottom: 8,
 	},
 	encryptedText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		includeFontPadding: false,
 	},
 	missingHintText: {
-		fontFamily: JAKARTA.medium,
+		...primaryFont("medium"),
 		fontSize: 11,
 		color: "#64748B",
 		textAlign: "center",
@@ -579,7 +579,7 @@ const styles = StyleSheet.create({
 		gap: 8,
 	},
 	ctaText: {
-		fontFamily: JAKARTA.bold,
+		...primaryFont("bold"),
 		fontSize: 16,
 		color: "#FFFFFF",
 		flexShrink: 1,

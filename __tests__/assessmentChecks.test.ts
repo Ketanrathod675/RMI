@@ -13,6 +13,7 @@ import {
 	shouldCallBackendRetry,
 } from "../utils/assessmentChecksFlow";
 import { normalizeAssessmentChecks } from "../utils/api/services/payment.service";
+import { pollAssessmentChecks } from "../hooks/useAssessmentChecks";
 import type { AssessmentChecks } from "../utils/api/types/payment.types";
 
 function assert(condition: boolean, message: string): void {
@@ -150,7 +151,7 @@ export async function runAssessmentChecksTests(): Promise<void> {
 
 	// 5. resolveErrorFallbackStatus: fail-closed recovery on poll timeout / error
 	{
-		// Recovers to approved when fresh handshake check returns approved
+		// Recovers to approved when fresh booking check returns approved
 		const recoveredFromHs = resolveErrorFallbackStatus({
 			error: { isTimeout: true },
 			freshChecks: makeChecks({ status: "approved" }),
@@ -217,7 +218,7 @@ export async function runAssessmentChecksTests(): Promise<void> {
 	// 6. executeAssessmentRetry: timeout calls backend retry and acts on immediate approved without re-polling
 	{
 		let retryCalls = 0;
-		let hsCalls = 0;
+		let bookingCalls = 0;
 		const res = await executeAssessmentRetry({
 			lastStatus: "timeout",
 			lastRetryAtMs: 0,
@@ -227,14 +228,14 @@ export async function runAssessmentChecksTests(): Promise<void> {
 				retryCalls += 1;
 				return makeChecks({ status: "approved" });
 			},
-			callHandshakeStatus: async () => {
-				hsCalls += 1;
+			callBookingStatus: async () => {
+				bookingCalls += 1;
 				return makeChecks({ status: "approved" });
 			},
 			callDashboard: async () => null,
 		});
 		assert(retryCalls === 1, "Timeout retry MUST call backend retryAssessmentChecks");
-		assert(hsCalls === 0, "Immediate approved result should skip redundant handshake status fetch");
+		assert(bookingCalls === 0, "Immediate approved result should skip redundant booking status fetch");
 		assert(res.calledBackendRetry === true, "calledBackendRetry must be true");
 		assert(res.outcome.action === "approved", "Immediate approved retry must resolve to 'approved'");
 	}
@@ -252,10 +253,10 @@ export async function runAssessmentChecksTests(): Promise<void> {
 				err.status = 409;
 				throw err;
 			},
-			callHandshakeStatus: async () => makeChecks({ status: "approved" }),
+			callBookingStatus: async () => makeChecks({ status: "approved" }),
 			callDashboard: async () => null,
 		});
-		assert(resApproved.outcome.action === "approved", "409 fallback should advance when handshake_status is approved");
+		assert(resApproved.outcome.action === "approved", "409 fallback should advance when booking_status is approved");
 
 		// Case 7b: 409 because backend still blocks 'service_unavailable'
 		const resStillBlocked = await executeAssessmentRetry({
@@ -268,7 +269,7 @@ export async function runAssessmentChecksTests(): Promise<void> {
 				err.status = 409;
 				throw err;
 			},
-			callHandshakeStatus: async () =>
+			callBookingStatus: async () =>
 				makeChecks({ status: "service_unavailable", retry_after_seconds: 30 }),
 			callDashboard: async () => null,
 		});
@@ -288,12 +289,81 @@ export async function runAssessmentChecksTests(): Promise<void> {
 			cooldownSeconds: 60,
 			nowMs: 1_700_000_000_000,
 			callRetry: async () => makeChecks({ status: "pending" }),
-			callHandshakeStatus: async () => makeChecks({ status: "pending" }),
+			callBookingStatus: async () => makeChecks({ status: "pending" }),
 			callDashboard: async () => null,
 		});
 		assert(
 			resPending.outcome.action === "poll" && resPending.cooldownSecondsToStart === 60,
 			"Pending retry response should trigger polling and set cooldown",
+		);
+	}
+
+	// 9. status === "approved" with booking_status: "service_unavailable" resolves as approved
+	{
+		const approvedBookingUnavail = makeChecks({
+			status: "approved",
+			booking_status: "service_unavailable",
+			booking_success: false,
+		});
+
+		// 9a: classifyAssessmentChecksOutcome
+		const classified = classifyAssessmentChecksOutcome(approvedBookingUnavail);
+		assert(
+			classified.action === "approved",
+			"status === 'approved' with booking_status === 'service_unavailable' must classify as 'approved'",
+		);
+
+		// 9b: normalizeAssessmentChecks
+		const normalized = normalizeAssessmentChecks({
+			status: "approved",
+			booking_status: "service_unavailable",
+			booking_success: false,
+		});
+		assert(
+			normalized.status === "approved" &&
+				normalized.booking_status === "service_unavailable" &&
+				normalized.booking_success === false,
+			"normalizeAssessmentChecks must retain approved status even when booking is service_unavailable",
+		);
+
+		// 9c: pollAssessmentChecks returns approved on attempt 1 without error
+		let pollCalls = 0;
+		const polled = await pollAssessmentChecks({
+			txnid: `approved_unavail_${Date.now()}`,
+			leadId: "lead_approved_unavail",
+			fetcher: async () => {
+				pollCalls += 1;
+				return approvedBookingUnavail;
+			},
+		});
+		assert(polled.status === "approved", "pollAssessmentChecks must resolve as approved");
+		assert(pollCalls === 1, `Must terminate immediately on attempt 1, got ${pollCalls}`);
+	}
+
+	// 10. A 404 from booking-status halts polling after 1 request
+	{
+		let poll404Calls = 0;
+		let caughtErr: any = null;
+		try {
+			await pollAssessmentChecks({
+				txnid: `txn_404_${Date.now()}`,
+				leadId: "lead_404",
+				fetcher: async () => {
+					poll404Calls += 1;
+					const notFoundErr: any = new Error("Lead not found for payment.");
+					notFoundErr.isNotFound = true;
+					notFoundErr.status = 404;
+					throw notFoundErr;
+				},
+			});
+		} catch (err: any) {
+			caughtErr = err;
+		}
+
+		assert(poll404Calls === 1, `404 must halt polling immediately after 1 request, got ${poll404Calls}`);
+		assert(
+			caughtErr?.isNotFound === true && caughtErr?.status === 404,
+			"Expected 404 notFound error to be thrown to caller",
 		);
 	}
 }

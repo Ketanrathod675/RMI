@@ -270,7 +270,6 @@ export default function SanctionLetter() {
 		},
 		staleTime: 0,
 		gcTime: 0,
-		retry: 1,
 	});
 
 	// If already signed, navigate forward to final loan completion screen

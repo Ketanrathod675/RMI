@@ -31,6 +31,9 @@ const extractRawText = (value: unknown): { text?: string; isFieldValidation: boo
 		if (typeof anyVal.message === "string") {
 			return { text: anyVal.message, isFieldValidation: Boolean(inferFieldFromMessage(anyVal.message)) };
 		}
+		if (typeof anyVal.detail === "string") {
+			return { text: anyVal.detail, isFieldValidation: Boolean(inferFieldFromMessage(anyVal.detail)) };
+		}
 		if (typeof anyVal.msg === "string") {
 			return { text: anyVal.msg, isFieldValidation: true };
 		}
@@ -120,10 +123,25 @@ export function getFriendlyError(error: unknown): FriendlyError {
 		};
 	}
 
-	if (status === 400 || status === 422) {
-		const data = err?.response?.data;
+	if (status === 413) {
+		const data = err?.response?.data ?? err?.data;
 		const serverMsg =
 			safeServerText(data?.detail, { allowFieldValidation: true, maxLength: 200 }) ??
+			safeServerText(err?.detail, { allowFieldValidation: true, maxLength: 200 }) ??
+			safeServerText(data?.message, { allowFieldValidation: true, maxLength: 200 });
+		return {
+			kind: "validation",
+			title: getSyncTranslation("alert", "Alert"),
+			message: serverMsg ?? getSyncTranslation("errPayloadTooLarge", "Photo size is too large. Please retake the photo."),
+			retryable: true,
+		};
+	}
+
+	if (status === 400 || status === 422) {
+		const data = err?.response?.data ?? err?.data;
+		const serverMsg =
+			safeServerText(data?.detail, { allowFieldValidation: true, maxLength: 200 }) ??
+			safeServerText(err?.detail, { allowFieldValidation: true, maxLength: 200 }) ??
 			safeServerText(data?.errors, { allowFieldValidation: true, maxLength: 200 }) ??
 			safeServerText(data?.message, { allowFieldValidation: true, maxLength: 200 });
 		return {
@@ -135,7 +153,11 @@ export function getFriendlyError(error: unknown): FriendlyError {
 	}
 
 	if (status === 404) {
-		const serverMsg = safeServerText(err?.response?.data?.detail) ?? safeServerText(err?.response?.data?.message);
+		const data = err?.response?.data ?? err?.data;
+		const serverMsg =
+			safeServerText(data?.detail) ??
+			safeServerText(err?.detail) ??
+			safeServerText(data?.message);
 		return {
 			kind: "not_found",
 			title: getSyncTranslation("errNotFound", "Not found"),

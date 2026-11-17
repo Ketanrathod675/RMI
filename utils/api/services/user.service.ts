@@ -118,6 +118,8 @@ export const getUserProfile = async (): Promise<UserProfileResponseType> => {
 	const email = kyc.email || unwrapped.email || null;
 	const isPanVerified = Boolean(kyc.is_pan_verified ?? unwrapped.pan_verified);
 	const isEmailVerified = Boolean(kyc.is_email_verified ?? unwrapped.email_verified);
+	const imageUrl = kyc.image_url || kyc.selfie_url || unwrapped.image_url || unwrapped.selfie_url || null;
+	const selfieUrl = kyc.selfie_url || kyc.image_url || unwrapped.selfie_url || unwrapped.image_url || null;
 
 	const personal_details = {
 		full_name: fullName,
@@ -160,6 +162,8 @@ export const getUserProfile = async (): Promise<UserProfileResponseType> => {
 		status: unwrapped.is_active ? "active" : "inactive",
 		is_phone_verified: Boolean(unwrapped.is_phone_verified),
 		is_email_verified: isEmailVerified,
+		image_url: imageUrl,
+		selfie_url: selfieUrl,
 		personal_details: unwrapped.personal_details || personal_details,
 		employment_details: unwrapped.employment_details || {
 			employment_type: "Salaried",
@@ -187,7 +191,11 @@ export const getUserProfile = async (): Promise<UserProfileResponseType> => {
 
 	return {
 		...normalized,
-		profile: kyc,
+		profile: {
+			...kyc,
+			image_url: imageUrl,
+			selfie_url: selfieUrl,
+		},
 		data: normalized,
 		success: raw?.success ?? true,
 	} as any;

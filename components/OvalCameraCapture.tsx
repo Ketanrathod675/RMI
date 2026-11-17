@@ -45,7 +45,7 @@ export default function OvalCameraCapture({
 		if (cameraRef.current) {
 			try {
 				const photo = await cameraRef.current.takePictureAsync({
-					quality: 0.8,
+					quality: 0.5,
 					base64: false,
 					skipProcessing: false,
 				});

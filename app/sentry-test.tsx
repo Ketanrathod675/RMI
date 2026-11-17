@@ -1,8 +1,13 @@
 import * as Sentry from "@sentry/react-native";
 import { useState } from "react";
 import { Alert, Button, StyleSheet, Text, View } from "react-native";
+import { Redirect } from "expo-router";
 
 export default function SentryTestScreen() {
+	if (!__DEV__) {
+		return <Redirect href="/(tabs)" />;
+	}
+
 	const [status, setStatus] = useState<string | null>(null);
 
 	const handlePress = async () => {

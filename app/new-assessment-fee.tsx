@@ -28,13 +28,12 @@ import {
 	type AssessmentOutcomeAction,
 } from "@/utils/assessmentChecksFlow";
 import {
-	allocateLenderForUser,
-	getHandshakeStatus,
+	getBookingStatus,
+	getLenders,
 	getUserDashboardData,
 	getUserProfile,
 	getWorkflowProgress,
 	retryAssessmentChecks,
-	triggerPostKycAllocationAdapter,
 	verifyCoupon,
 	type AssessmentChecks,
 	type RetryAssessmentChecksPayload,
@@ -72,52 +71,6 @@ import { handleApplicationRejected, isRejectedStatus } from "@/utils/application
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 
-export type LenderOffersResponseType = {
-	success: boolean;
-	primary_lender: LenderOffer;
-	eligible_lenders: LenderOffer[];
-	assessment_fee: {
-		amount: number;
-		original_amount?: number;
-		gst: number;
-		currency: string;
-	};
-};
-
-const DEFAULT_LENDER_OFFERS: LenderOffersResponseType = {
-	success: true,
-	primary_lender: {
-		lender_id: "lender_ruloans_01",
-		lender_name: "Ruloans Financial Services P Ltd",
-		is_rbi_nbfc: true,
-		loan_upto: 20000,
-		tenure_upto: 60,
-		interest_rate_starts_at: "Starts @ 1.5% p.m.",
-	},
-	eligible_lenders: [
-		{
-			lender_id: "lender_fintree_02",
-			lender_name: "Fintree (Term - Personal Loan)",
-			is_rbi_nbfc: true,
-			loan_upto: 20000,
-			tenure_upto: 45,
-			interest_rate_starts_at: "Starts @ 1.75% p.m.",
-		},
-		{
-			lender_id: "lender_emkay_03",
-			lender_name: "Emkay Global Finance",
-			is_rbi_nbfc: true,
-			loan_upto: 15000,
-			tenure_upto: 30,
-			interest_rate_starts_at: "Starts @ 2.0% p.m.",
-		},
-	],
-	assessment_fee: {
-		amount: 0,
-		gst: 0,
-		currency: "INR",
-	},
-};
 
 export default function AssessmentFeeScreen() {
 	const { t } = useTranslation();
@@ -163,7 +116,6 @@ export default function AssessmentFeeScreen() {
 
 	const activeTxnidRef = useRef<string>("");
 	const lastStatusRef = useRef<string>("");
-	const hasAllocatedRef = useRef(false);
 	const pollingLoaderTokenRef = useRef<number | null>(null);
 	const verifyFlowRunningRef = useRef<string | null>(null);
 
@@ -202,6 +154,9 @@ export default function AssessmentFeeScreen() {
 
 	// Allocated lender state
 	const [allocatedLender, setAllocatedLender] = useState<{ id: string; name: string } | null>(null);
+	const [isResolvingLender, setIsResolvingLender] = useState<boolean>(true);
+	const [lenderLookupFailed, setLenderLookupFailed] = useState<boolean>(false);
+	const [lenderRetryCount, setLenderRetryCount] = useState<number>(0);
 
 	// Coupon states
 	const [afFlag, setAfFlag] = useState<string>((params.af as string) || "yes");
@@ -279,16 +234,27 @@ export default function AssessmentFeeScreen() {
 	}, [loadFeeAndLead]);
 
 	useEffect(() => {
+		let isMounted = true;
 		const loadAllocationAndAf = async () => {
+			setIsResolvingLender(true);
+			setLenderLookupFailed(false);
 			try {
 				const savedAf = await AsyncStorage.getItem(STORAGE_KEYS["@af-flag"]);
-				if (savedAf) {
+				if (savedAf && isMounted) {
 					setAfFlag(savedAf);
 				}
 
+				// 1. Provisional read from AsyncStorage
 				const savedLenderId = await AsyncStorage.getItem(STORAGE_KEYS["@allocated-lender-id"]);
 				const savedLenderName = await AsyncStorage.getItem(STORAGE_KEYS["@allocated-lender-name"]);
 
+				if (savedLenderId && savedLenderId !== "null" && savedLenderName && savedLenderName.trim()) {
+					if (isMounted) {
+						setAllocatedLender({ id: savedLenderId, name: savedLenderName.trim() });
+					}
+				}
+
+				// 2. Resolve user ID for cache key
 				let effectiveUserId: string | null | undefined = userId;
 				if (!effectiveUserId) {
 					const token: string | null | undefined =
@@ -296,29 +262,94 @@ export default function AssessmentFeeScreen() {
 					effectiveUserId = getUserIdFromToken(token);
 				}
 
-				if (savedLenderId && savedLenderId !== "null") {
-					setAllocatedLender({ id: savedLenderId, name: savedLenderName || "Assigned Partner Lender" });
-				} else if (!hasAllocatedRef.current) {
-					hasAllocatedRef.current = true;
+				// 3. Server reconciliation via cached queryClient
+				let profileData: any = null;
+				try {
+					profileData = await queryClient.fetchQuery({
+						queryKey: ["userProfile", effectiveUserId || "me"],
+						queryFn: getUserProfile,
+						staleTime: 300000,
+					});
+				} catch (profileErr) {
+					Logger.warn("Failed to fetch user profile for lender reconciliation:", profileErr);
+				}
+
+				const meData = (profileData as any)?.data || profileData;
+				const wf = meData?.current_workflow;
+				const kycResp = wf?.profile_response;
+
+				// Extract server lender id and name
+				let serverLenderName: string | null =
+					kycResp?.lender_name ||
+					wf?.allocated_lender_name ||
+					wf?.lender_name ||
+					meData?.lead?.allocated_lender_name ||
+					meData?.lead?.lender_name ||
+					meData?.allocated_lender_name ||
+					meData?.lender_name ||
+					null;
+
+				const serverLenderId: string | null =
+					kycResp?.allocated_lender_id ||
+					wf?.allocated_lender_id ||
+					meData?.lead?.allocated_lender_id ||
+					meData?.allocated_lender_id ||
+					null;
+
+				// If id is present but name is missing, resolve name via getLenders()
+				if (serverLenderId && serverLenderId !== "null" && (!serverLenderName || !serverLenderName.trim())) {
 					try {
-						const allocation = await triggerPostKycAllocationAdapter();
-						if (allocation && allocation.allocated_lender_id) {
-							const lId = allocation.allocated_lender_id;
-							const lName = allocation.lender_name || "Assigned Partner Lender";
-							await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-id"], lId);
-							await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-name"], lName);
-							setAllocatedLender({ id: lId, name: lName });
+						const lenders = await getLenders();
+						const matched = lenders.find(
+							(l) => l.id === serverLenderId || String(l.id) === String(serverLenderId)
+						);
+						if (matched) {
+							serverLenderName = matched.company_name || matched.name || matched.lender_name || null;
 						}
-					} catch (allocErr) {
-						Logger.warn("Allocation adapter fallback failed:", allocErr);
+					} catch (lenderErr) {
+						Logger.warn("Failed to resolve lender name from getLenders():", lenderErr);
+					}
+				}
+
+				if (serverLenderId && serverLenderId !== "null" && serverLenderName && serverLenderName.trim()) {
+					// Server value wins: update storage and local state
+					const finalName = serverLenderName.trim();
+					await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-id"], serverLenderId);
+					await AsyncStorage.setItem(STORAGE_KEYS["@allocated-lender-name"], finalName);
+					if (isMounted) {
+						setAllocatedLender({ id: serverLenderId, name: finalName });
+						setLenderLookupFailed(false);
+					}
+				} else if (profileData && (!serverLenderId || serverLenderId === "null")) {
+					// Server returned profile successfully but no lender is allocated
+					await AsyncStorage.removeItem(STORAGE_KEYS["@allocated-lender-id"]);
+					await AsyncStorage.removeItem(STORAGE_KEYS["@allocated-lender-name"]);
+					if (isMounted) {
+						setAllocatedLender(null);
+					}
+				} else if (!savedLenderId || savedLenderId === "null") {
+					// Could not resolve from server, and no valid local saved lender
+					if (isMounted) {
+						setLenderLookupFailed(true);
 					}
 				}
 			} catch (err) {
 				Logger.warn("Error loading allocation or af flag:", err);
+				if (isMounted && !allocatedLender) {
+					setLenderLookupFailed(true);
+				}
+			} finally {
+				if (isMounted) {
+					setIsResolvingLender(false);
+				}
 			}
 		};
 		loadAllocationAndAf();
-	}, [userId]);
+
+		return () => {
+			isMounted = false;
+		};
+	}, [userId, lenderRetryCount, queryClient]);
 
 	const handleApplyCoupon = async () => {
 		const trimmedCode = couponCode.trim();
@@ -378,15 +409,11 @@ export default function AssessmentFeeScreen() {
 		}, [navigation])
 	);
 
-	// Partner lenders & fallback fees (in-house backend handles actual fee & allocation via workflow and /payments/initiate-assessment-fee)
-	const lenderOffersData = DEFAULT_LENDER_OFFERS;
-	const isLoadingLenderOffers = false;
-
 	// Fee calculations
 	const initialFeeAmount = rawFeeAmount ?? 0;
 	const processingFeeAmount =
 		appliedFinalAmount ?? (rawFeeAmount !== null ? Math.max(0, rawFeeAmount - appliedDiscount) : 0);
-	const originalPrice = lenderOffersData?.assessment_fee?.original_amount;
+	const originalPrice = appliedDiscount > 0 && rawFeeAmount ? rawFeeAmount : undefined;
 	const discountPercent =
 		originalPrice && originalPrice > processingFeeAmount
 			? Math.round(((originalPrice - processingFeeAmount) / originalPrice) * 100)
@@ -396,15 +423,8 @@ export default function AssessmentFeeScreen() {
 		? {
 			lender_id: allocatedLender.id,
 			lender_name: allocatedLender.name,
-			is_rbi_nbfc: true,
-			loan_upto: lenderOffersData?.primary_lender?.loan_upto ?? 20000,
-			tenure_upto: lenderOffersData?.primary_lender?.tenure_upto ?? 60,
-			interest_rate_starts_at:
-				lenderOffersData?.primary_lender?.interest_rate_starts_at ?? "Starts @ 1.5% p.m.",
 		}
-		: lenderOffersData?.primary_lender;
-
-	const eligibleLenders = lenderOffersData?.eligible_lenders || [];
+		: undefined;
 
 	// Post-Payment Email & PAN Verification Flow
 	const handleEmailVerificationFlow = async (email?: string) => {
@@ -432,12 +452,15 @@ export default function AssessmentFeeScreen() {
 			}
 			const leadId = await resolveLeadId(paramLeadId || undefined).catch(() => "");
 
-			// Always call getHandshakeStatus first
+			// Always call getBookingStatus first
 			let initialChecks: AssessmentChecks | null = null;
 			try {
-				initialChecks = await getHandshakeStatus(txnid);
+				initialChecks = await getBookingStatus({
+					txnid,
+					leadId: leadId || undefined,
+				});
 			} catch (err) {
-				Logger.warn("Failed to fetch initial handshake status in reapplication", err);
+				Logger.warn("Failed to fetch initial booking status in reapplication", err);
 			}
 
 			if (initialChecks) {
@@ -465,7 +488,8 @@ export default function AssessmentFeeScreen() {
 									txnid: activeTxnidRef.current || undefined,
 								})
 						: undefined,
-					callHandshakeStatus: () => getHandshakeStatus(txnid),
+					callBookingStatus: () =>
+						getBookingStatus({ txnid, leadId: leadId || undefined }),
 					callDashboard: () => getUserDashboardData(),
 				});
 				if (retryResult.nextRetryAtMs) {
@@ -598,17 +622,19 @@ export default function AssessmentFeeScreen() {
 		let navTarget: (() => void) | null = null;
 
 		try {
+			const pollingLeadId = await resolveLeadId(paramLeadId || undefined).catch(() => "");
 			const result = await runStepThenNavigate(
 				"verifying_details",
 				async ({ advanceSubStep, signal }) => {
 					// Sub-step 1: Payment verified, confirming details
 					advanceSubStep("confirming_details", t("paymentConfirmedVerifyingDetails"));
 
-					// Sub-step 2: Credit Evaluation (BRE) / Handshake check
+					// Sub-step 2: Credit Evaluation (BRE) / Booking check
 					advanceSubStep("evaluating_policy", t("evaluatingCreditPolicyCriteria"));
 
 					const res = await pollAssessmentChecks({
 						txnid: activeTxnid,
+						leadId: pollingLeadId || undefined,
 						signal: signal || checksSignal,
 					});
 
@@ -686,7 +712,11 @@ export default function AssessmentFeeScreen() {
 				return;
 			}
 			// Fail-closed recovery check: in case poll timed out or aborted right as backend finalized
-			const freshChecks = await getHandshakeStatus(activeTxnid).catch(() => null);
+			const recoveryLeadId = await resolveLeadId(paramLeadId || undefined).catch(() => "");
+			const freshChecks = await getBookingStatus({
+				txnid: activeTxnid,
+				leadId: recoveryLeadId || undefined,
+			}).catch(() => null);
 			const dashboardData =
 				!freshChecks || freshChecks.status === "pending"
 					? await getUserDashboardData().catch(() => null)
@@ -719,7 +749,8 @@ export default function AssessmentFeeScreen() {
 								txnid,
 							})
 					: undefined,
-				callHandshakeStatus: () => getHandshakeStatus(txnid),
+				callBookingStatus: () =>
+					getBookingStatus({ txnid, leadId: leadId || undefined }),
 				callDashboard: () => getUserDashboardData(),
 			});
 
@@ -835,7 +866,7 @@ export default function AssessmentFeeScreen() {
 	}, []);
 	useEffect(() => {
 		let loop: Animated.CompositeAnimation;
-		if (!isPending && !paymentStatus.paymentPending && !isLoadingLenderOffers) {
+		if (!isPending && !paymentStatus.paymentPending) {
 			loop = Animated.loop(
 				Animated.sequence([
 					Animated.timing(shimmerAnim, {
@@ -854,7 +885,7 @@ export default function AssessmentFeeScreen() {
 		return () => {
 			if (loop) loop.stop();
 		};
-	}, [isPending, paymentStatus.paymentPending, isLoadingLenderOffers, shimmerAnim]);
+	}, [isPending, paymentStatus.paymentPending, shimmerAnim]);
 
 	// Cleanup lead poll on unmount
 	useEffect(() => {
@@ -874,7 +905,9 @@ export default function AssessmentFeeScreen() {
 				{/* Subsystem 1: Offer & Lender Section */}
 				<OfferLendersSection
 					primaryLender={primaryLender}
-					eligibleLenders={eligibleLenders}
+					isLoadingLender={isResolvingLender}
+					lenderLookupFailed={lenderLookupFailed}
+					onRetryLender={() => setLenderRetryCount((c) => c + 1)}
 					isLoadingFee={isFeeLoading || rawFeeAmount === null}
 					processingFeeAmount={processingFeeAmount}
 					originalPrice={originalPrice}
@@ -986,22 +1019,14 @@ export default function AssessmentFeeScreen() {
 					<TouchableOpacity
 						style={[
 							styles.proceedBtn,
-							(isPending ||
-								paymentStatus.paymentPending ||
-								isLoadingLenderOffers) &&
+							(isPending || paymentStatus.paymentPending) &&
 							styles.proceedBtnDisabled,
 						]}
-						disabled={
-							isPending || paymentStatus.paymentPending || isLoadingLenderOffers
-						}
+						disabled={isPending || paymentStatus.paymentPending}
 						onPress={() => initiatePayment()}
 						activeOpacity={0.85}>
 					{/* Subtle Sheen Gradient */}
-					{!(
-						isPending ||
-						paymentStatus.paymentPending ||
-						isLoadingLenderOffers
-					) && (
+					{!(isPending || paymentStatus.paymentPending) && (
 							<Animated.View
 								style={[
 									StyleSheet.absoluteFill,
@@ -1033,7 +1058,7 @@ export default function AssessmentFeeScreen() {
 							</Animated.View>
 						)}
 
-					{isLoadingLenderOffers || isPending ? (
+					{isPending ? (
 						<ActivityIndicator size="small" color="#333" />
 					) : paymentStatus.paymentPending ? (
 						<Text style={styles.waitingText}>

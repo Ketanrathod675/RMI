@@ -25,7 +25,7 @@ import { pollAssessmentChecks } from "@/hooks/useAssessmentChecks";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
 import { clearNotifications, setNotifications, useDispatch, type RootState, clearTransactionId } from "@/store";
 import { setUserType } from "@/utils/analytics";
-import { checkPaymentStatus, getBreFixRoute, getHandshakeStatus, getPublicReviews, getUserDashboardData, Status, StepHref, verifyRepaymentStatus } from "@/utils/api";
+import { checkPaymentStatus, getBreFixRoute, getPublicReviews, getUserDashboardData, Status, StepHref, verifyRepaymentStatus } from "@/utils/api";
 import { classify, invalidatePostRepaymentQueries } from "@/utils/paymentVerification";
 import { clearStoredRepaymentKeys } from "@/utils/repaymentIdempotency";
 import { useQueryClient } from "@tanstack/react-query";
@@ -243,7 +243,7 @@ export default function Home() {
 				if (err?.aborted || controller.signal.aborted || !isMountedRef.current) {
 					return;
 				}
-				Logger.info("Handshake check finished on dashboard. Closing loader...", {
+				Logger.info("Assessment check finished on dashboard. Closing loader...", {
 					isTimeout: err?.isTimeout,
 				});
 				setDelayVisible(false);

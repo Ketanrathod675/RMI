@@ -43,7 +43,10 @@ export default function ProfessionalDetailsSuccess() {
 		const timer = setTimeout(async () => {
 			allowNavigationRef.current = true;
 			try {
-				await routeAfterStep(router, queryClient, { fallbackStep: "ekyc_ckyc" });
+				await routeAfterStep(router, queryClient, {
+					currentStep: "professional_details",
+					fallbackStep: "ekyc_ckyc",
+				});
 			} catch {
 				router.replace("/ckyc-instructions");
 			}

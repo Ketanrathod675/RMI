@@ -387,6 +387,8 @@ export type UserProfileResponseType = {
 	status: string;
 	is_phone_verified: boolean;
 	is_email_verified: boolean;
+	image_url?: string | null;
+	selfie_url?: string | null;
 	personal_details: PersonalDetails;
 	employment_details: EmploymentDetails;
 	preferred_language: string;

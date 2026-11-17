@@ -13,6 +13,7 @@ import {
 import { resetApplicationRejectionGuard } from "@/utils/applicationRejection";
 import { resetLoanSearchSession } from "@/utils/loanSearchSession";
 import SecureStorage from "@/utils/secure-storage";
+import { clearIfscCache } from "@/utils/api/bank";
 import {
 	clearIdempotencyKeys,
 	RemovableKeys,
@@ -89,6 +90,7 @@ export async function performLogoutCleanup(params: LogoutCleanupParams): Promise
 		(params.resetSearchSession ?? resetLoanSearchSession)();
 		(params.resetRejectionGuard ?? resetApplicationRejectionGuard)();
 		(params.resetJourneyState ?? resetRegisteredJourneyState)();
+		clearIfscCache();
 	} finally {
 		markExplicitLogoutSettled();
 	}
@@ -119,6 +121,7 @@ export async function clearStaleUserCacheOnLogin(params: LoginCacheGuardParams):
 			// Ignore query cancellation errors
 		}
 		params.queryClient.clear();
+		clearIfscCache();
 		await doRemove(UserDataKeys).catch(() => {});
 		return;
 	}

@@ -11,6 +11,7 @@ import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 
 export type SplashStatus = "initializing" | "ready" | "animating_out" | "completed";
 
@@ -22,6 +23,7 @@ export interface SplashControllerState {
 	resolvedTarget: string;
 	onAnimationComplete: () => void;
 	onNativeSplashHandoff: () => void;
+	retrySecurityCheck: () => Promise<void>;
 }
 
 export function useSplashController(): SplashControllerState {
@@ -75,6 +77,7 @@ export function useSplashController(): SplashControllerState {
 					}).catch(() => null),
 					checkDeviceSecurity(),
 					loadAuth(),
+					// TODO: When a backend app-config / version check endpoint is confirmed, pass apiUrl or wire endpoint in checkAppVersion
 					checkAppVersion(),
 					Linking.getInitialURL().catch(() => null),
 					getStorageItem(STORAGE_KEYS["@payment-timer-start"]),
@@ -169,6 +172,36 @@ export function useSplashController(): SplashControllerState {
 		// Only run on initial cold launch
 	}, []);
 
+	const retrySecurityCheck = useCallback(async () => {
+		try {
+			const res = await checkDeviceSecurity();
+			if (res.isSecure) {
+				setSecurityBlockReason(null);
+				if (!hasNavigatedRef.current) {
+					setTimeout(() => {
+						try {
+							router.replace(resolvedTarget as any);
+							hasNavigatedRef.current = true;
+						} catch {}
+					}, 50);
+				}
+			} else {
+				setSecurityBlockReason(res.reason);
+			}
+		} catch {}
+	}, [resolvedTarget]);
+
+	// Auto re-check on app foreground if blocked by security
+	useEffect(() => {
+		if (!securityBlockReason) return;
+		const sub = AppState.addEventListener("change", (nextState) => {
+			if (nextState === "active") {
+				void retrySecurityCheck();
+			}
+		});
+		return () => sub.remove();
+	}, [securityBlockReason, retrySecurityCheck]);
+
 	// Callback triggered when Reanimated exit sequence finishes
 	const onAnimationComplete = useCallback(() => {
 		setIsSplashVisible(false);
@@ -201,5 +234,6 @@ export function useSplashController(): SplashControllerState {
 		resolvedTarget,
 		onAnimationComplete,
 		onNativeSplashHandoff,
+		retrySecurityCheck,
 	};
 }

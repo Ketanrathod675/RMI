@@ -30,8 +30,10 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+	AccessibilityInfo,
 	ActivityIndicator,
 	Alert,
+	Animated,
 	BackHandler,
 	Keyboard,
 	Platform,
@@ -56,6 +58,7 @@ const ValidatePhoneNumber = "Please enter a valid country code and phone number"
 
 export default function SigninSignupOtp() {
 	const { t } = useTranslation();
+	const { language } = useDefault();
 	const params = useLocalSearchParams<{ signInKey?: string }>();
 	const {
 		countryCode,
@@ -67,6 +70,13 @@ export default function SigninSignupOtp() {
 		clearOtpVerifyResponse,
 	} = useSignin();
 	const [otp, setOtp] = useState(["", "", "", ""]);
+	const [otpError, setOtpError] = useState(false);
+	const shakeAnim = useRef(new Animated.Value(0)).current;
+	const clearOtpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const isReduceMotionRef = useRef(false);
+	const isSubmittingOtpRef = useRef(false);
+	const lastSubmittedRef = useRef("");
+
 	const [isChecked, setIsChecked] = useState(true);
 	const [isSoftPullChecked, setIsSoftPullChecked] = useState(true);
 	const [countdown, setCountdown] = useState(loginResponse?.expires_in || 300);
@@ -78,6 +88,57 @@ export default function SigninSignupOtp() {
 	const [currentSignInKey, setCurrentSignInKey] = useState<string | undefined>(
 		params.signInKey || loginResponse?.sign_in_key || loginResponse?.otp_id
 	);
+
+	// Fresh refs updated every render to avoid stale closures in listeners
+	const currentSignInKeyRef = useRef(currentSignInKey);
+	const loginResponseRef = useRef(loginResponse);
+	const languageRef = useRef(language);
+	const countryCodeRef = useRef(countryCode);
+	const phoneNumberRef = useRef(phoneNumber);
+	const isSoftPullCheckedRef = useRef(isSoftPullChecked);
+
+	currentSignInKeyRef.current = currentSignInKey;
+	loginResponseRef.current = loginResponse;
+	languageRef.current = language;
+	countryCodeRef.current = countryCode;
+	phoneNumberRef.current = phoneNumber;
+	isSoftPullCheckedRef.current = isSoftPullChecked;
+
+	// Check reduced motion once on mount & clean up timers on unmount
+	useEffect(() => {
+		AccessibilityInfo.isReduceMotionEnabled()
+			.then((enabled) => {
+				isReduceMotionRef.current = enabled;
+			})
+			.catch(() => {});
+		return () => {
+			if (clearOtpTimerRef.current) {
+				clearTimeout(clearOtpTimerRef.current);
+				clearOtpTimerRef.current = null;
+			}
+		};
+	}, []);
+
+	const triggerWrongOtpShake = useCallback(() => {
+		setOtpError(true);
+		if (!isReduceMotionRef.current) {
+			Animated.sequence([
+				Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
+				Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
+				Animated.timing(shakeAnim, { toValue: 8, duration: 60, useNativeDriver: true }),
+				Animated.timing(shakeAnim, { toValue: -8, duration: 60, useNativeDriver: true }),
+				Animated.timing(shakeAnim, { toValue: 4, duration: 60, useNativeDriver: true }),
+				Animated.timing(shakeAnim, { toValue: 0, duration: 60, useNativeDriver: true }),
+			]).start();
+		}
+		if (clearOtpTimerRef.current) {
+			clearTimeout(clearOtpTimerRef.current);
+		}
+		clearOtpTimerRef.current = setTimeout(() => {
+			setOtp(["", "", "", ""]);
+			inputRefs.current[0]?.focus();
+		}, 450);
+	}, [shakeAnim]);
 
 	useEffect(() => {
 		if (params.signInKey) {
@@ -94,7 +155,6 @@ export default function SigninSignupOtp() {
 	const dispatch = useDispatch();
 	const queryClient = useQueryClient();
 
-	const { language } = useDefault();
 	const insets = useSafeAreaInsets();
 
 	// Handle hardware back button & status bar style
@@ -200,7 +260,7 @@ export default function SigninSignupOtp() {
 			}
 
 			// ── Analytics: User Segmentation ──
-			const userType = "new_user";
+			const userType = loginResponseRef.current?.user_exists === false ? "new_user" : "repeat_user";
 			const resolvedUserId =
 				data?.user_id ||
 				data?.user?.user_id ||
@@ -287,6 +347,9 @@ export default function SigninSignupOtp() {
 				await clearApplicationRejectionFlags();
 				await clearDigilockerSession();
 
+				lastSubmittedRef.current = "";
+				setOtpError(false);
+
 				const nextDestination = resolvePostLoginRoute(data, loginResponse);
 				router.replace(nextDestination as any);
 				return;
@@ -297,6 +360,9 @@ export default function SigninSignupOtp() {
 				text1: ErrorVerifyingOtp,
 				text2: LoginAgain,
 			});
+		},
+		onSettled: () => {
+			isSubmittingOtpRef.current = false;
 		},
 		onError: (err: any, variables, ctx) => {
 			if (getRateLimitInfo(err).isRateLimited) {
@@ -355,11 +421,9 @@ export default function SigninSignupOtp() {
 
 			const attemptMatch = typeof rawMessage === "string" ? rawMessage.match(/(\d+)\s*attempt/i) : null;
 			let displayError = rawMessage;
-			let shouldResetBoxes = false;
 
 			if (attemptMatch) {
 				const attemptsLeft = parseInt(attemptMatch[1], 10);
-				shouldResetBoxes = true;
 				if (attemptsLeft === 1) {
 					displayError =
 						t("lastOtpAttemptWarning") ||
@@ -370,19 +434,20 @@ export default function SigninSignupOtp() {
 					).replace("{count}", String(attemptsLeft));
 				}
 			} else if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("invalid or expired otp")) {
-				shouldResetBoxes = true;
-				displayError = "Invalid or expired OTP. Please check and try again.";
+				displayError = t("invalidOrExpiredOtp", "Invalid or expired OTP. Please check and try again.");
 			} else if (typeof rawMessage === "string" && rawMessage.toLowerCase().includes("client type does not match")) {
 				displayError = "OTP request mismatch. Please request a new OTP.";
 			} else if (!displayError) {
 				displayError = LoginAgain;
 			}
 
-			if (shouldResetBoxes || (err as any)?.response?.status === 400) {
-				setOtp(["", "", "", ""]);
-				setTimeout(() => {
-					inputRefs.current[0]?.focus();
-				}, 50);
+			const isWrongOtp =
+				(err as any)?.response?.status === 400 ||
+				attemptMatch ||
+				(typeof rawMessage === "string" && rawMessage.toLowerCase().includes("invalid or expired otp"));
+
+			if (isWrongOtp) {
+				triggerWrongOtpShake();
 			}
 
 			Toast.show({
@@ -396,37 +461,51 @@ export default function SigninSignupOtp() {
 	retryVerifyOtpRef.current = verifyOtpMutation;
 
 	const autoVerify = async (otpCode: string) => {
-		const validate = validateMobileAndCountryCode(countryCode!, phoneNumber!);
+		if (isSubmittingOtpRef.current) return;
+		const currentKey = currentSignInKeyRef.current;
+		const submissionKey = `${currentKey || ""}:${otpCode}`;
+		if (lastSubmittedRef.current === submissionKey) return;
+		lastSubmittedRef.current = submissionKey;
+
+		const cCode = countryCodeRef.current;
+		const pNumber = phoneNumberRef.current;
+		const validate = validateMobileAndCountryCode(cCode!, pNumber!);
 
 		if (!validate.countryCode.success || !validate.phoneNumber.success) {
 			return;
 		}
 
-		const isFirstTimeUser = loginResponse?.user_exists === false;
+		const isFirstTimeUser = loginResponseRef.current?.user_exists === false;
+		const lang = languageRef.current;
 
 		const requestPayload: any = {
 			phone_number: validate.phoneNumber.data,
 			otp: otpCode,
-			sign_in_key: currentSignInKey,
+			sign_in_key: currentKey,
 			verification_type: "",
-			language,
+			language: lang,
 			version: Constants.expoConfig?.version,
 		};
 
 		if (isFirstTimeUser) {
-			requestPayload.preferred_language = language;
+			requestPayload.preferred_language = lang;
 		}
 
-		if (loginResponse?.soft_pull_consent === false) {
-			requestPayload.soft_pull_consent = isSoftPullChecked;
+		if (loginResponseRef.current?.soft_pull_consent === false) {
+			requestPayload.soft_pull_consent = isSoftPullCheckedRef.current;
 			requestPayload.soft_pull_consent_message = t("softPullConsentText");
 		}
 
+		isSubmittingOtpRef.current = true;
 		verifyOtpMutation(requestPayload);
 	};
 
 	const startOtpListener = () => {
 		if (Platform.OS !== "android") return;
+
+		try {
+			RNOtpVerify.removeListener();
+		} catch {}
 
 		RNOtpVerify.getOtp()
 			.then(() => {
@@ -435,7 +514,9 @@ export default function SigninSignupOtp() {
 						const parsedOtp = /(\d{4})/.exec(message)?.[1];
 						if (parsedOtp && parsedOtp.length === 4) {
 							setOtp([parsedOtp[0], parsedOtp[1], parsedOtp[2], parsedOtp[3]]);
-							RNOtpVerify.removeListener();
+							try {
+								RNOtpVerify.removeListener();
+							} catch {}
 							autoVerify(parsedOtp);
 						}
 					} catch (err) {
@@ -471,6 +552,8 @@ export default function SigninSignupOtp() {
 	}, [countdown]);
 
 	const handleOtpChange = (value: string, index: number) => {
+		if (otpError) setOtpError(false);
+		lastSubmittedRef.current = "";
 		const newOtp = [...otp];
 		newOtp[index] = value;
 		setOtp(newOtp);
@@ -484,6 +567,8 @@ export default function SigninSignupOtp() {
 	};
 
 	const handleBackspace = (value: string, index: number) => {
+		if (otpError) setOtpError(false);
+		lastSubmittedRef.current = "";
 		if (value !== "") {
 			const newOtp = [...otp];
 			newOtp[index] = "";
@@ -512,9 +597,8 @@ export default function SigninSignupOtp() {
 				return;
 			}
 
-			if (newSignInKey) {
-				setCurrentSignInKey(newSignInKey);
-			}
+			currentSignInKeyRef.current = newSignInKey;
+			setCurrentSignInKey(newSignInKey);
 			changeLoginResponse(res as any);
 
 			Toast.show({
@@ -522,6 +606,8 @@ export default function SigninSignupOtp() {
 				text1: t("otpResentSuccessfully"),
 			});
 
+			lastSubmittedRef.current = "";
+			setOtpError(false);
 			setCountdown(res?.expires_in || 300);
 			setOtp(["", "", "", ""]);
 			inputRefs.current[0]?.focus();
@@ -544,7 +630,16 @@ export default function SigninSignupOtp() {
 	});
 
 	const handleContinue = async () => {
-		const validate = validateMobileAndCountryCode(countryCode!, phoneNumber!);
+		if (isSubmittingOtpRef.current) return;
+		const otpCode = otp.join("");
+		const currentKey = currentSignInKeyRef.current;
+		const submissionKey = `${currentKey || ""}:${otpCode}`;
+		if (lastSubmittedRef.current === submissionKey) return;
+		lastSubmittedRef.current = submissionKey;
+
+		const cCode = countryCodeRef.current;
+		const pNumber = phoneNumberRef.current;
+		const validate = validateMobileAndCountryCode(cCode!, pNumber!);
 
 		if (!validate.countryCode.success || !validate.phoneNumber.success) {
 			Toast.show({
@@ -555,26 +650,28 @@ export default function SigninSignupOtp() {
 			return;
 		}
 
-		const isFirstTimeUser = loginResponse?.user_exists === false;
+		const isFirstTimeUser = loginResponseRef.current?.user_exists === false;
+		const lang = languageRef.current;
 
 		const requestPayload: any = {
 			phone_number: validate.phoneNumber.data,
-			otp: otp.join(""),
-			sign_in_key: currentSignInKey,
+			otp: otpCode,
+			sign_in_key: currentKey,
 			verification_type: "",
-			language,
+			language: lang,
 			version: Constants.expoConfig?.version,
 		};
 
 		if (isFirstTimeUser) {
-			requestPayload.preferred_language = language;
+			requestPayload.preferred_language = lang;
 		}
 
-		if (loginResponse?.soft_pull_consent === false) {
-			requestPayload.soft_pull_consent = isSoftPullChecked;
+		if (loginResponseRef.current?.soft_pull_consent === false) {
+			requestPayload.soft_pull_consent = isSoftPullCheckedRef.current;
 			requestPayload.soft_pull_consent_message = t("softPullConsentText");
 		}
 
+		isSubmittingOtpRef.current = true;
 		verifyOtpMutation(requestPayload);
 	};
 
@@ -609,7 +706,7 @@ export default function SigninSignupOtp() {
 					hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
 					<MaterialIcons name="arrow-back" size={24} color={dark} />
 				</TouchableOpacity>
-				<Text style={styles.headerTitle}>Verify your number!</Text>
+				<Text style={styles.headerTitle}>{t("verifyYourNumber", "Verify your number!")}</Text>
 			</View>
 
 			<ScrollView
@@ -631,20 +728,24 @@ export default function SigninSignupOtp() {
 
 				{/* Form Content */}
 				<View style={styles.content}>
-					<Text style={styles.title}>Enter OTP</Text>
+					<Text style={styles.title}>{t("enterOTP", "Enter OTP")}</Text>
 
 					<View style={styles.phoneSection}>
-						<Text style={styles.phoneText}>Sent To {phoneNumber || "1234567890"} </Text>
+						<Text style={styles.phoneText}>{t("sentTo", "Sent To")} {phoneNumber || "1234567890"} </Text>
 						<TouchableOpacity
 							onPress={() => {
 								router.back();
 							}}>
-							<Text style={styles.editLink}>Edit</Text>
+							<Text style={styles.editLink}>{t("edit", "Edit")}</Text>
 						</TouchableOpacity>
 					</View>
 
 					{/* 4-Digit OTP Boxes */}
-					<View style={styles.otpContainer}>
+					<Animated.View
+						style={[
+							styles.otpContainer,
+							{ transform: [{ translateX: shakeAnim }] },
+						]}>
 						{otp.map((digit, index) => (
 							<TextInput
 								key={index}
@@ -653,7 +754,11 @@ export default function SigninSignupOtp() {
 								}}
 								style={[
 									styles.otpInput,
-									digit ? styles.otpInputFilled : null,
+									otpError
+										? styles.otpInputError
+										: digit
+											? styles.otpInputFilled
+											: null,
 								]}
 								value={digit}
 								onChangeText={(value) => handleOtpChange(value, index)}
@@ -668,14 +773,14 @@ export default function SigninSignupOtp() {
 								editable={!isPending}
 							/>
 						))}
-					</View>
+					</Animated.View>
 
 					{/* Didn't Receive OTP & Resend Row in the same line */}
 					<View style={styles.resendRow}>
 						<Text style={styles.didntReceiveText}>{t("didntReceiveOTP", "Didn't Receive OTP ?")}</Text>
 						{countdown > 0 ? (
 							<Text style={styles.countdownText}>
-								Re-send in {formatTime(countdown)}s
+								{t("resendIn", "Re-send in")} {formatTime(countdown)}s
 							</Text>
 						) : (
 							<TouchableOpacity
@@ -685,7 +790,7 @@ export default function SigninSignupOtp() {
 								{isResendOtpPending ? (
 									<ActivityIndicator size="small" color={dark_primary} />
 								) : (
-									<Text style={styles.resendLink}>Re-send OTP</Text>
+									<Text style={styles.resendLink}>{t("resendOTP", "Re-send OTP")}</Text>
 								)}
 							</TouchableOpacity>
 						)}
@@ -707,7 +812,7 @@ export default function SigninSignupOtp() {
 						{isPending ? (
 							<ActivityIndicator size="small" color={dark} />
 						) : (
-							<Text style={styles.continueButtonText}>Continue</Text>
+							<Text style={styles.continueButtonText}>{t("continue", "Continue")}</Text>
 						)}
 					</TouchableOpacity>
 
@@ -729,21 +834,19 @@ export default function SigninSignupOtp() {
 							</TouchableOpacity>
 
 							<Text style={styles.consentText}>
-								I hereby provide my consent to access credit information from CICs,
-								KYC and agree to the{" "}
+								{t("otpConsentP1", "I hereby provide my consent to access credit information from CICs, KYC and agree to the")}{" "}
 								<Text
 									style={styles.consentLink}
 									onPress={() => setShowTermsAndConditions(true)}>
-									Terms
+									{t("terms", "Terms")}
 								</Text>
 								,{" "}
 								<Text
 									style={styles.consentLink}
 									onPress={() => setShowPrivacyPolicy(true)}>
-									Privacy Policy
+									{t("privacyPolicy", "Privacy Policy")}
 								</Text>
-								, and to be contacted via SMS, WhatsApp, call, or email, including
-								on DND-registered numbers.
+								{t("otpConsentP2", ", and to be contacted via SMS, WhatsApp, call, or email, including on DND-registered numbers.")}
 							</Text>
 						</View>
 
@@ -764,7 +867,7 @@ export default function SigninSignupOtp() {
 								</TouchableOpacity>
 
 								<Text style={styles.consentText}>
-									I provide consent to fetch my credit bureau score for eligibility assessment.
+									{t("softPullConsentText", "I provide consent to fetch my credit bureau score for eligibility assessment.")}
 								</Text>
 							</View>
 						)}
@@ -873,6 +976,10 @@ const styles = StyleSheet.create({
 	},
 	otpInputFilled: {
 		borderColor: dark,
+	},
+	otpInputError: {
+		borderColor: "#DC2626",
+		backgroundColor: "#FEF2F2",
 	},
 	resendRow: {
 		flexDirection: "row",

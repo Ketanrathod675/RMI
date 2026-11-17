@@ -18,14 +18,18 @@ import Toast from "react-native-toast-message";
 import Svg, { Circle, Path, Rect } from "react-native-svg";
 import Logger from "@/utils/logger";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
+import { useAuth } from "@/hooks/useAuth";
 import { initiateConsentOtp } from "@/utils/api/services/consent.service";
 import { getUserProfile } from "@/utils/api/services/user.service";
-import { getLenders, triggerPostKycAllocationAdapter } from "@/utils/api/services/lender.service";
+import { getLenders } from "@/utils/api/services/lender.service";
 import { getRateLimitInfo } from "@/utils/api/core/rateLimit";
 import { useRateLimitLock } from "@/hooks/useRateLimitLock";
 import { useTranslation } from "@/hooks/useTranslation";
 import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { getStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
+import { getUserIdFromToken } from "@/utils/encode_decode";
+import SecureStorage from "@/utils/secure-storage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiErrorInfo } from "@/utils/api/errors";
 import { finishConsent, handleConsent409Error } from "@/utils/consent/finishConsent";
 import type { ConsentKey, ConsentPayload } from "@/utils/api/types/consent.types";
@@ -209,6 +213,7 @@ export default function CustomerDataConsentScreen() {
 
 	const router = useRouter();
 	const queryClient = useQueryClient();
+	const { userId } = useAuth();
 	const { t } = useTranslation();
 	const { isLocked, remainingSeconds, lockForSeconds: lock } = useRateLimitLock();
 
@@ -223,7 +228,8 @@ export default function CustomerDataConsentScreen() {
 
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [showExitDialog, setShowExitDialog] = useState(false);
-	const [lenderName, setLenderName] = useState<string>("Ruloans Financial Services Private Limited");
+	const [lenderName, setLenderName] = useState<string>("");
+	const [isLenderResolved, setIsLenderResolved] = useState<boolean>(false);
 	const isSubmittingRef = useRef(false);
 
 	useEffect(() => {
@@ -231,84 +237,100 @@ export default function CustomerDataConsentScreen() {
 
 		const loadAssignedLender = async () => {
 			try {
-				// 1. Try local storage for allocated lender name
+				// 1. Provisional read from local storage for allocated lender name
 				const storedLenderName = await getStorageItem(STORAGE_KEYS["@allocated-lender-name"]);
-				if (storedLenderName && storedLenderName.trim() && storedLenderName !== "null") {
-					if (isMounted) setLenderName(storedLenderName.trim());
-					return;
+				if (storedLenderName && storedLenderName.trim() && storedLenderName !== "null" && isMounted) {
+					setLenderName(storedLenderName.trim());
+				} else {
+					// Also check @kyc-response as backup provisional
+					const kycStr = await getStorageItem(STORAGE_KEYS["@kyc-response"]);
+					if (kycStr) {
+						try {
+							const kycParsed = JSON.parse(kycStr);
+							const nameFromKyc = kycParsed?.lender_name || kycParsed?.allocated_lender_name;
+							if (nameFromKyc && nameFromKyc.trim() && isMounted) {
+								setLenderName(nameFromKyc.trim());
+							}
+						} catch {}
+					}
 				}
 
-				// 2. Try @kyc-response in storage
-				const kycStr = await getStorageItem(STORAGE_KEYS["@kyc-response"]);
-				if (kycStr) {
-					try {
-						const kycParsed = JSON.parse(kycStr);
-						const nameFromKyc = kycParsed?.lender_name || kycParsed?.allocated_lender_name;
-						if (nameFromKyc && nameFromKyc.trim()) {
-							if (isMounted) setLenderName(nameFromKyc.trim());
-							await setStorageItem(STORAGE_KEYS["@allocated-lender-name"], nameFromKyc.trim());
-							return;
-						}
-					} catch {}
+				// 2. Resolve user ID for cache key
+				let effectiveUserId: string | null | undefined = userId;
+				if (!effectiveUserId) {
+					const token: string | null | undefined =
+						await SecureStorage.getSensitiveWithLegacyMigration(STORAGE_KEYS["@access-token"]);
+					effectiveUserId = getUserIdFromToken(token);
 				}
 
-				// 3. Try fetching fresh user profile (/auth/me)
+				// 3. Server reconciliation via cached queryClient
+				let profileData: any = null;
 				try {
-					const profile = await getUserProfile();
-					const meData = (profile as any)?.data || profile;
-					const wf = meData?.current_workflow;
-					const kycResp = wf?.profile_response;
-					const lenderFromMe =
-						kycResp?.lender_name ||
-						wf?.allocated_lender_name ||
-						wf?.lender_name ||
-						meData?.lead?.allocated_lender_name ||
-						meData?.lead?.lender_name ||
-						meData?.allocated_lender_name ||
-						meData?.lender_name;
-
-					if (lenderFromMe && lenderFromMe.trim()) {
-						if (isMounted) setLenderName(lenderFromMe.trim());
-						await setStorageItem(STORAGE_KEYS["@allocated-lender-name"], lenderFromMe.trim());
-						return;
-					}
-
-					// If allocated_lender_id is present, resolve from getLenders()
-					const allocatedId =
-						kycResp?.allocated_lender_id ||
-						wf?.allocated_lender_id ||
-						(await getStorageItem(STORAGE_KEYS["@allocated-lender-id"]));
-
-					if (allocatedId && allocatedId !== "null") {
-						const lenders = await getLenders();
-						const matched = lenders.find(
-							(l) => l.id === allocatedId || String(l.id) === String(allocatedId),
-						);
-						if (matched?.company_name) {
-							if (isMounted) setLenderName(matched.company_name);
-							await setStorageItem(STORAGE_KEYS["@allocated-lender-name"], matched.company_name);
-							return;
-						}
-					}
+					profileData = await queryClient.fetchQuery({
+						queryKey: ["userProfile", effectiveUserId || "me"],
+						queryFn: getUserProfile,
+						staleTime: 300000,
+					});
 				} catch (profileErr) {
 					Logger.warn("CustomerDataConsent: error fetching lender from profile", { error: profileErr });
 				}
 
-				// 4. Try post-KYC allocation adapter fallback
-				try {
-					const allocation = await triggerPostKycAllocationAdapter();
-					if (allocation?.lender_name) {
-						if (isMounted) setLenderName(allocation.lender_name);
-						await setStorageItem(STORAGE_KEYS["@allocated-lender-name"], allocation.lender_name);
-						if (allocation.allocated_lender_id) {
-							await setStorageItem(STORAGE_KEYS["@allocated-lender-id"], allocation.allocated_lender_id);
+				const meData = (profileData as any)?.data || profileData;
+				const wf = meData?.current_workflow;
+				const kycResp = wf?.profile_response;
+
+				let serverLenderName: string | null =
+					kycResp?.lender_name ||
+					wf?.allocated_lender_name ||
+					wf?.lender_name ||
+					meData?.lead?.allocated_lender_name ||
+					meData?.lead?.lender_name ||
+					meData?.allocated_lender_name ||
+					meData?.lender_name ||
+					null;
+
+				const serverLenderId: string | null =
+					kycResp?.allocated_lender_id ||
+					wf?.allocated_lender_id ||
+					meData?.lead?.allocated_lender_id ||
+					meData?.allocated_lender_id ||
+					null;
+
+				// If id is present but name is missing, resolve name via getLenders()
+				if (serverLenderId && serverLenderId !== "null" && (!serverLenderName || !serverLenderName.trim())) {
+					try {
+						const lenders = await getLenders();
+						const matched = lenders.find(
+							(l) => l.id === serverLenderId || String(l.id) === String(serverLenderId)
+						);
+						if (matched) {
+							serverLenderName = matched.company_name || matched.name || matched.lender_name || null;
 						}
+					} catch (lenderErr) {
+						Logger.warn("CustomerDataConsent: error fetching lenders list", { error: lenderErr });
 					}
-				} catch (allocErr) {
-					Logger.warn("CustomerDataConsent: error in allocation adapter", { error: allocErr });
+				}
+
+				if (serverLenderName && serverLenderName.trim()) {
+					// Server value wins: update storage and local state
+					const finalName = serverLenderName.trim();
+					if (isMounted) setLenderName(finalName);
+					await setStorageItem(STORAGE_KEYS["@allocated-lender-name"], finalName);
+					if (serverLenderId) {
+						await setStorageItem(STORAGE_KEYS["@allocated-lender-id"], serverLenderId);
+					}
+				} else if (profileData && (!serverLenderId || serverLenderId === "null")) {
+					// Server returned profile successfully but no lender is allocated
+					await AsyncStorage.removeItem(STORAGE_KEYS["@allocated-lender-id"]);
+					await AsyncStorage.removeItem(STORAGE_KEYS["@allocated-lender-name"]);
+					if (isMounted) setLenderName("");
 				}
 			} catch (err) {
 				Logger.warn("CustomerDataConsent: failed to load assigned lender", { error: err });
+			} finally {
+				if (isMounted) {
+					setIsLenderResolved(true);
+				}
 			}
 		};
 
@@ -317,7 +339,7 @@ export default function CustomerDataConsentScreen() {
 		return () => {
 			isMounted = false;
 		};
-	}, []);
+	}, [userId, queryClient]);
 
 	const allChecked =
 		consents.kycVerification &&
@@ -440,10 +462,17 @@ export default function CustomerDataConsentScreen() {
 					{/* Intro Paragraph */}
 					<Text style={styles.introParagraph}>
 						By clicking “I Agree & Continue”, I voluntarily provide my consent to{" "}
-						<Text style={styles.highlightName}>
-							[{lenderName}]
-						</Text>{" "}
-						(“Regulated Entity / Lender”) or{" "}
+						{lenderName ? (
+							<>
+								<Text style={styles.highlightName}>[{lenderName}]</Text>{" "}
+								(“Regulated Entity / Lender”)
+							</>
+						) : (
+							<Text style={styles.highlightName}>
+								the Regulated Entity / Lending Partner
+							</Text>
+						)}{" "}
+						or{" "}
 						<Text style={styles.highlightName}>
 							[MoneyTime Technology Solutions Pvt. Ltd.]
 						</Text>{" "}

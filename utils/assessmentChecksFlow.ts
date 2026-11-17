@@ -208,7 +208,7 @@ export async function executeAssessmentRetry(params: {
 	cooldownSeconds: number;
 	nowMs?: number;
 	callRetry?: () => Promise<AssessmentChecks>;
-	callHandshakeStatus: () => Promise<AssessmentChecks | null>;
+	callBookingStatus: () => Promise<AssessmentChecks | null>;
 	callDashboard: () => Promise<any>;
 }): Promise<ExecuteAssessmentRetryResult> {
 	const nowMs = params.nowMs ?? Date.now();
@@ -259,7 +259,7 @@ export async function executeAssessmentRetry(params: {
 						: params.cooldownSeconds,
 			};
 		} catch (retryErr: any) {
-			const freshChecks = await params.callHandshakeStatus().catch(() => null);
+			const freshChecks = await params.callBookingStatus().catch(() => null);
 			const dashboardData =
 				!freshChecks || freshChecks.status === "pending"
 					? await params.callDashboard().catch(() => null)
@@ -296,7 +296,7 @@ export async function executeAssessmentRetry(params: {
 		}
 	}
 
-	const freshChecks = await params.callHandshakeStatus().catch(() => null);
+	const freshChecks = await params.callBookingStatus().catch(() => null);
 	const dashboardData =
 		!freshChecks || freshChecks.status === "pending"
 			? await params.callDashboard().catch(() => null)

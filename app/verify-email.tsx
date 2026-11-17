@@ -19,7 +19,7 @@ import {
 } from "@/utils/assessmentChecksFlow";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
-	getHandshakeStatus,
+	getBookingStatus,
 	getUserDashboardData,
 	getUserProfile,
 	retryAssessmentChecks,
@@ -134,8 +134,12 @@ export default function VerifyEmail() {
 					lastSubmittedEmailRef.current = initialEmail.trim().toLowerCase();
 				}
 
-				// Check initial handshake status without arguments
-				const checks = await getHandshakeStatus();
+				// Check initial booking status
+				const initialLeadId =
+					(params.lead_id as string) || (await resolveLeadId().catch(() => ""));
+				const checks = await getBookingStatus({
+					leadId: initialLeadId || undefined,
+				});
 				if (!isMounted) return;
 
 				if (checks.status === "approved") {
@@ -301,7 +305,7 @@ export default function VerifyEmail() {
 							const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail);
 
 							if (status === 409 && detailStr.toLowerCase().includes("cannot be retried")) {
-								const checks = await getHandshakeStatus();
+								const checks = await getBookingStatus({ leadId });
 								if (checks.status === "approved") {
 									navTarget = () =>
 										router.replace({
@@ -331,7 +335,7 @@ export default function VerifyEmail() {
 						}
 					}
 
-					// Poll handshake status until terminal state
+					// Poll booking status until terminal state
 					const checks = await pollAssessmentChecks({
 						signal: loaderSignal,
 						leadId,
@@ -394,7 +398,11 @@ export default function VerifyEmail() {
 
 	const handleChecksFailure = async (err: any) => {
 		if (err?.aborted) return;
-		const freshChecks = await getHandshakeStatus().catch(() => null);
+		const resolvedLeadId =
+			(params.lead_id as string) || (await resolveLeadId().catch(() => ""));
+		const freshChecks = await getBookingStatus({
+			leadId: resolvedLeadId || undefined,
+		}).catch(() => null);
 		const dashboardData =
 			!freshChecks || freshChecks.status === "pending"
 				? await getUserDashboardData().catch(() => null)

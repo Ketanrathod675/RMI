@@ -10,17 +10,17 @@ import {
 	isRejectedStatus,
 } from "@/utils/applicationRejection";
 
-const GUARD_POLL_INTERVAL_MS = 15_000;
+const GUARD_POLL_INTERVAL_MS = 30_000;
 
 /**
  * useApplicationStatusGuard
  * Watches for mid-flow rejections (e.g. lender webhook arrived late).
  *
  * Requirements:
- * - Polls GET /workflow/progress every 15s while focused & active
+ * - Polls GET /workflow/progress every 30s while focused & active
  * - Pauses when not focused or app in background
  * - Stops when status is "completed" or application is rejected
- * - Refetches on AppState change to "active"
+ * - Refetches on AppState change to "active" from background/inactive
  * - On rejection: calls handleApplicationRejected
  * - Silent: no loaders, no toasts, errors ignored
  * - At most one request in flight
@@ -33,7 +33,14 @@ export function useApplicationStatusGuard(options?: {
 	const { userId } = useAuth();
 	const [isFocused, setIsFocused] = useState(true);
 	const [isAppActive, setIsAppActive] = useState(AppState.currentState === "active");
+	const [isStopped, setIsStopped] = useState(false);
 	const isStoppedRef = useRef(false);
+	const appStateRef = useRef<string>(AppState.currentState || "active");
+
+	const stopGuard = useCallback(() => {
+		isStoppedRef.current = true;
+		setIsStopped(true);
+	}, []);
 
 	useFocusEffect(
 		useCallback(() => {
@@ -44,17 +51,7 @@ export function useApplicationStatusGuard(options?: {
 		}, [])
 	);
 
-	useEffect(() => {
-		const subscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
-			const active = nextState === "active";
-			setIsAppActive(active);
-		});
-		return () => {
-			subscription.remove();
-		};
-	}, []);
-
-	const isEnabled = (options?.enabled ?? true) && isFocused && isAppActive && !isStoppedRef.current;
+	const isEnabled = (options?.enabled ?? true) && isFocused && isAppActive && !isStopped;
 
 	const { data, error, refetch } = useQuery({
 		queryKey: ["application-status-guard", userId],
@@ -80,36 +77,46 @@ export function useApplicationStatusGuard(options?: {
 		refetchOnWindowFocus: false,
 	});
 
+	useEffect(() => {
+		const subscription = AppState.addEventListener("change", (nextState: AppStateStatus) => {
+			const wasBackground = /inactive|background/.test(appStateRef.current);
+			const isNowActive = nextState === "active";
+			appStateRef.current = nextState;
+			setIsAppActive(isNowActive);
+
+			// Only refetch on actual transition from background to active when enabled
+			if (wasBackground && isNowActive && (options?.enabled ?? true) && !!userId && !isStoppedRef.current && isFocused) {
+				refetch().catch(() => {});
+			}
+		});
+		return () => {
+			subscription.remove();
+		};
+	}, [options?.enabled, userId, isFocused, refetch]);
+
 	// Check returned data for rejection
 	useEffect(() => {
 		if (data) {
 			const status = String(data.overall_status ?? "").toLowerCase();
 			if (status === "completed") {
-				isStoppedRef.current = true;
+				stopGuard();
 				return;
 			}
 			if (isRejectedStatus(data)) {
-				isStoppedRef.current = true;
+				stopGuard();
 				handleApplicationRejected({ router, queryClient, source: "useApplicationStatusGuard" });
 			}
 		}
-	}, [data, router, queryClient]);
+	}, [data, router, queryClient, stopGuard]);
 
 	// Check if error is application rejection 403
 	useEffect(() => {
 		if (error) {
 			if (isApplicationRejectedError(error)) {
-				isStoppedRef.current = true;
+				stopGuard();
 				handleApplicationRejected({ router, queryClient, source: "useApplicationStatusGuard_403" });
 			}
 		}
-	}, [error, router, queryClient]);
-
-	// Trigger refetch on foregrounding when active & focused
-	useEffect(() => {
-		if (isAppActive && isFocused && !isStoppedRef.current) {
-			refetch().catch(() => {});
-		}
-	}, [isAppActive, isFocused, refetch]);
+	}, [error, router, queryClient, stopGuard]);
 }
 

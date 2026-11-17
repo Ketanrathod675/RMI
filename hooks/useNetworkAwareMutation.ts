@@ -31,7 +31,19 @@ export function useNetworkAwareMutation<
 
 	const mutate = (variables: TVariables, mutateOptions?: MutateOptions<TData, TError, TVariables, TContext>) => {
 		if (inFlightPromiseRef.current) return;
-		mutation.mutate(variables, mutateOptions);
+		inFlightPromiseRef.current = new Promise<TData | undefined>(() => {});
+		try {
+			mutation.mutate(variables, {
+				...mutateOptions,
+				onSettled: (...args) => {
+					inFlightPromiseRef.current = null;
+					(mutateOptions?.onSettled as any)?.(...args);
+				},
+			});
+		} catch (err) {
+			inFlightPromiseRef.current = null;
+			throw err;
+		}
 	};
 
 

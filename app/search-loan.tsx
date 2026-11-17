@@ -31,7 +31,6 @@ import { getApiErrorInfo } from "@/utils/api/errors";
 import { markLoanSearchDone } from "@/utils/loanSearchSession";
 import { useQueryClient } from "@tanstack/react-query";
 import { height, width } from "@/utils/dimensions";
-import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { handleApplicationRejected, isApplicationRejectedError } from "@/utils/applicationRejection";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -50,7 +49,6 @@ export default function SearchLoan() {
 	const isRepeatUser = params.is_repeat_user === "true";
 
 	useJourneyTracker("/search-loan");
-	useApplicationStatusGuard();
 
 	const [showProgress, setShowProgress] = useState(false);
 	const [currentStage, setCurrentStage] = useState(0);
@@ -177,7 +175,14 @@ export default function SearchLoan() {
 		let cancelled = false;
 		const startedAt = Date.now();
 		const MIN_STAGE_MS = 3000; // avoid a flash when the server answers instantly
-		const POLL_MS = 3000;
+		const POLL_DELAYS = [3000, 3000, 5000, 5000];
+		const MAX_POLL_DELAY = 8000;
+		let pollIndex = 0;
+		const getNextPollDelay = () => {
+			const delay = pollIndex < POLL_DELAYS.length ? POLL_DELAYS[pollIndex] : MAX_POLL_DELAY;
+			pollIndex++;
+			return delay;
+		};
 		const SLOW_AFTER_MS = 20_000;
 		const GIVE_UP_AFTER_MS = 90_000;
 		const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -276,7 +281,14 @@ export default function SearchLoan() {
 						// Fall back to dashboard
 					}
 
-					if (!currentStep || !overallStatus) {
+					const needsBreDetails =
+						currentStep === "pan_verification" ||
+						currentStep === "professional_details" ||
+						overallStatus === "rejected" ||
+						overallStatus === "application_rejected" ||
+						overallStatus === "no_approved_amount";
+
+					if (!currentStep || !overallStatus || needsBreDetails) {
 						const dashboardData = await getUserDashboardData();
 						const workflowProgress = dashboardData?.workflow_progress;
 						currentStep = currentStep || workflowProgress?.current_step;
@@ -338,7 +350,7 @@ export default function SearchLoan() {
 							return;
 						}
 						// Network error / slow server / 5xx: keep searching, do not skip the loader.
-						await wait(POLL_MS);
+						await wait(getNextPollDelay());
 						continue;
 					}
 
@@ -347,7 +359,7 @@ export default function SearchLoan() {
 					return;
 				} catch {
 					// Dashboard call failed (offline / slow): retry until the give-up limit.
-					await wait(POLL_MS);
+					await wait(getNextPollDelay());
 				}
 			}
 		};

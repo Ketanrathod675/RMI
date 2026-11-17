@@ -169,7 +169,7 @@ export async function handleApplicationRejected(options?: {
 export async function routeAfterStep(
 	router: any,
 	queryClient?: QueryClient,
-	options?: { fallbackStep?: string }
+	options?: { fallbackStep?: string; currentStep?: string }
 ): Promise<void> {
 	if (queryClient) {
 		await queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
@@ -199,7 +199,12 @@ export async function routeAfterStep(
 		return;
 	}
 
-	const nextStep = progressData.current_step || options?.fallbackStep;
+	let nextStep = progressData.current_step || options?.fallbackStep;
+	// If the backend has not yet advanced current_step from the completed step, use fallbackStep
+	if (options?.currentStep && nextStep === options.currentStep && options?.fallbackStep) {
+		nextStep = options.fallbackStep;
+	}
+
 	if (!nextStep) {
 		router.replace("/(tabs)");
 		return;

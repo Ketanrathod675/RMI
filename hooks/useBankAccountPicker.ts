@@ -90,7 +90,7 @@ export function useBankAccountPicker() {
 		queryKey: ["bankAccounts", userId],
 		queryFn: getBankAccounts,
 		enabled: !!userId,
-		staleTime: 0,
+		staleTime: 30_000,
 	});
 
 	const savedAccounts: SavedPickerAccount[] = useMemo(() => {

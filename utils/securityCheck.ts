@@ -18,8 +18,17 @@ export async function checkDeviceSecurity(): Promise<SecurityCheckResult> {
 	}
 
 	try {
-		// Native security checks if available on Android release
+		// Native security checks on Android release
 		if (Platform.OS === "android" && NativeModules.SecurityModule) {
+			// 1. Check for Emulator / Virtualized environment
+			if (typeof NativeModules.SecurityModule.isEmulator === "function") {
+				const isEmulator = await NativeModules.SecurityModule.isEmulator();
+				if (isEmulator) {
+					return { isSecure: false, reason: "emulator" };
+				}
+			}
+
+			// 2. Check for Rooted / Modified OS
 			if (typeof NativeModules.SecurityModule.isRooted === "function") {
 				const isRooted = await NativeModules.SecurityModule.isRooted();
 				if (isRooted) {
@@ -27,6 +36,7 @@ export async function checkDeviceSecurity(): Promise<SecurityCheckResult> {
 				}
 			}
 
+			// 3. Check for Developer Options & USB Debugging (ADB)
 			if (typeof NativeModules.SecurityModule.isDevelopmentSettingsMode === "function") {
 				const isDevMode = await NativeModules.SecurityModule.isDevelopmentSettingsMode();
 				if (isDevMode) {
@@ -40,5 +50,16 @@ export async function checkDeviceSecurity(): Promise<SecurityCheckResult> {
 		if (__DEV__) console.warn("Security check failed", { code: "security_check_failed" });
 		// Graceful fallback to avoid bricking on unexpected device errors
 		return { isSecure: true, reason: null };
+	}
+}
+
+/**
+ * Helper to open Android developer settings to let user toggle off developer mode / USB debugging.
+ */
+export async function openDeveloperSettings(): Promise<void> {
+	if (Platform.OS === "android" && NativeModules.SecurityModule?.openDeveloperSettings) {
+		try {
+			await NativeModules.SecurityModule.openDeveloperSettings();
+		} catch {}
 	}
 }

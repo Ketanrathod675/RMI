@@ -1,4 +1,4 @@
-import { getHandshakeStatus, type AssessmentChecks } from "@/utils/api";
+import { getBookingStatus, type AssessmentChecks } from "@/utils/api";
 import { isEmailFixable, isPanFixable } from "@/utils/assessmentChecksFlow";
 import Logger from "@/utils/logger";
 import { useCallback, useEffect, useRef } from "react";
@@ -16,11 +16,13 @@ export interface PollAssessmentChecksOptions {
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	intervalMs?: number;
+	fetcher?: (params: { txnid?: string; leadId?: string }) => Promise<AssessmentChecks>;
 }
 
 interface InFlightEntry {
 	promise: Promise<AssessmentChecks>;
 	signals: Set<AbortSignal>;
+	fetcher?: (params: { txnid?: string; leadId?: string }) => Promise<AssessmentChecks>;
 }
 
 const inFlightPolls = new Map<string, InFlightEntry>();
@@ -98,6 +100,7 @@ function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T>
 
 async function executePoll(
 	txnid: string | undefined,
+	leadId: string | undefined,
 	entry: InFlightEntry,
 ): Promise<AssessmentChecks> {
 	let lastResult: AssessmentChecks | null = null;
@@ -105,6 +108,7 @@ async function executePoll(
 		entry.signals.size > 0 && Array.from(entry.signals).every((s) => s.aborted);
 
 	const totalAttempts = ASSESSMENT_CHECKS_BACKOFF_DELAYS.length + 1; // 1 initial + 8 delays = max 9 requests
+	const statusFetcher = entry.fetcher || getBookingStatus;
 
 	for (let attempt = 0; attempt < totalAttempts; attempt++) {
 		if (areAllSignalsAborted()) {
@@ -126,10 +130,11 @@ async function executePoll(
 			attempt: attempt + 1,
 			totalAttempts,
 			txnid,
+			leadId,
 		});
 
 		try {
-			const res = await getHandshakeStatus(txnid);
+			const res = await statusFetcher({ txnid, leadId });
 			lastResult = res;
 
 			if (isTerminalStatus(res.status)) {
@@ -140,11 +145,28 @@ async function executePoll(
 				return res;
 			}
 		} catch (error: any) {
-			// Network errors: do not retry faster than the schedule; count them as an attempt.
-			Logger.warn("pollAssessmentChecks network error, continuing schedule", {
-				attempt: attempt + 1,
-				error: error?.message || error,
-			});
+			if (error?.isNotFound || error?.status === 404) {
+				Logger.warn("pollAssessmentChecks 404 not found, stopping polling immediately", {
+					attempt: attempt + 1,
+					error: error?.message || error,
+				});
+				const notFoundErr: any = new Error(error?.message || "Booking status not found");
+				notFoundErr.isNotFound = true;
+				notFoundErr.status = 404;
+				notFoundErr.isError = true;
+				throw notFoundErr;
+			}
+			if (error?.isPaymentPending || error?.status === 409) {
+				Logger.debug("pollAssessmentChecks 409 payment pending, continuing schedule", {
+					attempt: attempt + 1,
+				});
+			} else {
+				// Network errors: do not retry faster than the schedule; count them as an attempt.
+				Logger.warn("pollAssessmentChecks network error, continuing schedule", {
+					attempt: attempt + 1,
+					error: error?.message || error,
+				});
+			}
 		}
 
 		// If this was the last attempt, break and throw timeout
@@ -207,9 +229,10 @@ export function pollAssessmentChecks(
 		const inFlightObj: InFlightEntry = {
 			promise: Promise.resolve() as any,
 			signals,
+			fetcher: options.fetcher,
 		};
 
-		inFlightObj.promise = executePoll(txnid, inFlightObj).finally(() => {
+		inFlightObj.promise = executePoll(txnid, leadId, inFlightObj).finally(() => {
 			inFlightPolls.delete(flightKey);
 		});
 

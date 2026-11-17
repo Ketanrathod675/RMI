@@ -9,10 +9,6 @@ import React, { useEffect, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Animated,
-	Easing,
-	Modal,
-	Pressable,
-	ScrollView,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
@@ -22,15 +18,17 @@ import {
 export type LenderOffer = {
 	lender_id: string;
 	lender_name: string;
-	is_rbi_nbfc: boolean;
-	loan_upto: number;
-	tenure_upto: number;
-	interest_rate_starts_at: string;
+	is_rbi_nbfc?: boolean;
+	loan_upto?: number;
+	tenure_upto?: number;
+	interest_rate_starts_at?: string;
 };
 
 interface OfferLendersSectionProps {
 	primaryLender?: LenderOffer;
-	eligibleLenders: LenderOffer[];
+	isLoadingLender?: boolean;
+	lenderLookupFailed?: boolean;
+	onRetryLender?: () => void;
 	isLoadingFee: boolean;
 	processingFeeAmount: number;
 	originalPrice?: number;
@@ -51,7 +49,9 @@ const formatAmount = (amount: number): string => {
 
 export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 	primaryLender,
-	eligibleLenders,
+	isLoadingLender,
+	lenderLookupFailed,
+	onRetryLender,
 	isLoadingFee,
 	processingFeeAmount,
 	originalPrice,
@@ -62,8 +62,31 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 }) => {
 	const { t, isHindi } = useTranslation();
 	const [isLenderExpanded, setIsLenderExpanded] = useState(false);
-	const [isViewAllVisible, setIsViewAllVisible] = useState(false);
-	const [expandedLenders, setExpandedLenders] = useState<Record<string, boolean>>({});
+	const shimmerAnim = useRef(new Animated.Value(0.35)).current;
+
+	useEffect(() => {
+		let anim: Animated.CompositeAnimation | null = null;
+		if (isLoadingLender && !primaryLender) {
+			anim = Animated.loop(
+				Animated.sequence([
+					Animated.timing(shimmerAnim, {
+						toValue: 1,
+						duration: 800,
+						useNativeDriver: true,
+					}),
+					Animated.timing(shimmerAnim, {
+						toValue: 0.35,
+						duration: 800,
+						useNativeDriver: true,
+					}),
+				])
+			);
+			anim.start();
+		}
+		return () => {
+			if (anim) anim.stop();
+		};
+	}, [isLoadingLender, primaryLender, shimmerAnim]);
 
 	const actualOriginalPrice = originalPrice;
 	const actualDiscountPercent =
@@ -77,54 +100,11 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 			)
 			: 0);
 
-	const viewAllTranslateY = useRef(new Animated.Value(600)).current;
-	const viewAllBackdropOpacity = useRef(new Animated.Value(0)).current;
-
-	useEffect(() => {
-		if (isViewAllVisible) {
-			viewAllTranslateY.setValue(600);
-			viewAllBackdropOpacity.setValue(0);
-			Animated.parallel([
-				Animated.timing(viewAllBackdropOpacity, {
-					toValue: 1,
-					duration: 220,
-					useNativeDriver: true,
-				}),
-				Animated.timing(viewAllTranslateY, {
-					toValue: 0,
-					duration: 260,
-					easing: Easing.out(Easing.cubic),
-					useNativeDriver: true,
-				}),
-			]).start();
-		}
-	}, [isViewAllVisible, viewAllTranslateY, viewAllBackdropOpacity]);
-
-	const handleCloseViewAll = () => {
-		Animated.parallel([
-			Animated.timing(viewAllBackdropOpacity, {
-				toValue: 0,
-				duration: 180,
-				useNativeDriver: true,
-			}),
-			Animated.timing(viewAllTranslateY, {
-				toValue: 600,
-				duration: 200,
-				easing: Easing.in(Easing.cubic),
-				useNativeDriver: true,
-			}),
-		]).start(() => {
-			setIsViewAllVisible(false);
-		});
-	};
-
 	const getLocalText = (key: string, defaultText: string): string => {
 		if (isHindi) {
 			switch (key) {
 				case "eligibleLenders":
 					return "योग्य ऋणदाता";
-				case "viewAll":
-					return "सभी देखें";
 				case "approvedLenders":
 					return "स्वीकृत ऋणदाता";
 				case "loanUpto":
@@ -135,28 +115,17 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 					return "ब्याज दर";
 				case "rbiRegisteredNbfc":
 					return "आरबीआई पंजीकृत एनबीएफसी";
-				case "otherEligibleLenders":
-					return "अन्य योग्य ऋणदाता";
 				case "assessmentFee":
 					return "मूल्यांकन शुल्क";
 				case "assessmentFeeNonRefundable":
 					return "नोट: मूल्यांकन शुल्क गैर-वापसी योग्य है";
 				case "offerEndsIn":
 					return "ऑफ़र समाप्त होने में समय:";
-				case "okay":
-					return "ठीक है";
 				default:
 					return defaultText;
 			}
 		}
 		return defaultText;
-	};
-
-	const toggleLenderExpand = (key: string) => {
-		setExpandedLenders((prev) => ({
-			...prev,
-			[key]: !prev[key],
-		}));
 	};
 
 	const getLenderLogo = (name?: string) => {
@@ -179,7 +148,15 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 
 	const displayLoanAmount = primaryLender?.loan_upto
 		? formatAmount(primaryLender.loan_upto) + "/-"
-		: "₹ 20,000/-";
+		: undefined;
+
+	const hasDetails = Boolean(
+		primaryLender &&
+		(primaryLender.loan_upto !== undefined ||
+			primaryLender.tenure_upto !== undefined ||
+			primaryLender.interest_rate_starts_at !== undefined ||
+			primaryLender.is_rbi_nbfc === true)
+	);
 
 	return (
 		<View>
@@ -230,11 +207,13 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 						<TranslatedText translationKey="forLoanFromOurLendingPartner" />
 					</Text>
 
-					<View style={styles.amountBlockCentered}>
-						<View style={styles.loanAmountContainer}>
-							<Text style={styles.loanAmountText}>{displayLoanAmount}</Text>
+					{displayLoanAmount ? (
+						<View style={styles.amountBlockCentered}>
+							<View style={styles.loanAmountContainer}>
+								<Text style={styles.loanAmountText}>{displayLoanAmount}</Text>
+							</View>
 						</View>
-					</View>
+					) : null}
 				</View>
 			</View>
 
@@ -279,22 +258,53 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 				{getLocalText("assessmentFeeNonRefundable", "Note: Assessment fee is non-refundable")}
 			</Text>
 
-			{/* Primary Eligible Lender Card */}
-			{primaryLender && (
-				<View style={styles.lendersSection}>
-					<View style={styles.lendersHeader}>
-						<Text style={styles.lendersTitle}>
-							{getLocalText("eligibleLenders", "Eligible Lenders")}
-						</Text>
-					</View>
+			{/* Primary Eligible Lender Card Section */}
+			<View style={styles.lendersSection}>
+				<View style={styles.lendersHeader}>
+					<Text style={styles.lendersTitle}>
+						{getLocalText("eligibleLenders", "Eligible Lenders")}
+					</Text>
+				</View>
 
+				{isLoadingLender && !primaryLender ? (
+					/* Skeleton / Shimmer Card */
+					<Animated.View style={[styles.lenderCard, { opacity: shimmerAnim }]}>
+						<View style={styles.lenderCardHeader}>
+							<View style={styles.skeletonLogo} />
+							<View style={styles.lenderHeaderInfo}>
+								<View style={styles.skeletonLineShort} />
+								<View style={styles.skeletonLineLong} />
+							</View>
+						</View>
+					</Animated.View>
+				) : lenderLookupFailed && !primaryLender ? (
+					/* Neutral Card when lookup failed */
+					<View style={[styles.lenderCard, styles.failedCard]}>
+						<View style={styles.failedRow}>
+							<MaterialCommunityIcons name="clock-outline" size={22} color="#64748B" />
+							<Text style={styles.failedText}>
+								{t("yourLenderIsBeingAssigned", "Your lender is being assigned")}
+							</Text>
+							{onRetryLender && (
+								<TouchableOpacity
+									onPress={onRetryLender}
+									style={styles.retryBtn}
+									hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+									<Text style={styles.retryBtnText}>{t("tryAgain", "Retry")}</Text>
+								</TouchableOpacity>
+							)}
+						</View>
+					</View>
+				) : primaryLender ? (
+					/* Known Assigned Lender Card */
 					<TouchableOpacity
 						style={[
 							styles.lenderCard,
-							isLenderExpanded && styles.lenderCardExpanded,
+							hasDetails && isLenderExpanded && styles.lenderCardExpanded,
 						]}
-						onPress={() => setIsLenderExpanded(!isLenderExpanded)}
-						activeOpacity={0.9}>
+						onPress={() => hasDetails && setIsLenderExpanded(!isLenderExpanded)}
+						activeOpacity={hasDetails ? 0.9 : 1}
+						disabled={!hasDetails}>
 						<View style={styles.lenderCardHeader}>
 							<Image
 								source={getLenderLogo(primaryLender.lender_name)}
@@ -313,56 +323,73 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 									{primaryLender.lender_name}
 								</Text>
 							</View>
-							<MaterialIcons
-								name={isLenderExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"}
-								size={24}
-								color="#333"
-							/>
+							{hasDetails && (
+								<MaterialIcons
+									name={isLenderExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"}
+									size={24}
+									color="#333"
+								/>
+							)}
 						</View>
 
-						{isLenderExpanded && (
+						{hasDetails && isLenderExpanded && (
 							<View style={styles.lenderDetailsContainer}>
-								<View style={styles.whiteDetailsCard}>
-									<View style={styles.detailsGrid}>
-										<View style={styles.detailsColumnLeft}>
-											<Text style={styles.detailLabel}>
-												{getLocalText("loanUpto", "Loan Upto")}
-											</Text>
-											<Text style={styles.detailValue}>
-												{formatAmount(primaryLender.loan_upto)}
-											</Text>
-										</View>
-										<View style={styles.detailsColumnCenter}>
-											<Text style={[styles.detailLabel, { textAlign: "center" }]}>
-												{getLocalText("tenureUpto", "Tenure Upto")}
-											</Text>
-											<Text style={[styles.detailValue, { textAlign: "center" }]}>
-												{formatTenureValue(primaryLender.tenure_upto)}
-											</Text>
+								{(primaryLender.loan_upto !== undefined ||
+									primaryLender.tenure_upto !== undefined ||
+									primaryLender.interest_rate_starts_at !== undefined) && (
+									<View style={styles.whiteDetailsCard}>
+										<View style={styles.detailsGrid}>
+											{primaryLender.loan_upto !== undefined && (
+												<View style={styles.detailsColumnLeft}>
+													<Text style={styles.detailLabel}>
+														{getLocalText("loanUpto", "Loan Upto")}
+													</Text>
+													<Text style={styles.detailValue}>
+														{formatAmount(primaryLender.loan_upto)}
+													</Text>
+												</View>
+											)}
+											{primaryLender.tenure_upto !== undefined && (
+												<View style={styles.detailsColumnCenter}>
+													<Text style={[styles.detailLabel, { textAlign: "center" }]}>
+														{getLocalText("tenureUpto", "Tenure Upto")}
+													</Text>
+													<Text style={[styles.detailValue, { textAlign: "center" }]}>
+														{formatTenureValue(primaryLender.tenure_upto)}
+													</Text>
+												</View>
+											)}
+											{primaryLender.interest_rate_starts_at !== undefined && (
+												<View style={styles.detailsColumnRight}>
+													<Text style={[styles.detailLabel, { textAlign: "right" }]}>
+														{getLocalText("interestRate", "Interest Rate")}
+													</Text>
+													<Text style={[styles.detailValue, { textAlign: "right" }]}>
+														{primaryLender.interest_rate_starts_at}
+													</Text>
+												</View>
+											)}
 										</View>
 									</View>
-								</View>
+								)}
 
-								{(primaryLender.is_rbi_nbfc ||
-									primaryLender.lender_name.toLowerCase().includes("fintree") ||
-									primaryLender.lender_name.toLowerCase().includes("ru loans") ||
-									primaryLender.lender_name.toLowerCase().includes("ruloans")) && (
-										<View style={styles.nbfcBadgeContainer}>
-											<MaterialCommunityIcons
-												name="shield-check"
-												size={18}
-												color="#005BBA"
-											/>
-											<Text style={styles.nbfcBadgeText}>
-												{getLocalText("rbiRegisteredNbfc", "RBI Registered NBFC")}
-											</Text>
-										</View>
-									)}
+								{primaryLender.is_rbi_nbfc === true && (
+									<View style={styles.nbfcBadgeContainer}>
+										<MaterialCommunityIcons
+											name="shield-check"
+											size={18}
+											color="#005BBA"
+										/>
+										<Text style={styles.nbfcBadgeText}>
+											{getLocalText("rbiRegisteredNbfc", "RBI Registered NBFC")}
+										</Text>
+									</View>
+								)}
 							</View>
 						)}
 					</TouchableOpacity>
-				</View>
-			)}
+				) : null}
+			</View>
 
 			{/* Consent Disclaimer */}
 			<View style={styles.consentContainer}>
@@ -370,150 +397,6 @@ export const OfferLendersSection: React.FC<OfferLendersSectionProps> = ({
 					{t("consentAssessmentFeeNew")}
 				</Text>
 			</View>
-
-			{/* View All Lenders Bottom Sheet Modal */}
-			<Modal
-				visible={isViewAllVisible}
-				transparent={true}
-				animationType="none"
-				onRequestClose={handleCloseViewAll}
-				statusBarTranslucent={true}>
-				<View style={styles.bottomSheetOverlay}>
-					{/* Fading Backdrop (Fades in place - does NOT slide up with modal) */}
-					<Animated.View
-						style={[
-							StyleSheet.absoluteFill,
-							styles.backdrop,
-							{ opacity: viewAllBackdropOpacity },
-						]}>
-						<Pressable style={StyleSheet.absoluteFill} onPress={handleCloseViewAll} />
-					</Animated.View>
-
-					{/* Bottom Sheet that slides up independently from bottom */}
-					<Animated.View
-						style={[
-							styles.bottomSheetContainer,
-							{ transform: [{ translateY: viewAllTranslateY }] },
-						]}>
-						<View style={styles.bottomSheetHeader}>
-							<Text style={styles.bottomSheetTitle}>
-								{getLocalText("otherEligibleLenders", "Other Eligible Lenders")}
-							</Text>
-							<TouchableOpacity
-								onPress={handleCloseViewAll}
-								style={styles.closeButtonTouch}>
-								<MaterialIcons name="close" size={24} color="#333" />
-							</TouchableOpacity>
-						</View>
-
-						<ScrollView
-							style={styles.lendersListScroll}
-							showsVerticalScrollIndicator={false}>
-							{eligibleLenders.map((lender, index) => {
-								const uniqueKey = `${lender.lender_id}-${index}`;
-								const isExpanded = !!expandedLenders[uniqueKey];
-								return (
-									<TouchableOpacity
-										key={uniqueKey}
-										style={[
-											styles.modalLenderCard,
-											isExpanded && styles.modalLenderCardExpanded,
-										]}
-										onPress={() => toggleLenderExpand(uniqueKey)}
-										activeOpacity={0.9}>
-										<View style={styles.lenderCardHeader}>
-											<Image
-												source={getLenderLogo(lender.lender_name)}
-												style={
-													lender.lender_name.toLowerCase().includes("emkay")
-														? styles.emkayLenderLogo
-														: styles.lenderLogo
-												}
-												contentFit="contain"
-											/>
-											<View style={styles.lenderHeaderInfo}>
-												<Text style={styles.approvedLendersLabel}>
-													{getLocalText("approvedLenders", "Approved Lenders")}
-												</Text>
-												<Text style={styles.lenderNameText}>
-													{lender.lender_name}
-												</Text>
-											</View>
-											<MaterialIcons
-												name={
-													isExpanded
-														? "keyboard-arrow-up"
-														: "keyboard-arrow-down"
-												}
-												size={24}
-												color="#333"
-											/>
-										</View>
-
-										{isExpanded && (
-											<View style={styles.lenderDetailsContainer}>
-												<View style={styles.whiteDetailsCard}>
-													<View style={styles.detailsGrid}>
-														<View style={styles.detailsColumnLeft}>
-															<Text style={styles.detailLabel}>
-																{getLocalText("loanUpto", "Loan Upto")}
-															</Text>
-															<Text style={styles.detailValue}>
-																{formatAmount(lender.loan_upto)}
-															</Text>
-														</View>
-														<View style={styles.detailsColumnCenter}>
-															<Text
-																style={[
-																	styles.detailLabel,
-																	{ textAlign: "center" },
-																]}>
-																{getLocalText("tenureUpto", "Tenure Upto")}
-															</Text>
-															<Text
-																style={[
-																	styles.detailValue,
-																	{ textAlign: "center" },
-																]}>
-																{formatTenureValue(lender.tenure_upto)}
-															</Text>
-														</View>
-													</View>
-												</View>
-
-												{lender.is_rbi_nbfc && (
-													<View style={styles.nbfcBadgeContainer}>
-														<MaterialCommunityIcons
-															name="shield-check"
-															size={18}
-															color="#005BBA"
-														/>
-														<Text style={styles.nbfcBadgeText}>
-															{getLocalText(
-																"rbiRegisteredNbfc",
-																"RBI Registered NBFC",
-															)}
-														</Text>
-													</View>
-												)}
-											</View>
-										)}
-									</TouchableOpacity>
-								);
-							})}
-						</ScrollView>
-
-						<TouchableOpacity
-							style={styles.modalCloseButton}
-							onPress={handleCloseViewAll}
-							activeOpacity={0.8}>
-							<Text style={styles.modalCloseButtonText}>
-								{getLocalText("okay", "Okay")}
-							</Text>
-						</TouchableOpacity>
-					</Animated.View>
-				</View>
-			</Modal>
 		</View>
 	);
 };
@@ -692,12 +575,6 @@ const styles = StyleSheet.create({
 		fontWeight: "bold",
 		color: "#333",
 	},
-	viewAllText: {
-		fontSize: font(1.6),
-		color: "#1D7505",
-		fontWeight: "bold",
-		textDecorationLine: "underline",
-	},
 	lenderCard: {
 		backgroundColor: "#F2F5FA",
 		borderRadius: width(3),
@@ -793,6 +670,52 @@ const styles = StyleSheet.create({
 		color: "#8E9AA0",
 		fontWeight: "500",
 	},
+	skeletonLogo: {
+		width: width(25),
+		height: width(8.5),
+		marginRight: width(3),
+		borderRadius: width(1),
+		backgroundColor: "#CBD5E1",
+	},
+	skeletonLineShort: {
+		width: width(22),
+		height: height(1.4),
+		borderRadius: 4,
+		backgroundColor: "#CBD5E1",
+		marginBottom: height(0.6),
+	},
+	skeletonLineLong: {
+		width: width(42),
+		height: height(1.8),
+		borderRadius: 4,
+		backgroundColor: "#CBD5E1",
+	},
+	failedCard: {
+		backgroundColor: "#F8FAFC",
+		borderColor: "#E2E8F0",
+	},
+	failedRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: width(2.5),
+	},
+	failedText: {
+		flex: 1,
+		fontSize: font(1.6),
+		color: "#64748B",
+		fontWeight: "500",
+	},
+	retryBtn: {
+		paddingHorizontal: width(2.8),
+		paddingVertical: height(0.7),
+		backgroundColor: "#E2E8F0",
+		borderRadius: 6,
+	},
+	retryBtnText: {
+		fontSize: font(1.4),
+		fontWeight: "600",
+		color: "#0F172A",
+	},
 	consentContainer: {
 		paddingHorizontal: width(6),
 		marginTop: height(3),
@@ -803,69 +726,6 @@ const styles = StyleSheet.create({
 		fontSize: font(1.4),
 		textAlign: "center",
 		lineHeight: font(2.0),
-	},
-	bottomSheetOverlay: {
-		flex: 1,
-		justifyContent: "flex-end",
-	},
-	backdrop: {
-		backgroundColor: "rgba(0,0,0,0.5)",
-	},
-	bottomSheetContainer: {
-		backgroundColor: white,
-		borderTopLeftRadius: width(6),
-		borderTopRightRadius: width(6),
-		paddingHorizontal: width(6),
-		paddingTop: height(3),
-		paddingBottom: height(4),
-		maxHeight: height(75),
-	},
-	bottomSheetHeader: {
-		flexDirection: "row",
-		justifyContent: "space-between",
-		alignItems: "center",
-		marginBottom: height(2.5),
-	},
-	bottomSheetTitle: {
-		fontSize: font(2.2),
-		fontWeight: "bold",
-		color: "#333",
-		textAlign: "center",
-		flex: 1,
-	},
-	closeButtonTouch: {
-		position: "absolute",
-		right: 0,
-		padding: width(1),
-	},
-	lendersListScroll: {
-		marginBottom: height(2.5),
-	},
-	modalLenderCard: {
-		backgroundColor: "#F2F5FA",
-		borderRadius: width(3),
-		padding: width(4),
-		borderWidth: 1,
-		borderColor: "#E1E8F5",
-		marginBottom: height(1.5),
-	},
-	modalLenderCardExpanded: {
-		borderColor: "#D0DDF2",
-	},
-	modalCloseButton: {
-		backgroundColor: "#B7FB52",
-		borderRadius: 20,
-		paddingVertical: height(2),
-		width: "100%",
-		alignItems: "center",
-		justifyContent: "center",
-		elevation: 3,
-	},
-	modalCloseButtonText: {
-		color: dark,
-		fontSize: font(2),
-		fontWeight: "bold",
-		letterSpacing: 1,
 	},
 });
 

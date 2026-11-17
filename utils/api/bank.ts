@@ -3,6 +3,12 @@ import Logger from "@/utils/logger";
 
 // region: IFSC LOOKUP
 
+const ifscCache = new Map<string, IFSCLookupResponseType>();
+
+export const clearIfscCache = (): void => {
+	ifscCache.clear();
+};
+
 export type IFSCLookupResponseType = {
 	success: boolean;
 	ifsc_code: string;
@@ -35,6 +41,16 @@ export type IFSCLookupResponseType = {
  */
 export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseType> => {
 	const cleanIfsc = String(ifscCode || "").trim().toUpperCase();
+	if (!cleanIfsc) {
+		return {
+			success: false,
+			ifsc_code: "",
+			message: "Invalid IFSC code",
+		};
+	}
+	if (ifscCache.has(cleanIfsc)) {
+		return ifscCache.get(cleanIfsc)!;
+	}
 	try {
 		Logger.debug("Looking up IFSC code", { ifsc: cleanIfsc });
 		try {
@@ -66,7 +82,7 @@ export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseTy
 					},
 				};
 				if (isBlacklisted) {
-					return {
+					const blacklistedResult: IFSCLookupResponseType = {
 						success: false,
 						is_blacklisted: true,
 						ifsc_code: cleanIfsc,
@@ -75,14 +91,18 @@ export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseTy
 							String(payload.message || "").trim() ||
 							"This bank is currently not supported. Please use a different bank account.",
 					};
+					ifscCache.set(cleanIfsc, blacklistedResult);
+					return blacklistedResult;
 				}
-				return {
+				const successResult: IFSCLookupResponseType = {
 					success: true,
 					is_blacklisted: false,
 					ifsc_code: cleanIfsc,
 					bank_details: details,
 					message: "IFSC details fetched successfully",
 				};
+				ifscCache.set(cleanIfsc, successResult);
+				return successResult;
 			}
 		} catch (backendErr: any) {
 			const status = backendErr?.response?.status;
@@ -92,12 +112,14 @@ export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseTy
 					(detail && typeof detail === "object" && detail.message) ||
 					(typeof detail === "string" ? detail : "") ||
 					"This bank is currently not supported.";
-				return {
+				const unsupportedResult: IFSCLookupResponseType = {
 					success: false,
 					is_blacklisted: true,
 					ifsc_code: cleanIfsc,
 					message: String(msg),
 				};
+				ifscCache.set(cleanIfsc, unsupportedResult);
+				return unsupportedResult;
 			}
 		}
 
@@ -114,7 +136,7 @@ export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseTy
 		const data = await response.json();
 		Logger.debug("IFSC lookup completed", { bank: data.BANK, branch: data.BRANCH });
 
-		return {
+		const razorpayResult: IFSCLookupResponseType = {
 			success: true,
 			is_blacklisted: false,
 			ifsc_code: cleanIfsc,
@@ -138,6 +160,8 @@ export const lookupIFSC = async (ifscCode: string): Promise<IFSCLookupResponseTy
 			},
 			message: "IFSC details fetched successfully",
 		};
+		ifscCache.set(cleanIfsc, razorpayResult);
+		return razorpayResult;
 	} catch (error: any) {
 		Logger.error("IFSC lookup failed", { message: error?.message });
 		return {

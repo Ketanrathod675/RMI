@@ -292,6 +292,8 @@ export default function CKYCInstructions() {
 				}
 
 				queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+				queryClient.invalidateQueries({ queryKey: ["userSelfie"] });
+				queryClient.invalidateQueries({ queryKey: ["userProfile"] });
 
 				Alert.alert(
 					t("faceMatchedSuccessfully", "Face Matched Successfully"),
@@ -354,12 +356,26 @@ export default function CKYCInstructions() {
 			});
 		},
 		onError: (err: any) => {
-			const errorData = err?.response?.data?.data || err?.response?.data;
+			const errorData =
+				err?.response?.data?.data ||
+				err?.response?.data ||
+				err?.data?.data ||
+				err?.data;
+			const detailStr =
+				typeof err?.detail === "string"
+					? err.detail
+					: typeof err?.response?.data?.detail === "string"
+					? err.response.data.detail
+					: typeof err?.message === "string"
+					? err.message
+					: "";
+
 			if (
 				errorData?.reference_photo_missing ||
 				errorData?.restart_digilocker ||
 				err?.code === "PHOTO_UNUSABLE" ||
-				err?.code === "PARSE_FAILED"
+				err?.code === "PARSE_FAILED" ||
+				/reference\s*photo\s*(not\s*available|missing)|digilocker/i.test(detailStr)
 			) {
 				setIsRefPhotoMissing(true);
 				Alert.alert(
@@ -377,10 +393,11 @@ export default function CKYCInstructions() {
 				return;
 			}
 
+			const friendly = getFriendlyError(err);
 			Toast.show({
 				type: "error",
-				text1: t("alert", "Alert"),
-				text2: getFriendlyError(err).message || t("uploadFailed", "Upload Failed"),
+				text1: friendly.title || t("alert", "Alert"),
+				text2: friendly.message || t("uploadFailed", "Upload Failed"),
 			});
 		},
 	});
