@@ -32,13 +32,14 @@ import { dark } from "@/constants/Colors";
 import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useNetworkAwareMutation } from "@/hooks/useNetworkAwareMutation";
 import { useTranslation } from "@/hooks/useTranslation";
-import { routeAfterStep } from "@/utils/applicationRejection";
+import { handleApplicationRejected, isRejectedStatus, routeAfterStep } from "@/utils/applicationRejection";
+import { handleStepConflict, routeForStep } from "@/utils/stepConflict";
+import { getWorkflowProgress } from "@/utils/api/services/user.service";
 import {
 	getAddressDocumentTypes,
 	getAddressPrefill,
 	getAddressStatus,
 	getPincodeDetails,
-	getSelfieStatus,
 	getUserDashboardData,
 	StepHref,
 	submitAddress,
@@ -107,7 +108,6 @@ export default function AadhaarKyc() {
 	const params = useLocalSearchParams<{
 		startFromAddress?: string;
 		permAddressData?: string;
-		nextStep?: string;
 		fromSelfie?: string;
 	}>();
 
@@ -121,38 +121,41 @@ export default function AadhaarKyc() {
 	const [address, setAddress] = useState<AddressType | null>(DEFAULT_EMPTY_ADDRESS);
 	const [isAddressLoading, setIsAddressLoading] = useState(true);
 	const [documentTypeOptions, setDocumentTypeOptions] = useState<SelectOption[]>(DEFAULT_DOCUMENT_TYPE_OPTIONS);
-	const [isCheckingSelfie, setIsCheckingSelfie] = useState(params.fromSelfie !== "true");
-	const [selfieCheckError, setSelfieCheckError] = useState<string | null>(null);
+	const [isCheckingStep, setIsCheckingStep] = useState(params.fromSelfie !== "true");
+	const [stepCheckError, setStepCheckError] = useState<string | null>(null);
 
-	const verifySelfieGuard = useCallback(async () => {
+	const verifyStepGuard = useCallback(async () => {
 		if (params.fromSelfie === "true") {
-			setIsCheckingSelfie(false);
+			setIsCheckingStep(false);
 			return;
 		}
-		setIsCheckingSelfie(true);
-		setSelfieCheckError(null);
+		setIsCheckingStep(true);
+		setStepCheckError(null);
 		try {
-			const res = await getSelfieStatus();
+			const res = await getWorkflowProgress();
 			const data = res?.data;
-			const isPassed =
-				(data?.selfie_uploaded && data?.face_match_status === "passed") ||
-				data?.status === "completed";
 
-			if (!isPassed) {
-				router.replace({ pathname: "/ckyc-instructions", params: { startSelfie: "true" } });
+			if (isRejectedStatus(data)) {
+				await handleApplicationRejected({ router, queryClient, source: "aadhaar-kyc" });
 				return;
 			}
-			setIsCheckingSelfie(false);
+
+			if (data?.current_step === "address_submission") {
+				setIsCheckingStep(false);
+				return;
+			}
+
+			router.replace(routeForStep(data?.current_step) as any);
 		} catch (err: any) {
-			setSelfieCheckError(
+			setStepCheckError(
 				"We couldn't verify your verification status yet. Please check your connection and try again."
 			);
 		}
-	}, [params.fromSelfie, router]);
+	}, [params.fromSelfie, router, queryClient]);
 
 	useEffect(() => {
-		verifySelfieGuard();
-	}, [verifySelfieGuard]);
+		verifyStepGuard();
+	}, [verifyStepGuard]);
 
 	const [selectedDocumentType, setSelectedDocumentType] = useState<string>("electricity_bill");
 	const [currentAddress, setCurrentAddress] = useState<"Yes" | "No">("Yes");
@@ -497,6 +500,9 @@ export default function AadhaarKyc() {
 				});
 			}
 		} catch (error: any) {
+			if (await handleStepConflict({ router, queryClient, error, source: "aadhaar-kyc" })) {
+				return;
+			}
 			Toast.show({
 				type: "error",
 				text1: t("failedToVerifyAddress", "Failed to verify address"),
@@ -507,20 +513,20 @@ export default function AadhaarKyc() {
 		}
 	};
 
-	if (isCheckingSelfie) {
+	if (isCheckingStep) {
 		return (
 			<SafeAreaView style={[styles.bg, { justifyContent: "center", alignItems: "center", padding: 24 }]}>
-				{selfieCheckError ? (
+				{stepCheckError ? (
 					<>
 						<Text style={{ fontSize: font(2), fontWeight: "700", color: dark, marginBottom: 8 }}>
 							{t("alert", "Alert")}
 						</Text>
 						<Text style={{ fontSize: font(1.5), color: "#666", textAlign: "center", marginBottom: 20 }}>
-							{selfieCheckError}
+							{stepCheckError}
 						</Text>
 						<TouchableOpacity
 							style={{ backgroundColor: dark, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 }}
-							onPress={verifySelfieGuard}
+							onPress={verifyStepGuard}
 						>
 							<Text style={{ color: "#fff", fontWeight: "700", fontSize: font(1.5) }}>
 								{t("tryAgain", "Try Again")}

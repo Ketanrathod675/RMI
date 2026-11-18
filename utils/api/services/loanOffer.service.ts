@@ -5,9 +5,6 @@ import type {
 	LoanOffer,
 	SanctionLetter,
 	SanctionLetterRequest,
-	SanctionOtpSendResponse,
-	SanctionOtpVerifyRequest,
-	SanctionOtpVerifyResponse,
 } from "../types/loan.types";
 
 export class LoanOfferApiError extends Error {
@@ -70,31 +67,5 @@ export async function generateSanctionLetter(
 		return unwrapResponse<SanctionLetter>(res, "generateSanctionLetter");
 	} catch (err: any) {
 		handleApiError(err, "generateSanctionLetter");
-	}
-}
-
-/**
- * Sends OTP to borrower's registered mobile number for sanction letter & KFS acceptance.
- */
-export async function sendSanctionOtp(): Promise<SanctionOtpSendResponse> {
-	try {
-		const res = await axios.post(URLS.loan_offer.sanction_otp_send, {});
-		return unwrapResponse<SanctionOtpSendResponse>(res, "sendSanctionOtp");
-	} catch (err: any) {
-		handleApiError(err, "sendSanctionOtp");
-	}
-}
-
-/**
- * Verifies OTP and completes loan offer acceptance (Step 5 -> advances to bank_details).
- */
-export async function verifySanctionOtp(
-	payload: SanctionOtpVerifyRequest,
-): Promise<SanctionOtpVerifyResponse> {
-	try {
-		const res = await axios.post(URLS.loan_offer.sanction_otp_verify, payload);
-		return unwrapResponse<SanctionOtpVerifyResponse>(res, "verifySanctionOtp");
-	} catch (err: any) {
-		handleApiError(err, "verifySanctionOtp");
 	}
 }

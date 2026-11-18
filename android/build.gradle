@@ -28,6 +28,28 @@ subprojects { subproject ->
       dependsOn(subproject.tasks.matching { it.name == 'generatePackagesList' })
     }
   }
+
+  // Gradle 9 strictly validates task dependencies when packaging sources JARs.
+  // Wire dependencies to codegen tasks so Gradle validation passes, and disable sourcesJar since they are unneeded for APK builds.
+  subproject.tasks.matching { it.name.endsWith('SourcesJar') }.configureEach {
+    dependsOn(subproject.tasks.matching { it.name.startsWith('generateCodegen') })
+    enabled = false
+  }
+
+  subproject.tasks.matching { it.name == 'clean' }.configureEach {
+    doLast {
+      delete "${subproject.projectDir}/.cxx"
+    }
+  }
+}
+
+// In React Native New Architecture, externalNativeBuildClean invokes CMake/Ninja
+// clean, which crashes because standard clean wipes codegen header files before CMake reconfigures.
+// Disabling these tasks allows gradlew clean to wipe build outputs cleanly without CMake errors.
+gradle.taskGraph.whenReady { taskGraph ->
+  taskGraph.allTasks.findAll { it.name.startsWith("externalNativeBuildClean") }.each {
+    it.enabled = false
+  }
 }
 
 apply plugin: "expo-root-project"

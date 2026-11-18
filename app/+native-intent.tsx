@@ -26,6 +26,20 @@ export function redirectSystemPath({
 
 		// 2. Repayment return: repayment-status with txnid -> redirect to /repayment-status
 		if (pathname.includes("repayment-status") && txnid) {
+			const callbackStatus =
+				searchParams.get("status")
+				?? searchParams.get("payment_status")
+				?? searchParams.get("success");
+			if (callbackStatus !== null && !searchParams.get("source")) {
+				const statusLower = callbackStatus.trim().toLowerCase();
+				let source = "browser_closed";
+				if (["true", "success", "successful", "completed", "active"].includes(statusLower)) {
+					source = "deeplink_success";
+				} else if (["false", "failure", "failed", "cancelled"].includes(statusLower)) {
+					source = "deeplink_failure";
+				}
+				searchParams.set("source", source);
+			}
 			const query = searchParams.toString();
 			return `/repayment-status${query ? `?${query}` : ""}`;
 		}

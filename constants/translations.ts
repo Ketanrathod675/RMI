@@ -9,6 +9,7 @@ export const translations = {
 		errGeneric: "Something went wrong. Please try again.",
 		errValidationGeneric: "Please check your information and try again.",
 		errPayloadTooLarge: "Photo size is too large. Please retake the photo.",
+		movingToCorrectStep: "Your application is on a different step. Taking you there...",
 		errAuth: "Please sign in again to continue.",
 		errNotFound: "We couldn't find the requested information.",
 		connectionProblem: "Connection problem",
@@ -1515,6 +1516,13 @@ export const translations = {
 		detailsNotFound: "Details not found",
 		// Mandate & Auto-Debit & Verification
 		unableToStartMandateSetup: "Unable to start mandate setup",
+		mandateUpiOnlyLabel: "Auto Debit via UPI",
+		mandateEnachLabel: "Auto Debit via eNACH",
+		mandateBankCardTitle: "Your bank account for this mandate",
+		mandateUseSameAccount: "Please use the same account for the mandate.",
+		mandateUpiFailedUseEnach: "Your UPI mandate failed multiple times. Please use eNACH to continue.",
+		mandateLoadingOptions: "Checking your mandate options...",
+		mandateAccountEnding: "A/c ending",
 		mandateNoCheckoutUrl: "The payment gateway did not return a checkout URL.",
 		mandateRegistrationInProgress: "Mandate Registration In Progress",
 		mandateRegistrationInProgressDesc: "Your mandate registration request has been successfully initiated. We’ll notify you once the process is complete.",
@@ -1653,6 +1661,11 @@ export const translations = {
 		reapplyCooldownTitle: "You can apply again soon",
 		reapplyCooldownMessage: "You can apply again from {date}.",
 		otpMaxAttemptsRequestNew: "Too many wrong attempts. Please tap Resend OTP to get a new code.",
+
+		// Reapply loading
+		settingUpApplicationTitle: "Setting Up Application",
+		settingUpApplicationDesc: "Please wait while we prepare your loan journey...",
+		settingUpApplication: "Setting up application...",
 	},
 
 	hindi: {
@@ -1665,6 +1678,7 @@ export const translations = {
 		errGeneric: "कुछ गलत हो गया। कृपया पुनः प्रयास करें।",
 		errValidationGeneric: "कृपया अपनी जानकारी की जाँच करें और पुनः प्रयास करें।",
 		errPayloadTooLarge: "फ़ोटो का आकार बहुत बड़ा है। कृपया फिर से फ़ोटो लें।",
+		movingToCorrectStep: "आपका आवेदन एक अलग चरण पर है। आपको वहां ले जाया जा रहा है...",
 		errAuth: "जारी रखने के लिए कृपया पुनः साइन इन करें।",
 		errNotFound: "हमें अनुरोधित जानकारी नहीं मिली।",
 		connectionProblem: "कनेक्शन समस्या",
@@ -3176,6 +3190,13 @@ export const translations = {
 		detailsNotFound: "विवरण नहीं मिला",
 		// Mandate & Auto-Debit & Verification
 		unableToStartMandateSetup: "अधिदेश सेटअप शुरू करने में असमर्थ",
+		mandateUpiOnlyLabel: "UPI के जरिए ऑटो डेबिट",
+		mandateEnachLabel: "eNACH के जरिए ऑटो डेबिट",
+		mandateBankCardTitle: "इस मैंडेट के लिए आपका बैंक खाता",
+		mandateUseSameAccount: "कृपया मैंडेट के लिए यही खाता इस्तेमाल करें।",
+		mandateUpiFailedUseEnach: "आपका UPI मैंडेट कई बार विफल हुआ है। कृपया आगे बढ़ने के लिए eNACH का उपयोग करें।",
+		mandateLoadingOptions: "आपके मैंडेट विकल्प जांचे जा रहे हैं...",
+		mandateAccountEnding: "खाता अंतिम अंक",
 		mandateNoCheckoutUrl: "पेमेंट गेटवे ने चेकआउट यूआरएल नहीं दिया।",
 		mandateRegistrationInProgress: "अधिदेश पंजीकरण प्रगति पर है",
 		mandateRegistrationInProgressDesc: "आपका अधिदेश पंजीकरण अनुरोध सफलतापूर्वक शुरू कर दिया गया है। प्रक्रिया पूरी होने पर हम आपको सूचित करेंगे।",
@@ -3314,6 +3335,11 @@ export const translations = {
 		reapplyCooldownTitle: "आप जल्द ही फिर से आवेदन कर सकते हैं",
 		reapplyCooldownMessage: "आप {date} से फिर से आवेदन कर सकते हैं।",
 		otpMaxAttemptsRequestNew: "बहुत अधिक गलत प्रयास। कृपया नया कोड पाने के लिए ओटीपी पुनः भेजें पर टैप करें।",
+
+		// Reapply loading
+		settingUpApplicationTitle: "आवेदन तैयार किया जा रहा है",
+		settingUpApplicationDesc: "कृपया प्रतीक्षा करें जब तक हम आपकी ऋण प्रक्रिया तैयार करते हैं...",
+		settingUpApplication: "आवेदन तैयार हो रहा है...",
 	},
 
 } as const;

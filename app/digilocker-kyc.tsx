@@ -5,6 +5,7 @@ import { useJourneyTracker } from "@/hooks/useJourneyTracker";
 import { useTranslation } from "@/hooks/useTranslation";
 import { getWorkflowProgress, initDigilocker } from "@/utils/api";
 import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
+import { handleStepConflict } from "@/utils/stepConflict";
 import {
 	cancelDigilockerChecks,
 	clearDigilockerSession,
@@ -105,6 +106,12 @@ export default function DigilockerKyc() {
 		try {
 			const result = await finishDigilocker(txnId, options);
 			if (!isMounted.current) return result;
+
+			if (result.httpStatus === 409) {
+				if (await handleStepConflict({ router, queryClient, error: { status: 409 }, source: "digilocker-kyc" })) {
+					return result;
+				}
+			}
 
 			setStatusInfo(result);
 

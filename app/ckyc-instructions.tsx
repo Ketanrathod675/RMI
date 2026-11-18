@@ -14,6 +14,7 @@ import { getRateLimitInfo } from "@/utils/api/core/rateLimit";
 import { showRateLimitModal } from "@/utils/rateLimitModal";
 import { getAddressPrefill, getCkycStatus, getSelfieStatus, getWorkflowProgress, sendCkycOtp, uploadSelfie } from "@/utils/api";
 import { handleApplicationRejected, isRejectedStatus } from "@/utils/applicationRejection";
+import { handleStepConflict } from "@/utils/stepConflict";
 import { updateUserSelfie } from "@/utils/selfie";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useTypedNavigation } from "@/hooks/useTypedNavigation";
@@ -355,7 +356,11 @@ export default function CKYCInstructions() {
 				text2: data.message || t("uploadFailed", "Upload Failed"),
 			});
 		},
-		onError: (err: any) => {
+		onError: async (err: any) => {
+			if (await handleStepConflict({ router, queryClient, error: err, source: "ckyc-instructions" })) {
+				return;
+			}
+
 			const errorData =
 				err?.response?.data?.data ||
 				err?.response?.data ||

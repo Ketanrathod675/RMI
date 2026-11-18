@@ -44,6 +44,7 @@ import type { ScrollViewRef } from "@/types/rn-refs";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+	ActivityIndicator,
 	Alert,
 	Animated,
 	AppState,
@@ -118,6 +119,7 @@ export default function Home() {
 	const [termDate, setTermDate] = useState("");
 	const [hasNoApprovedAmountFlag, setHasNoApprovedAmountFlag] = useState(false);
 	const [hasLoanRejectedFlag, setHasLoanRejectedFlag] = useState(false);
+	const [isReapplying, setIsReapplying] = useState(false);
 
 	// State for exit alert functionality
 	const [showExitAlert, setShowExitAlert] = useState(false);
@@ -366,6 +368,7 @@ export default function Home() {
 	// Refetch dashboard data when screen comes into focus to update progress
 	useFocusEffect(
 		useCallback(() => {
+			setIsReapplying(false);
 			RNStatusBar.setBarStyle("light-content");
 			if (Platform.OS === "android") {
 				(RNStatusBar as any).setBackgroundColor?.("transparent");
@@ -585,13 +588,21 @@ export default function Home() {
 			: null;
 
 	// Reapply handler - unified in utils/reapply.ts
-	const handleReapply = async () => {
-		const succeeded = await executeLoanReapply(router, queryClient, t);
-		if (succeeded) {
-			setHasNoApprovedAmountFlag(false);
-			setHasLoanRejectedFlag(false);
+	const handleReapply = useCallback(async () => {
+		if (isReapplying) return;
+		setIsReapplying(true);
+		try {
+			const succeeded = await executeLoanReapply(router, queryClient, t);
+			if (succeeded) {
+				setHasNoApprovedAmountFlag(false);
+				setHasLoanRejectedFlag(false);
+			}
+		} finally {
+			if (isMountedRef.current) {
+				setIsReapplying(false);
+			}
 		}
-	};
+	}, [isReapplying, router, queryClient, t]);
 
 	const handleContinueJourney = async () => {
 		const progress = data?.workflow_progress?.current_step;
@@ -681,15 +692,6 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 				router.push({
 					pathname: "/ckyc-instructions" as any,
 					params: { startSelfie: "true" }
-				});
-				return;
-			}
-
-			// If current step is digilocker, navigate to Aadhaar KYC with nextStep parameter
-			if (progress === "digilocker") {
-				router.push({
-					pathname: "/aadhaar-kyc" as any,
-					params: { nextStep: "digilocker" }
 				});
 				return;
 			}
@@ -1092,11 +1094,12 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 								{(!isRejected || canReapply || isReapplyCooldownFuture) && (
 									<TouchableOpacity
 										activeOpacity={0.85}
-										disabled={(isReapplyScenario || isRejected) && isReapplyCooldownFuture}
+										disabled={isReapplying || ((isReapplyScenario || isRejected) && isReapplyCooldownFuture)}
 										onPress={isReapplyScenario ? handleReapply : (isRejected ? handleReapply : handleContinueJourney)}
 										style={[
 											styles.ctaBtnWrapper,
 											(isReapplyScenario || isRejected) && isReapplyCooldownFuture && { opacity: 0.6 },
+											isReapplying && { opacity: 0.85 },
 										]}>
 										<LinearGradient
 											colors={
@@ -1107,17 +1110,28 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 											start={{ x: 0.5, y: 0 }}
 											end={{ x: 0.5, y: 1 }}
 											style={styles.ctaBtn}>
-											<Text style={styles.ctaText}>
-												{(isReapplyScenario || isRejected) && isReapplyCooldownFuture && canReapplyAtLabel
-													? canReapplyAtLabel
-													: isReapplyScenario
-														? t("reapplyLoan")
-														: isRejected
-															? t("reapplyLoan")
-															: "Complete Application"}
-											</Text>
-											{!((isReapplyScenario || isRejected) && isReapplyCooldownFuture) && (
-												<MaterialCommunityIcons name="arrow-right" size={18} color="#F9FDF5" />
+											{isReapplying ? (
+												<View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: width(2) }}>
+													<ActivityIndicator size="small" color="#F9FDF5" />
+													<Text style={styles.ctaText}>
+														{t("settingUpApplication", "Setting up application...")}
+													</Text>
+												</View>
+											) : (
+												<>
+													<Text style={styles.ctaText}>
+														{(isReapplyScenario || isRejected) && isReapplyCooldownFuture && canReapplyAtLabel
+															? canReapplyAtLabel
+															: isReapplyScenario
+																? t("reapplyLoan")
+																: isRejected
+																	? t("reapplyLoan")
+																	: "Complete Application"}
+													</Text>
+													{!((isReapplyScenario || isRejected) && isReapplyCooldownFuture) && (
+														<MaterialCommunityIcons name="arrow-right" size={18} color="#F9FDF5" />
+													)}
+												</>
 											)}
 										</LinearGradient>
 									</TouchableOpacity>
@@ -1209,15 +1223,27 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 									style={[
 										styles.reapplyNowButton,
 										isReapplyCooldownFuture && { opacity: 0.6, backgroundColor: "#6B7280" },
+										isReapplying && { opacity: 0.85 },
 									]}
-									disabled={isReapplyCooldownFuture}
+									disabled={isReapplying || isReapplyCooldownFuture}
 									onPress={handleReapply}>
-									<View style={{ flexDirection: "row", alignItems: "center", gap: width(2) }}>
-										<Text style={styles.reapplyNowButtonText}>
-											{isReapplyCooldownFuture && canReapplyAtLabel ? canReapplyAtLabel : t("reapplyNow")}
-										</Text>
-										{!isReapplyCooldownFuture && (
-											<IconSymbol name="arrow.right" size={16} color="#FFF" />
+									<View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: width(2) }}>
+										{isReapplying ? (
+											<>
+												<ActivityIndicator size="small" color="#FFF" />
+												<Text style={styles.reapplyNowButtonText}>
+													{t("settingUpApplication", "Setting up application...")}
+												</Text>
+											</>
+										) : (
+											<>
+												<Text style={styles.reapplyNowButtonText}>
+													{isReapplyCooldownFuture && canReapplyAtLabel ? canReapplyAtLabel : t("reapplyNow")}
+												</Text>
+												{!isReapplyCooldownFuture && (
+													<IconSymbol name="arrow.right" size={16} color="#FFF" />
+												)}
+											</>
 										)}
 									</View>
 								</TouchableOpacity>
@@ -1529,6 +1555,26 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 							style={styles.successSubtitle}
 							translationKey="congratulationsAssessmentFeePaid"
 						/>
+					</View>
+				</View>
+			</Modal>
+
+			{/* Reapply Loading Overlay */}
+			<Modal
+				visible={isReapplying}
+				transparent={true}
+				animationType="fade"
+				statusBarTranslucent={true}
+				onRequestClose={() => {}}>
+				<View style={styles.reapplyLoadingOverlay}>
+					<View style={styles.reapplyLoadingCard}>
+						<ActivityIndicator size="large" color="#8AD600" style={styles.reapplyLoadingSpinner} />
+						<Text style={styles.reapplyLoadingTitle}>
+							{t("settingUpApplicationTitle", "Setting Up Application")}
+						</Text>
+						<Text style={styles.reapplyLoadingSubtitle}>
+							{t("settingUpApplicationDesc", "Please wait while we prepare your loan journey...")}
+						</Text>
 					</View>
 				</View>
 			</Modal>
@@ -2708,7 +2754,45 @@ const styles = StyleSheet.create({
 		alignItems: "flex-start",
 		width: "80%",
 		marginVertical: height(1),
-	}
+	},
+	reapplyLoadingOverlay: {
+		flex: 1,
+		backgroundColor: "rgba(0, 0, 0, 0.55)",
+		justifyContent: "center",
+		alignItems: "center",
+		paddingHorizontal: width(6),
+	},
+	reapplyLoadingCard: {
+		width: "88%",
+		maxWidth: 340,
+		backgroundColor: "#FFFFFF",
+		borderRadius: 16,
+		paddingVertical: height(3.5),
+		paddingHorizontal: width(6),
+		alignItems: "center",
+		justifyContent: "center",
+		shadowColor: "#000",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.25,
+		shadowRadius: 10,
+		elevation: 8,
+	},
+	reapplyLoadingSpinner: {
+		marginBottom: height(2),
+	},
+	reapplyLoadingTitle: {
+		fontSize: font(2.2),
+		fontWeight: "700",
+		color: "#1E293B",
+		textAlign: "center",
+		marginBottom: height(1),
+	},
+	reapplyLoadingSubtitle: {
+		fontSize: font(1.6),
+		color: "#64748B",
+		textAlign: "center",
+		lineHeight: font(2.2),
+	},
 
 });
 

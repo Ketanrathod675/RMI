@@ -276,17 +276,13 @@ function RootLayoutNav() {
 					<Stack.Screen name="language" options={{ headerShown: false }} />
 					<Stack.Screen name="pdf-viewer" options={{ headerShown: false }} />
 					<Stack.Screen name="loan-approved" options={{ headerShown: false }} />
-					<Stack.Screen name="loan-enter-otp" options={{ headerShown: false }} />
-					<Stack.Screen name="mpin-login" options={{ headerShown: false }} />
 					<Stack.Screen name="rapidcare" options={{ headerShown: false }} />
 					<Stack.Screen name="repayment-status" options={{ headerShown: false }} />
 					<Stack.Screen name="sanction-letter" options={{ headerShown: false }} />
 					<Stack.Screen name="set-language" options={{ headerShown: false }} />
-					<Stack.Screen name="set-mpin" options={{ headerShown: false }} />
 					<Stack.Screen name="verify-bank-details" options={{ headerShown: false }} />
 					<Stack.Screen name="verify-pan" options={{ headerShown: false }} />
 					<Stack.Screen name="verifying-bank" options={{ headerShown: false }} />
-					<Stack.Screen name="forgot-mpin" options={{ headerShown: false }} />
 					<Stack.Screen name="dev-loader-preview" options={{ headerShown: false }} />
 					<Stack.Screen name="digilocker-kyc" options={{ headerShown: false }} />
 					<Stack.Screen name="(tabs)" options={{ headerShown: false }} />

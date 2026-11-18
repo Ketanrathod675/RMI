@@ -17,6 +17,7 @@ import {
 import { useTranslation } from "@/hooks/useTranslation";
 import { extractFieldErrors } from "@/utils/api/core/fieldErrors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { handleStepConflict } from "@/utils/stepConflict";
 import Logger from "@/utils/logger";
 import {
 	getBookingStatus,
@@ -318,6 +319,10 @@ export default function VerifyPan() {
 								}
 								handleAssessmentOutcome(checks);
 								return { outcome: "recheck", checks };
+							}
+
+							if (await handleStepConflict({ router, error: retryErr, source: "verify-pan" })) {
+								return { outcome: "conflict" };
 							}
 
 							const { fields: extractedFields, general: generalError } = extractFieldErrors(retryErr);

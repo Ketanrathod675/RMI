@@ -12,13 +12,6 @@ export const URLS = {
 
 		// LEGACY — old backend endpoints for MPIN / legacy flows
 		login: "auth/login",
-		set_mpin: "auth/setup-mpin",
-		mpin_login: "auth/verify-mpin",
-		forgot_mpin: "auth/forgot-mpin",
-		reset_mpin: "auth/reset-mpin",
-		verify_mpin_reset_otp: "auth/verify-mpin-reset-otp",
-		send_email_otp: "auth/send-email-otp",
-		verify_email_otp: "auth/verify-email-otp",
 	},
 	user: {
 		// RapidMoney Generic User CRUD
@@ -117,8 +110,6 @@ export const URLS = {
 	loan_offer: {
 		offer: "loan/offer",
 		sanction_letter: "sanction-letter",
-		sanction_otp_send: "sanction-otp/send",
-		sanction_otp_verify: "sanction-otp/verify",
 		status: "loan/status",
 	},
 	loans: {
@@ -216,6 +207,7 @@ export const URLS = {
 		reapply: "loan-reapplication/reapply",
 	},
 	autocollect: {
+		mandate_type: "autocollect/mandate/type",
 		upi_mandate: "autocollect/upi/mandate",
 		enach_mandate: "autocollect/enach/mandate",
 		mandate_status: "autocollect/mandate/status",

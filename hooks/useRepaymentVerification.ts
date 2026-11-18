@@ -47,7 +47,7 @@ export function useRepaymentVerification({
 }: UseRepaymentVerificationOptions) {
 	const queryClient = useQueryClient();
 
-	const [isVerifying, setIsVerifying] = useState(false);
+	const [isVerifying, setIsVerifying] = useState(Boolean(txnid));
 	const [countdown, setCountdown] = useState(0);
 	const [outcome, setOutcome] = useState<RepaymentOutcome | null>(null);
 
@@ -297,7 +297,7 @@ export function useRepaymentVerification({
 				if (source === "deeplink_failure") {
 					return finishWithOutcome("failed", targetTxnid);
 				}
-				if (source === "browser_closed") {
+				if (source === "browser_closed" && notStartedHits >= 1) {
 					return finishWithOutcome("not_completed", targetTxnid);
 				}
 

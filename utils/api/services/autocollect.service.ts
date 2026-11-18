@@ -45,3 +45,26 @@ export const getMandateStatus = async (txnid?: string): Promise<MandateStatusRes
 	});
 	return res.data;
 };
+
+export type MandateBankAccount = {
+	bank_name: string | null;
+	account_last4: string | null;
+};
+
+export type MandateTypeResponse = {
+	success: boolean;
+	data: {
+		mandate_type: "UPI" | "ENACH";
+		default_mandate_type: "UPI";
+		upi_failed_attempts: number;
+		fallback_threshold: number;
+		fallback_to_enach: boolean;
+		loan_id: string | null;
+		bank_account: MandateBankAccount | null;
+	};
+};
+
+export const getMandateType = async (): Promise<MandateTypeResponse> => {
+	const res = await axios.get<MandateTypeResponse>(URLS.autocollect.mandate_type);
+	return res.data;
+};

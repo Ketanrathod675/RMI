@@ -228,7 +228,6 @@ axios.interceptors.response.use(
 
 		if (
 			error.config &&
-			error.config.url !== (URLS.auth as any).mpin_login &&
 			error.config.url !== URLS.auth.refresh_token &&
 			!error.config.url?.endsWith(URLS.auth.refresh_token) &&
 			!isLogoutUrl &&

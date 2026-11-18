@@ -6,7 +6,6 @@ import type { ActiveLoan } from "./repayment.types";
 export const STEP_NAMES = [
 	"signup_login",
 	"login_signup",
-	"mpin_set",
 	"basic_details",
 	"personal_details",
 	"assessment_fee",
@@ -35,7 +34,6 @@ export type StepNameTypes = (typeof STEP_NAMES)[number];
 export const StepHref: { [key in StepNameTypes]: string } = {
 	signup_login: "/login",
 	login_signup: "/login",
-	mpin_set: "/set-mpin",
 	basic_details: "/loan-application",
 	personal_details: "/loan-application",
 	assessment_fee: "/new-assessment-fee",

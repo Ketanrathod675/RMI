@@ -81,28 +81,3 @@ export type SanctionLetter = {
 	sanction_letter_url?: string | null;
 	status: string;
 };
-
-export type SanctionOtpSendResponse = {
-	success: boolean;
-	message: string;
-	phone_number: string;
-	expires_in_seconds: number;
-};
-
-export type SanctionOtpVerifyRequest = {
-	otp: string;
-	sanction_number?: string;
-	accepted_amount?: number;
-	selected_due_date?: string;
-};
-
-export type SanctionOtpVerifyResponse = {
-	success: boolean;
-	message: string;
-	loan_id: string;
-	sanction_number: string;
-	current_step: string;
-	next_step: string;
-	status: string;
-	workflow_completed: boolean;
-};

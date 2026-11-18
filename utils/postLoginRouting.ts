@@ -163,10 +163,6 @@ export function resolvePostPermissionsRoute(
 	}
 
 	const currentStep = wp?.current_step;
-	if (currentStep === "digilocker") {
-		return "/aadhaar-kyc";
-	}
-
 	if (currentStep && StepHref[currentStep as StepNameTypes]) {
 		return StepHref[currentStep as StepNameTypes];
 	}

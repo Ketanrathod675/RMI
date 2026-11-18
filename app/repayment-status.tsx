@@ -8,6 +8,7 @@ import {
 	View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
@@ -47,10 +48,15 @@ export default function RepaymentStatusScreen() {
 
 	const txnid = params.txnid ? String(params.txnid) : "";
 	const rawSource = params.source as VerifySource | undefined;
+	const paramStatus = params.status ? String(params.status).trim().toLowerCase() : "";
 	const initialSource: VerifySource =
 		rawSource && ["deeplink_success", "deeplink_failure", "browser_closed", "manual"].includes(rawSource)
 			? rawSource
-			: "browser_closed";
+			: ["success", "true", "successful", "completed"].includes(paramStatus)
+				? "deeplink_success"
+				: ["failure", "failed", "false", "cancelled"].includes(paramStatus)
+					? "deeplink_failure"
+					: "browser_closed";
 
 	const cachedDashboard = userId
 		? queryClient.getQueryData<any>(["user", "dashboard", userId])
@@ -188,12 +194,13 @@ export default function RepaymentStatusScreen() {
 
 	return (
 		<SafeAreaView style={styles.safeArea}>
+			<StatusBar style="dark" />
 			<View style={styles.container}>
 				{/* 1. Verifying State */}
-				{isVerifying ? (
+				{isVerifying || (!outcome && Boolean(txnid)) ? (
 					<View style={styles.contentCard}>
 						<View style={styles.loaderCircle}>
-							<ActivityIndicator size="large" color="#8AD600" />
+							<ActivityIndicator size="large" color="#09A143" />
 						</View>
 
 						<Text style={styles.titleText}>
@@ -204,9 +211,12 @@ export default function RepaymentStatusScreen() {
 						</Text>
 
 						{countdown > 0 ? (
-							<Text style={styles.countdownText}>
-								{t("checkingStatusRemaining", "Checking status...")} {countdown}s
-							</Text>
+							<View style={styles.countdownPill}>
+								<MaterialCommunityIcons name="clock-outline" size={14} color="#64748B" />
+								<Text style={styles.countdownText}>
+									{t("checkingStatusRemaining", "Checking status...")} {countdown}s
+								</Text>
+							</View>
 						) : null}
 
 						<TouchableOpacity
@@ -226,7 +236,7 @@ export default function RepaymentStatusScreen() {
 					/* 2. Success State */
 					<View style={styles.contentCard}>
 						<View style={styles.successIconCircle}>
-							<MaterialIcons name="check" size={44} color="#FFFFFF" />
+							<MaterialIcons name="check" size={44} color="#09A143" />
 						</View>
 
 						<Text style={styles.successTitle}>
@@ -263,13 +273,13 @@ export default function RepaymentStatusScreen() {
 									style={[styles.primaryBtnWrapper, isReapplyCooldownFuture && { opacity: 0.6 }]}
 								>
 									<LinearGradient
-										colors={isReapplyCooldownFuture ? ["#6B7280", "#4B5563"] : ["#8AD600", "#5FA800"]}
-										start={{ x: 0.5, y: 0 }}
-										end={{ x: 0.5, y: 1 }}
+										colors={isReapplyCooldownFuture ? ["#94A3B8", "#64748B"] : ["#09A143", "#78DE26"]}
+										start={{ x: 0, y: 0.5 }}
+										end={{ x: 1, y: 0.5 }}
 										style={styles.primaryBtn}
 									>
 										{isReapplying ? (
-											<ActivityIndicator size="small" color="#0B1D0E" />
+											<ActivityIndicator size="small" color="#FFFFFF" />
 										) : (
 											<>
 												<Text style={styles.primaryBtnText}>
@@ -278,7 +288,7 @@ export default function RepaymentStatusScreen() {
 														: t("reapplyForLoan", "Reapply for a Loan")}
 												</Text>
 												{!isReapplyCooldownFuture && (
-													<MaterialCommunityIcons name="arrow-right" size={18} color="#0B1D0E" />
+													<MaterialCommunityIcons name="arrow-right" size={18} color="#FFFFFF" />
 												)}
 											</>
 										)}
@@ -291,15 +301,15 @@ export default function RepaymentStatusScreen() {
 									style={styles.primaryBtnWrapper}
 								>
 									<LinearGradient
-										colors={["#8AD600", "#5FA800"]}
-										start={{ x: 0.5, y: 0 }}
-										end={{ x: 0.5, y: 1 }}
+										colors={["#09A143", "#78DE26"]}
+										start={{ x: 0, y: 0.5 }}
+										end={{ x: 1, y: 0.5 }}
 										style={styles.primaryBtn}
 									>
 										<Text style={styles.primaryBtnText}>
 											{t("payRemaining", "Pay Remaining Balance")}
 										</Text>
-										<MaterialCommunityIcons name="arrow-right" size={18} color="#0B1D0E" />
+										<MaterialCommunityIcons name="arrow-right" size={18} color="#FFFFFF" />
 									</LinearGradient>
 								</TouchableOpacity>
 							) : null}
@@ -339,14 +349,15 @@ export default function RepaymentStatusScreen() {
 								style={styles.primaryBtnWrapper}
 							>
 								<LinearGradient
-									colors={["#8AD600", "#5FA800"]}
-									start={{ x: 0.5, y: 0 }}
-									end={{ x: 0.5, y: 1 }}
+									colors={["#09A143", "#78DE26"]}
+									start={{ x: 0, y: 0.5 }}
+									end={{ x: 1, y: 0.5 }}
 									style={styles.primaryBtn}
 								>
 									<Text style={styles.primaryBtnText}>
 										{t("checkStatusAgain", "Check Status Again")}
 									</Text>
+									<MaterialCommunityIcons name="refresh" size={18} color="#FFFFFF" />
 								</LinearGradient>
 							</TouchableOpacity>
 
@@ -361,7 +372,7 @@ export default function RepaymentStatusScreen() {
 							</TouchableOpacity>
 						</View>
 					</View>
-				) : (
+				) : outcome ? (
 					/* 4. Failed / Cancelled / Expired / Not Completed */
 					<View style={styles.contentCard}>
 						<View style={styles.amberIconCircle}>
@@ -386,17 +397,20 @@ export default function RepaymentStatusScreen() {
 								style={[styles.primaryBtnWrapper, isInitiating && { opacity: 0.75 }]}
 							>
 								<LinearGradient
-									colors={["#8AD600", "#5FA800"]}
-									start={{ x: 0.5, y: 0 }}
-									end={{ x: 0.5, y: 1 }}
+									colors={["#09A143", "#78DE26"]}
+									start={{ x: 0, y: 0.5 }}
+									end={{ x: 1, y: 0.5 }}
 									style={styles.primaryBtn}
 								>
 									{isInitiating ? (
-										<ActivityIndicator size="small" color="#0B1D0E" />
+										<ActivityIndicator size="small" color="#FFFFFF" />
 									) : (
-										<Text style={styles.primaryBtnText}>
-											{t("tryAgain", "Try Again")}
-										</Text>
+										<>
+											<Text style={styles.primaryBtnText}>
+												{t("tryAgain", "Try Again")}
+											</Text>
+											<MaterialCommunityIcons name="refresh" size={18} color="#FFFFFF" />
+										</>
 									)}
 								</LinearGradient>
 							</TouchableOpacity>
@@ -412,6 +426,16 @@ export default function RepaymentStatusScreen() {
 							</TouchableOpacity>
 						</View>
 					</View>
+				) : (
+					/* 5. Fallback Initial Loading State */
+					<View style={styles.contentCard}>
+						<View style={styles.loaderCircle}>
+							<ActivityIndicator size="large" color="#09A143" />
+						</View>
+						<Text style={styles.titleText}>
+							{t("verifyingPaymentTitle", "Verifying your payment")}
+						</Text>
+					</View>
 				)}
 			</View>
 		</SafeAreaView>
@@ -421,73 +445,82 @@ export default function RepaymentStatusScreen() {
 const styles = StyleSheet.create({
 	safeArea: {
 		flex: 1,
-		backgroundColor: "#0B1D0E",
+		backgroundColor: "#F8FAFC",
 	},
 	container: {
 		flex: 1,
 		justifyContent: "center",
 		alignItems: "center",
 		paddingHorizontal: width(5),
+		paddingVertical: height(3),
 	},
 	contentCard: {
 		width: "100%",
 		maxWidth: 420,
-		backgroundColor: "rgba(16, 32, 15, 0.96)",
+		backgroundColor: "#FFFFFF",
 		borderRadius: 24,
 		paddingHorizontal: width(6),
 		paddingVertical: height(4),
 		alignItems: "center",
 		borderWidth: 1,
-		borderColor: "rgba(255, 255, 255, 0.12)",
-		shadowColor: "#000",
+		borderColor: "#E2E8F0",
+		shadowColor: "#0F172A",
 		shadowOffset: { width: 0, height: 8 },
-		shadowOpacity: 0.35,
-		shadowRadius: 16,
-		elevation: 10,
+		shadowOpacity: 0.08,
+		shadowRadius: 20,
+		elevation: 4,
 	},
 	loaderCircle: {
-		width: 72,
-		height: 72,
-		borderRadius: 36,
-		backgroundColor: "rgba(138, 214, 0, 0.12)",
+		width: 80,
+		height: 80,
+		borderRadius: 40,
+		backgroundColor: "#ECFDF5",
+		borderWidth: 2,
+		borderColor: "#A7F3D0",
 		alignItems: "center",
 		justifyContent: "center",
 		marginBottom: height(2.5),
 	},
 	successIconCircle: {
-		width: 72,
-		height: 72,
-		borderRadius: 36,
-		backgroundColor: "#15803D",
+		width: 80,
+		height: 80,
+		borderRadius: 40,
+		backgroundColor: "#ECFDF5",
+		borderWidth: 2,
+		borderColor: "#86EFAC",
 		alignItems: "center",
 		justifyContent: "center",
 		marginBottom: height(2),
-		shadowColor: "#15803D",
+		shadowColor: "#09A143",
 		shadowOffset: { width: 0, height: 4 },
-		shadowOpacity: 0.4,
-		shadowRadius: 8,
-		elevation: 6,
+		shadowOpacity: 0.15,
+		shadowRadius: 10,
+		elevation: 3,
 	},
 	unconfirmedIconCircle: {
-		width: 72,
-		height: 72,
-		borderRadius: 36,
-		backgroundColor: "rgba(37, 99, 235, 0.15)",
+		width: 80,
+		height: 80,
+		borderRadius: 40,
+		backgroundColor: "#EFF6FF",
+		borderWidth: 2,
+		borderColor: "#BFDBFE",
 		alignItems: "center",
 		justifyContent: "center",
 		marginBottom: height(2),
 	},
 	amberIconCircle: {
-		width: 72,
-		height: 72,
-		borderRadius: 36,
-		backgroundColor: "rgba(217, 119, 6, 0.15)",
+		width: 80,
+		height: 80,
+		borderRadius: 40,
+		backgroundColor: "#FEF3C7",
+		borderWidth: 2,
+		borderColor: "#FDE68A",
 		alignItems: "center",
 		justifyContent: "center",
 		marginBottom: height(2),
 	},
 	titleText: {
-		color: "#FFFFFF",
+		color: "#0F172A",
 		fontSize: font(2.4),
 		fontWeight: "800",
 		textAlign: "center",
@@ -495,72 +528,83 @@ const styles = StyleSheet.create({
 		letterSpacing: -0.2,
 	},
 	successTitle: {
-		color: "#FFFFFF",
-		fontSize: font(2.8),
+		color: "#0F172A",
+		fontSize: font(2.6),
 		fontWeight: "800",
 		textAlign: "center",
 		marginBottom: height(0.5),
 		letterSpacing: -0.3,
 	},
 	subtitleText: {
-		color: "rgba(255, 255, 255, 0.72)",
-		fontSize: font(1.4),
+		color: "#64748B",
+		fontSize: font(1.5),
 		fontWeight: "500",
 		textAlign: "center",
-		lineHeight: 20,
+		lineHeight: 22,
 		marginBottom: height(2.5),
 		paddingHorizontal: width(2),
 	},
 	amountDisplay: {
-		color: "#8AD600",
-		fontSize: font(4),
-		fontWeight: "900",
+		color: "#0F172A",
+		fontSize: font(3.8),
+		fontWeight: "800",
 		letterSpacing: -0.5,
 		marginVertical: height(1),
 	},
 	statusBadgeSuccess: {
-		backgroundColor: "rgba(21, 128, 61, 0.2)",
+		backgroundColor: "#ECFDF5",
 		borderWidth: 1,
-		borderColor: "rgba(21, 128, 61, 0.4)",
+		borderColor: "#A7F3D0",
 		borderRadius: 12,
-		paddingHorizontal: width(3),
-		paddingVertical: height(0.6),
+		paddingHorizontal: width(3.5),
+		paddingVertical: height(0.8),
 		marginBottom: height(2.5),
 	},
 	statusBadgeTextSuccess: {
-		color: "#86EFAC",
-		fontSize: font(1.3),
+		color: "#047857",
+		fontSize: font(1.4),
 		fontWeight: "700",
 	},
 	statusBadgePartial: {
-		backgroundColor: "rgba(217, 119, 6, 0.2)",
+		backgroundColor: "#FFFBEB",
 		borderWidth: 1,
-		borderColor: "rgba(217, 119, 6, 0.4)",
+		borderColor: "#FDE68A",
 		borderRadius: 12,
-		paddingHorizontal: width(3),
-		paddingVertical: height(0.6),
+		paddingHorizontal: width(3.5),
+		paddingVertical: height(0.8),
 		marginBottom: height(2.5),
 	},
 	statusBadgeTextPartial: {
-		color: "#FDE68A",
-		fontSize: font(1.3),
+		color: "#B45309",
+		fontSize: font(1.4),
 		fontWeight: "700",
 	},
-	countdownText: {
-		color: "rgba(255, 255, 255, 0.5)",
-		fontSize: font(1.3),
-		fontWeight: "600",
+	countdownPill: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+		backgroundColor: "#F1F5F9",
+		borderWidth: 1,
+		borderColor: "#E2E8F0",
+		borderRadius: 20,
+		paddingHorizontal: width(3.5),
+		paddingVertical: height(0.6),
 		marginBottom: height(2),
 	},
-	cancelVerifyBtn: {
-		paddingVertical: height(1),
-		paddingHorizontal: width(4),
-	},
-	cancelVerifyBtnText: {
-		color: "rgba(255, 255, 255, 0.6)",
+	countdownText: {
+		color: "#64748B",
 		fontSize: font(1.3),
 		fontWeight: "600",
-		textDecorationLine: "underline",
+	},
+	cancelVerifyBtn: {
+		paddingVertical: height(1.2),
+		paddingHorizontal: width(4),
+		marginTop: height(0.5),
+	},
+	cancelVerifyBtnText: {
+		color: "#09A143",
+		fontSize: font(1.5),
+		fontWeight: "600",
 	},
 	actionsContainer: {
 		width: "100%",
@@ -569,32 +613,39 @@ const styles = StyleSheet.create({
 	},
 	primaryBtnWrapper: {
 		width: "100%",
+		borderRadius: 16,
+		overflow: "hidden",
+		shadowColor: "#09A143",
+		shadowOffset: { width: 0, height: 4 },
+		shadowOpacity: 0.2,
+		shadowRadius: 8,
+		elevation: 3,
 	},
 	primaryBtn: {
-		height: 48,
-		borderRadius: 24,
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "center",
-		gap: 8,
+		paddingVertical: height(1.8),
 		paddingHorizontal: width(4),
+		gap: width(2),
 	},
 	primaryBtnText: {
-		color: "#0B1D0E",
-		fontSize: font(1.6),
-		fontWeight: "800",
+		color: "#FFFFFF",
+		fontSize: font(1.7),
+		fontWeight: "700",
 	},
 	secondaryBtn: {
-		height: 46,
-		borderRadius: 23,
+		width: "100%",
+		paddingVertical: height(1.6),
 		alignItems: "center",
 		justifyContent: "center",
+		borderRadius: 16,
+		backgroundColor: "#F1F5F9",
 		borderWidth: 1,
-		borderColor: "rgba(255, 255, 255, 0.18)",
-		backgroundColor: "rgba(255, 255, 255, 0.04)",
+		borderColor: "#E2E8F0",
 	},
 	secondaryBtnText: {
-		color: "#FFFFFF",
+		color: "#334155",
 		fontSize: font(1.5),
 		fontWeight: "600",
 	},

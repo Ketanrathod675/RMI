@@ -5,6 +5,7 @@ import {
 	PROFESSIONAL_DETAILS_FIELD_MAP,
 } from "@/utils/api/core/fieldErrors";
 import { getFriendlyError } from "@/utils/api/core/friendlyError";
+import { handleStepConflict } from "@/utils/stepConflict";
 import ExitIntentModal from "@/components/assessment-fee/ExitIntentModal";
 import { Select, StickyFormFooter, type SelectOption } from "@/components";
 import { primary } from "@/constants/Colors";
@@ -534,6 +535,8 @@ export default function ProfessionalDetails() {
 					});
 					return;
 				}
+				handleStepConflict({ router, error: err, source: "professional-details" });
+				return;
 			}
 
 			const { fields: extractedFields, general: generalError } = extractFieldErrors(err);

@@ -174,6 +174,54 @@ export async function runPostLoginRoutingTests(): Promise<void> {
 			}),
 		);
 		assert(newDest === "/loan-application", `Post-permissions route for active new user should be /loan-application, got ${newDest}`);
+
+		// 6b. Post-permissions route should route KYC steps according to StepHref
+		const makeKycDash = (step: string) =>
+			adaptAuthProfileToDashboard({
+				id: `user_${step}`,
+				phone_number: "9222222222",
+				current_workflow: {
+					current_step: step,
+					overall_status: "in_progress",
+					overall_percentage: 20,
+				},
+			});
+
+		const digilockerDest = resolvePostPermissionsRoute(
+			{ is_profile_completed: false, next_step: "digilocker" },
+			makeKycDash("digilocker"),
+		);
+		assert(
+			digilockerDest === "/digilocker-kyc",
+			`Post-permissions route for digilocker must be /digilocker-kyc, got ${digilockerDest}`,
+		);
+
+		const ekycDest = resolvePostPermissionsRoute(
+			{ is_profile_completed: false, next_step: "ekyc_ckyc" },
+			makeKycDash("ekyc_ckyc"),
+		);
+		assert(
+			ekycDest === "/ckyc-instructions",
+			`Post-permissions route for ekyc_ckyc must be /ckyc-instructions, got ${ekycDest}`,
+		);
+
+		const selfieDest = resolvePostPermissionsRoute(
+			{ is_profile_completed: false, next_step: "selfie_match" },
+			makeKycDash("selfie_match"),
+		);
+		assert(
+			selfieDest === "/ckyc-instructions?startSelfie=true",
+			`Post-permissions route for selfie_match must be /ckyc-instructions?startSelfie=true, got ${selfieDest}`,
+		);
+
+		const addressDest = resolvePostPermissionsRoute(
+			{ is_profile_completed: false, next_step: "address_submission" },
+			makeKycDash("address_submission"),
+		);
+		assert(
+			addressDest === "/aadhaar-kyc?startFromAddress=true",
+			`Post-permissions route for address_submission must be /aadhaar-kyc?startFromAddress=true, got ${addressDest}`,
+		);
 	}
 
 	// 7. handleApplicationRejected with skipNavigation=true sets flags + refreshes queries without navigating

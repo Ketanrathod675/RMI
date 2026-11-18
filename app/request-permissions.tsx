@@ -211,13 +211,6 @@ export default function RequestPermissions() {
 			const dashboardData = await getUserDashboardData();
 			setIsLoading(false);
 			const nextPath = resolvePostPermissionsRoute(verifyOtpData, dashboardData);
-			if (nextPath === "/aadhaar-kyc") {
-				router.replace({
-					pathname: "/aadhaar-kyc",
-					params: { nextStep: "digilocker" },
-				} as any);
-				return;
-			}
 			router.replace(nextPath as any);
 		} catch {
 			setIsLoading(false);

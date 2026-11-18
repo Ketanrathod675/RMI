@@ -129,31 +129,6 @@ export type VerifyOtpResponseType = {
 	success: true;
 };
 
-export type SetMpinRequestType = {
-	user_id: string;
-	mpin: string;
-};
-
-export type SetMpinResponseType = {
-	message: string;
-	access_token: string;
-	refresh_token: string;
-	token_type: string;
-};
-
-export type MpinLoginRequestType = {
-	phone_number: string;
-	mpin: string;
-};
-
-export type MpinLoginResponseType = {
-	access_token: string;
-	message: string;
-	refresh_token: string;
-	token_type: string;
-	user: Partial<User>;
-};
-
 export type ForgotPasswordOtpRequestType = {
 	phone_number: string;
 };
@@ -162,55 +137,6 @@ export type ForgotPasswordOtpResponseType = {
 	message: string;
 	otp_id: string;
 	expires_in: number;
-};
-
-export type VerifyMpinResetOtpRequestType = {
-	phone_number: string;
-	otp: string;
-	otp_id: string;
-};
-
-export type VerifyMpinResetOtpResponseType = {
-	message: string;
-	reset_token: string;
-};
-
-export type ResetMpinRequestType = {
-	phone_number: string;
-	mpin: string;
-	reset_token: string;
-};
-
-export type ResetMpinResponseType = {
-	message: string;
-};
-
-export type SendEmailOtpRequestType = {
-	user_id?: string;
-	email: string;
-};
-
-export type SendEmailOtpResponseType = {
-	success?: boolean;
-	message: string;
-	otp_id?: string;
-	expires_in?: number;
-	email?: string;
-};
-
-export type VerifyEmailOtpRequestType = {
-	user_id?: string;
-	email: string;
-	otp: string;
-};
-
-export type VerifyEmailOtpResponseType = {
-	success?: boolean;
-	message: string;
-	email?: string;
-	is_email_verified?: boolean;
-	user_id?: string;
-	verified?: boolean;
 };
 
 export type RefreshTokenResponseType = {

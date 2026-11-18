@@ -14,15 +14,7 @@ import type {
 	FastApiVerifyOtpPayload,
 	LoginRequestType,
 	LoginResponseType,
-	MpinLoginRequestType,
-	MpinLoginResponseType,
 	RefreshTokenResponseType,
-	SendEmailOtpRequestType,
-	SendEmailOtpResponseType,
-	SetMpinRequestType,
-	SetMpinResponseType,
-	VerifyEmailOtpRequestType,
-	VerifyEmailOtpResponseType,
 	VerifyOtpRequestType,
 	VerifyOtpResponseType,
 } from "../types/auth.types";
@@ -219,38 +211,6 @@ export const refreshSession = async (
 	}
 
 	return resData as Partial<RefreshTokenResponseType>;
-};
-
-export const setMpin = async (data: SetMpinRequestType) => {
-	const response = await axios.post<Partial<SetMpinResponseType>>((URLS.auth as any).set_mpin || "auth/setup-mpin", data);
-	return response.data;
-};
-
-export const mpinLogin = async (data: MpinLoginRequestType) => {
-	const payload = {
-		...data,
-		version: Application.nativeApplicationVersion,
-		platform: "android",
-	};
-
-	const response = await axios.post<Partial<MpinLoginResponseType>>((URLS.auth as any).mpin_login || "auth/verify-mpin", payload);
-	return response.data;
-};
-
-export const sendEmailOtp = async (data: SendEmailOtpRequestType) => {
-	const response = await axios.post<Partial<SendEmailOtpResponseType>>(
-		(URLS.auth as any).send_email_otp || "auth/send-email-otp",
-		data,
-	);
-	return response.data;
-};
-
-export const verifyEmailOtp = async (data: VerifyEmailOtpRequestType) => {
-	const response = await axios.post<Partial<VerifyEmailOtpResponseType>>(
-		(URLS.auth as any).verify_email_otp || "auth/verify-email-otp",
-		data,
-	);
-	return response.data;
 };
 
 /**

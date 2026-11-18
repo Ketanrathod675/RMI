@@ -2744,6 +2744,30 @@ Logger.warn("Operation failed", { code: "operation_failed" });
 		};
 	}
 
+	// ─── Endpoint: autocollect/mandate/type (getMandateType) ─────────────────
+	if (url.includes("autocollect/mandate/type") && method === "get") {
+		await delay(200);
+
+		return {
+			data: {
+				success: true,
+				data: {
+					mandate_type: "UPI",
+					default_mandate_type: "UPI",
+					upi_failed_attempts: 0,
+					fallback_threshold: 3,
+					fallback_to_enach: false,
+					loan_id: null,
+					bank_account: { bank_name: "HDFC Bank", account_last4: "1234" },
+				},
+			},
+			status: 200,
+			statusText: "OK",
+			headers: {},
+			config,
+		};
+	}
+
 	// ─── 40. Endpoint: rate-us (GET, POST, PUT) ──────────────────────────────
 	if (url.includes("rate-us") && method === "get") {
 		await delay(200);

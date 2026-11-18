@@ -6,18 +6,19 @@ import { useTranslation } from "@/hooks/useTranslation";
 import {
 	createMandate,
 	getMandateStatus,
+	getMandateType,
 	getUserDashboardData,
 	getWorkflowProgress,
 	StepHref,
 	type MandateMethod,
 } from "@/utils/api";
-import { getApiErrorInfo } from "@/utils/api/errors";
+import { formatAccountTail, getMandateMethod } from "@/utils/mandateMethod";
 import { font, height, width } from "@/utils/dimensions";
 import { getStorageItem, removeStorageItem, setStorageItem, STORAGE_KEYS } from "@/utils/storage";
 import { useApplicationStatusGuard } from "@/hooks/useApplicationStatusGuard";
 import { isRejectedStatus, handleApplicationRejected } from "@/utils/applicationRejection";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useTypedNavigation } from "@/hooks/useTypedNavigation";
@@ -58,12 +59,6 @@ const RETURN_URL = "rapid-money://emandate-status";
 
 const PENDING_MANDATE_MAX_AGE_MS = 30 * 60 * 1000;
 
-const Radio = ({ selected }: { selected: boolean }) => (
-	<View style={[styles.radio, selected && styles.radioSelected]}>
-		{selected && <View style={styles.radioDot} />}
-	</View>
-);
-
 export default function AutoDebitSetup() {
 	const mountedRef = useMountedRef();
 	const { t } = useTranslation();
@@ -74,11 +69,25 @@ export default function AutoDebitSetup() {
 	useJourneyTracker("/auto-debit-setup");
 	useApplicationStatusGuard();
 
-	const [selectedMethod, setSelectedMethod] = useState<MandateMethod>("upi");
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [isExitModalVisible, setIsExitModalVisible] = useState(false);
 	const launchingRef = useRef(false);
 	const { fresh } = useLocalSearchParams<{ fresh?: string }>();
+
+	const typeQuery = useQuery({
+		queryKey: ["mandate", "type"],
+		queryFn: getMandateType,
+		staleTime: 0,
+		gcTime: 0,
+		retry: 1,
+		refetchOnMount: "always",
+	});
+
+	const typeData = typeQuery.data?.data;
+	const fallbackToEnach = !typeQuery.isError && typeData?.fallback_to_enach === true;
+	const method: MandateMethod = getMandateMethod(typeQuery.isError ? undefined : typeData);
+	const bank = (!typeQuery.isError && typeData?.bank_account) ? typeData.bank_account : null;
+	const isProceedDisabled = isSubmitting || typeQuery.isLoading;
 
 	// Single sequential mount check:
 	// 1. Pending mandate recovery (from storage or server check)
@@ -163,7 +172,7 @@ export default function AutoDebitSetup() {
 		return () => {
 			active = false;
 		};
-	}, [fresh, router]);
+	}, [fresh, router, queryClient]);
 
 	useEffect(() => {
 		const unsubscribe = navigation.addListener("beforeRemove", (e) => {
@@ -194,7 +203,7 @@ export default function AutoDebitSetup() {
 				return;
 			}
 
-			const mandate = await createMandate(selectedMethod);
+			const mandate = await createMandate(method);
 			if (!mountedRef.current) return;
 			if (!mandate?.url) {
 				throw new Error(t("mandateNoCheckoutUrl"));
@@ -202,7 +211,7 @@ export default function AutoDebitSetup() {
 			queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
 			await setStorageItem(
 				STORAGE_KEYS["@mandate-pending"],
-				JSON.stringify({ txnid: mandate.txnid ?? "", method: selectedMethod, startedAt: Date.now() }),
+				JSON.stringify({ txnid: mandate.txnid ?? "", method, startedAt: Date.now() }),
 			);
 			if (!mountedRef.current) return;
 
@@ -250,7 +259,6 @@ export default function AutoDebitSetup() {
 		} catch (err) {
 			if (!mountedRef.current) return;
 			if ((err as any)?.isApplicationRejected) return;
-			const info = getApiErrorInfo(err);
 			Toast.show({
 				type: "error",
 				text1: t("unableToStartMandateSetup"),
@@ -261,6 +269,10 @@ export default function AutoDebitSetup() {
 			launchingRef.current = false;
 		}
 	};
+
+	const optionAccessibilityLabel = fallbackToEnach
+		? `${t("mandateEnachLabel")}${bank?.account_last4 ? `, ${bank.bank_name || ""} ${t("mandateAccountEnding")} ${bank.account_last4}` : ""}`
+		: `${t("mandateUpiOnlyLabel")}${bank?.account_last4 ? `, ${bank.bank_name || ""} ${t("mandateAccountEnding")} ${bank.account_last4}` : ""}`;
 
 	return (
 		<View style={[styles.container, { paddingTop: insets.top }]}>
@@ -286,32 +298,61 @@ export default function AutoDebitSetup() {
 					</View>
 
 					<View style={styles.cardBody}>
-						<TouchableOpacity
-							activeOpacity={0.9}
-							disabled={isSubmitting}
-							onPress={() => setSelectedMethod("upi")}
-							accessibilityRole="radio"
-							accessibilityState={{ selected: selectedMethod === "upi" }}
-							style={[styles.option, selectedMethod === "upi" && styles.optionSelected]}>
-							<View style={styles.badge}>
-								<Text style={styles.badgeText}>RECOMMENDED</Text>
+						{typeQuery.isLoading ? (
+							<View style={styles.loadingRow}>
+								<ActivityIndicator size="small" color={C.green} />
+								<Text style={styles.loadingText}>{t("mandateLoadingOptions")}</Text>
 							</View>
-							<Radio selected={selectedMethod === "upi"} />
-							<Text style={styles.optionLabel}>Auto Debit via UPI</Text>
-							<MaterialIcons name="bolt" size={18} color={C.zap} />
-						</TouchableOpacity>
+						) : (
+							<>
+								{bank?.account_last4 ? (
+									<View style={styles.bankCard}>
+										<Text style={styles.bankCardTitle}>{t("mandateBankCardTitle").toUpperCase()}</Text>
+										<View style={styles.bankCardRow}>
+											<View style={styles.bankNameCol}>
+												<MaterialIcons name="account-balance" size={20} color={C.green} />
+												<Text style={styles.bankNameText} numberOfLines={1}>
+													{bank.bank_name || ""}
+												</Text>
+											</View>
+											<Text style={styles.bankAccountTailText}>
+												{formatAccountTail(bank.account_last4)}
+											</Text>
+										</View>
+										<Text style={styles.bankCardHint}>{t("mandateUseSameAccount")}</Text>
+									</View>
+								) : null}
 
-						<TouchableOpacity
-							activeOpacity={0.9}
-							disabled={isSubmitting}
-							onPress={() => setSelectedMethod("enach")}
-							accessibilityRole="radio"
-							accessibilityState={{ selected: selectedMethod === "enach" }}
-							style={[styles.option, selectedMethod === "enach" && styles.optionSelected]}>
-							<Radio selected={selectedMethod === "enach"} />
-							<Text style={styles.optionLabel}>Auto Debit via eNACH</Text>
-							<MaterialIcons name="credit-card" size={18} color={C.card} />
-						</TouchableOpacity>
+								{fallbackToEnach ? (
+									<>
+										<View style={styles.enachNotice}>
+											<MaterialIcons name="warning" size={18} color="#d97706" style={styles.noticeIcon} />
+											<Text style={styles.enachNoticeText}>{t("mandateUpiFailedUseEnach")}</Text>
+										</View>
+										<View
+											accessibilityRole="text"
+											accessibilityLabel={optionAccessibilityLabel}
+											style={[styles.option, styles.optionSelected]}>
+											<MaterialIcons name="check-circle" size={22} color={C.green} />
+											<Text style={styles.optionLabel}>{t("mandateEnachLabel")}</Text>
+											<MaterialIcons name="credit-card" size={18} color={C.card} />
+										</View>
+									</>
+								) : (
+									<View
+										accessibilityRole="text"
+										accessibilityLabel={optionAccessibilityLabel}
+										style={[styles.option, styles.optionSelected]}>
+										<View style={styles.badge}>
+											<Text style={styles.badgeText}>RECOMMENDED</Text>
+										</View>
+										<MaterialIcons name="check-circle" size={22} color={C.green} />
+										<Text style={styles.optionLabel}>{t("mandateUpiOnlyLabel")}</Text>
+										<MaterialIcons name="bolt" size={18} color={C.zap} />
+									</View>
+								)}
+							</>
+						)}
 
 						<View style={styles.note}>
 							<MaterialIcons name="lock" size={16} color={C.green} style={styles.noteIcon} />
@@ -324,8 +365,8 @@ export default function AutoDebitSetup() {
 
 					<View style={styles.cardFooter}>
 						<TouchableOpacity
-							style={[styles.proceed, isSubmitting && styles.proceedDisabled]}
-							disabled={isSubmitting}
+							style={[styles.proceed, isProceedDisabled && styles.proceedDisabled]}
+							disabled={isProceedDisabled}
 							onPress={handleProceed}
 							activeOpacity={0.85}>
 							{isSubmitting ? (
@@ -395,6 +436,80 @@ const styles = StyleSheet.create({
 	title: { marginTop: 6, fontSize: font(2.2), fontWeight: "700", color: C.ink },
 	subtitle: { marginTop: 6, fontSize: font(1.5), lineHeight: font(2.2), color: C.grey },
 	cardBody: { padding: 18, gap: 16 },
+	loadingRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "center",
+		gap: 10,
+		paddingVertical: 20,
+	},
+	loadingText: {
+		fontSize: font(1.5),
+		color: C.grey,
+		fontWeight: "500",
+	},
+	bankCard: {
+		backgroundColor: C.note,
+		borderWidth: 1,
+		borderColor: C.noteBorder,
+		borderRadius: 16,
+		padding: 16,
+		gap: 8,
+	},
+	bankCardTitle: {
+		fontSize: 11,
+		fontWeight: "700",
+		letterSpacing: 0.8,
+		color: C.grey,
+	},
+	bankCardRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: 12,
+	},
+	bankNameCol: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+		flex: 1,
+	},
+	bankNameText: {
+		fontSize: font(1.6),
+		fontWeight: "600",
+		color: C.ink,
+		flexShrink: 1,
+	},
+	bankAccountTailText: {
+		fontSize: font(1.6),
+		fontWeight: "600",
+		color: C.ink,
+	},
+	bankCardHint: {
+		fontSize: 11.5,
+		lineHeight: 16,
+		color: C.grey,
+	},
+	enachNotice: {
+		flexDirection: "row",
+		gap: 10,
+		alignItems: "flex-start",
+		backgroundColor: "#fffbeb",
+		borderWidth: 1,
+		borderColor: "#fde68a",
+		borderRadius: 16,
+		padding: 14,
+	},
+	noticeIcon: {
+		marginTop: 2,
+	},
+	enachNoticeText: {
+		flex: 1,
+		fontSize: 12,
+		lineHeight: 18,
+		color: "#92400e",
+		fontWeight: "500",
+	},
 	option: {
 		flexDirection: "row",
 		alignItems: "center",
@@ -417,17 +532,6 @@ const styles = StyleSheet.create({
 		paddingVertical: 4,
 	},
 	badgeText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.6, color: C.badgeText },
-	radio: {
-		width: 24,
-		height: 24,
-		borderRadius: 12,
-		borderWidth: 2,
-		borderColor: "#d1d5db",
-		alignItems: "center",
-		justifyContent: "center",
-	},
-	radioSelected: { borderColor: C.green, backgroundColor: C.green },
-	radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#ffffff" },
 	note: {
 		flexDirection: "row",
 		gap: 10,

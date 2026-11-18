@@ -111,6 +111,7 @@ export function useBankAccountPicker() {
 
 	// Pre-select the first saved account returned (backend sorts most recently used first)
 	useEffect(() => {
+		if (isSubmitting) return;
 		if (accounts.length === 0) {
 			if (selectedId !== null) setSelectedId(null);
 			return;
@@ -118,7 +119,7 @@ export function useBankAccountPicker() {
 		if (!selectedId || !accounts.some((a) => a.id === selectedId)) {
 			setSelectedId(accounts[0].id);
 		}
-	}, [accounts, selectedId]);
+	}, [accounts, selectedId, isSubmitting]);
 
 	const selectedAccount: PickerAccountItem | null = useMemo(
 		() => accounts.find((a) => a.id === selectedId) ?? null,
@@ -232,16 +233,67 @@ export function useBankAccountPicker() {
 							account_type: payloadSource.accountType,
 					  });
 
-				await selectBankAccount(body);
+				const res = await selectBankAccount(body);
 
 				if (!mountedRef.current) return;
 
+				// Optimistically update saved bank accounts cache if backend returned created/selected account
+				const newBankDetails =
+					res?.bank_details && typeof res.bank_details === "object"
+						? res.bank_details.bank_details || res.bank_details
+						: undefined;
+				const newBankId = newBankDetails?.id || newBankDetails?.uuid;
+				if (newBankId && userId) {
+					queryClient.setQueryData<BankAccount[]>(["bankAccounts", userId], (prev) => {
+						const existing = Array.isArray(prev) ? prev : [];
+						const masked =
+							String(newBankDetails.account_number_masked || "").trim() ||
+							(isPickerItem
+								? payloadSource.account_number_masked
+								: `XXXXXXXX${payloadSource.accountNumber.slice(-4)}`);
+						const createdAccount: BankAccount = {
+							id: String(newBankId),
+							account_number_masked: masked,
+							ifsc_code: String(
+								newBankDetails.ifsc_code ||
+									(isPickerItem ? payloadSource.ifsc_code : payloadSource.ifscCode) ||
+									"",
+							)
+								.trim()
+								.toUpperCase(),
+							bank_name: String(
+								newBankDetails.bank_name ||
+									(isPickerItem ? payloadSource.bank_name : payloadSource.bankName) ||
+									"Bank",
+							),
+							branch_name: String(
+								newBankDetails.branch_name ||
+									(isPickerItem ? payloadSource.branch_name : payloadSource.branchName) ||
+									"",
+							),
+							city: String(
+								newBankDetails.city ||
+									(isPickerItem ? payloadSource.city : payloadSource.city) ||
+									"",
+							),
+							account_type: String(
+								newBankDetails.account_type ||
+									(isPickerItem ? payloadSource.account_type : payloadSource.accountType) ||
+									"savings",
+							).toLowerCase(),
+							last_used_at: new Date().toISOString(),
+						};
+						return [createdAccount, ...existing.filter((a) => a.id !== createdAccount.id)];
+					});
+					setSelectedId(String(newBankId));
+				}
+
 				// Discard remaining drafts on success
 				setDraftAccounts([]);
-				await Promise.all([
-					queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] }),
-					queryClient.invalidateQueries({ queryKey: ["bankAccounts"] }),
-				]);
+
+				// Invalidate in background without blocking navigation
+				void queryClient.invalidateQueries({ queryKey: ["user", "dashboard"] });
+				void queryClient.invalidateQueries({ queryKey: ["bankAccounts"] });
 
 				Toast.show({
 					type: "success",
@@ -328,7 +380,7 @@ export function useBankAccountPicker() {
 				}
 			}
 		},
-		[mountedRef, queryClient, router, t],
+		[mountedRef, queryClient, router, t, userId],
 	);
 
 	const handleContinueSelected = useCallback(async () => {
